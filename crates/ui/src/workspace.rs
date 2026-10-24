@@ -16,9 +16,10 @@ use plastext_settings::{self as settings, Settings};
 use crate::{
     file_tree::{FileTreeEvent, FileTreeView},
     layout::{Axis, Layout},
+    quick_open::{QuickOpen, QuickOpenEvent},
 };
 
-actions!(workspace, [CloseTab, SplitRight, SplitDown]);
+actions!(workspace, [CloseTab, SplitRight, SplitDown, OpenQuickOpen]);
 
 const KEY_CONTEXT: &str = "Workspace";
 const SIDEBAR_WIDTH: f32 = 260.;
@@ -28,8 +29,11 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// Registers the workspace's and its views' key bindings.
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
+    crate::text_input::init(cx);
+    crate::quick_open::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
+        KeyBinding::new("cmd-p", OpenQuickOpen, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -47,6 +51,8 @@ pub struct Workspace {
     next_pane: usize,
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
+    tree_options: TreeOptions,
+    quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     open_options: OpenOptions,
     syntax_max_file_size: u64,
     text_style: TextStyle,
@@ -94,7 +100,7 @@ impl Workspace {
                 TreeOptions::default()
             });
         let tree = root.clone().map(|root| {
-            let tree = cx.new(|cx| FileTreeView::new(root, tree_options, cx));
+            let tree = cx.new(|cx| FileTreeView::new(root, tree_options.clone(), cx));
             subscriptions.push(
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
                     FileTreeEvent::Open(path) => this.open_file(path.clone(), None, window, cx),
@@ -110,6 +116,8 @@ impl Workspace {
             active_pane: 0,
             next_pane: 1,
             notice,
+            tree_options,
+            quick_open: None,
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
@@ -310,6 +318,33 @@ impl Workspace {
         if let Some(index) = self.panes[&self.active_pane].active {
             self.close_tab(self.active_pane, index, window, cx);
         }
+    }
+
+    fn open_quick_open(&mut self, _: &OpenQuickOpen, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let options = self.tree_options.clone();
+        let quick_open = cx.new(|cx| QuickOpen::new(root, options, window, cx));
+        let events = cx.subscribe_in(&quick_open, window, |this, _, event, window, cx| {
+            if let QuickOpenEvent::Open { path, line } = event {
+                this.open_file(path.clone(), *line, window, cx);
+            }
+            this.close_quick_open(window, cx);
+        });
+        self.quick_open = Some((quick_open, events));
+        cx.notify();
+    }
+
+    fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.quick_open.take().is_none() {
+            return;
+        }
+        match self.panes[&self.active_pane].active_tab() {
+            Some(tab) => tab.view.focus_handle(cx).focus(window),
+            None => self.focus_handle.focus(window),
+        }
+        cx.notify();
     }
 
     fn split_right(&mut self, _: &SplitRight, window: &mut Window, cx: &mut Context<Self>) {
@@ -564,6 +599,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::close_active_tab))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
+            .on_action(cx.listener(Self::open_quick_open))
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -578,6 +615,16 @@ impl Render for Workspace {
                     .child(editor_area),
             )
             .child(self.render_status_bar(theme, cx))
+            .children(self.quick_open.as_ref().map(|(quick_open, _)| {
+                div()
+                    .absolute()
+                    .top(px(56.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(quick_open.clone())
+            }))
     }
 }
 

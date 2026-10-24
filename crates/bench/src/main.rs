@@ -31,6 +31,8 @@ enum Commands {
     LongLine { size: ByteSize, path: PathBuf },
     /// Create COUNT empty files in DIR.
     WideDir { count: u64, dir: PathBuf },
+    /// Time how long Quick Open's file walk takes over DIR.
+    Walk { dir: PathBuf },
     /// Launch the app RUNS times and report how long its first frame takes.
     ///
     /// Build the app first, e.g. `cargo build --release -p plastext-app`.
@@ -55,6 +57,10 @@ fn main() -> ExitCode {
             write_file(&path, |out| plastext_bench::write_long_line(out, size.0))
         }
         Commands::WideDir { count, dir } => plastext_bench::create_wide_dir(&dir, count),
+        Commands::Walk { dir } => {
+            walk(&dir);
+            Ok(())
+        }
         Commands::Launch { runs, app, args } => launch(runs, app, &args),
     };
     match result {
@@ -73,6 +79,30 @@ fn write_file(
     let mut out = BufWriter::with_capacity(1 << 20, File::create(path)?);
     write(&mut out)?;
     out.flush()
+}
+
+/// Walks `dir` as Quick Open does, reporting when files first arrive and when the walk ends.
+fn walk(dir: &std::path::Path) {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    };
+    let start = Instant::now();
+    let first = Mutex::new(None);
+    let count = AtomicU64::new(0);
+    let options = plastext_project::TreeOptions::default();
+    plastext_project::walk_files(dir, &options, &AtomicBool::new(false), |_| {
+        if count.fetch_add(1, Ordering::Relaxed) == 0 {
+            *first.lock().unwrap() = Some(start.elapsed());
+        }
+    });
+    let first = first.into_inner().unwrap().unwrap_or_default();
+    println!(
+        "{} files; first after {:.1} ms, all after {:.1} ms",
+        count.into_inner(),
+        first.as_secs_f64() * 1000.,
+        start.elapsed().as_secs_f64() * 1000.
+    );
 }
 
 /// Runs the app with `PLASTEXT_PROFILE_STARTUP`, which makes it report its

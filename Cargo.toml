@@ -38,6 +38,7 @@ gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 globset = "0.4"
 ignore = "0.4"
 memchr = "2"
+nucleo = "0.5"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 toml = "1"
