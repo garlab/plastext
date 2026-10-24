@@ -10,7 +10,7 @@ use gpui::{
     UnderlineStyle, Window, actions, div, fill, point, prelude::*, px, relative, size,
 };
 
-use plastext_editor::Theme;
+use crate::Theme;
 
 actions!(
     text_input,
@@ -32,7 +32,7 @@ actions!(
 
 const KEY_CONTEXT: &str = "TextInput";
 
-pub fn init(cx: &mut App) {
+pub(crate) fn init(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, context),
@@ -86,6 +86,21 @@ impl TextInput {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Replaces the text, with the cursor at the end.
+    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.text = text.into();
+        self.move_to(self.text.len(), cx);
+        self.marked = None;
+        cx.emit(TextInputEvent::Changed);
+    }
+
+    /// Selects all the text, so typing replaces it.
+    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        self.selected = 0..self.text.len();
+        self.reversed = false;
+        cx.notify();
     }
 
     fn cursor(&self) -> usize {

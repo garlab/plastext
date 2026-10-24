@@ -19,7 +19,10 @@ use crate::{
     quick_open::{QuickOpen, QuickOpenEvent},
 };
 
-actions!(workspace, [CloseTab, SplitRight, SplitDown, OpenQuickOpen]);
+actions!(
+    workspace,
+    [CloseTab, SplitRight, SplitDown, OpenQuickOpen, GoToLine]
+);
 
 const KEY_CONTEXT: &str = "Workspace";
 const SIDEBAR_WIDTH: f32 = 260.;
@@ -29,11 +32,11 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// Registers the workspace's and its views' key bindings.
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
-    crate::text_input::init(cx);
     crate::quick_open::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("cmd-p", OpenQuickOpen, context),
+        KeyBinding::new("ctrl-g", GoToLine, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -327,13 +330,32 @@ impl Workspace {
         let options = self.tree_options.clone();
         let quick_open = cx.new(|cx| QuickOpen::new(root, options, window, cx));
         let events = cx.subscribe_in(&quick_open, window, |this, _, event, window, cx| {
-            if let QuickOpenEvent::Open { path, line } = event {
-                this.open_file(path.clone(), *line, window, cx);
-            }
             this.close_quick_open(window, cx);
+            match event {
+                QuickOpenEvent::Open { path, line } => {
+                    this.open_file(path.clone(), *line, window, cx)
+                }
+                QuickOpenEvent::GoToLine(line) => {
+                    if let Some(tab) = this.panes[&this.active_pane].active_tab() {
+                        tab.view
+                            .update(cx, |view, cx| view.scroll_to_line(*line, cx));
+                    }
+                }
+                QuickOpenEvent::Dismissed => {}
+            }
         });
         self.quick_open = Some((quick_open, events));
         cx.notify();
+    }
+
+    fn go_to_line(&mut self, _: &GoToLine, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panes[&self.active_pane].active_tab().is_none() {
+            return;
+        }
+        self.open_quick_open(&OpenQuickOpen, window, cx);
+        if let Some((quick_open, _)) = &self.quick_open {
+            quick_open.update(cx, |quick_open, cx| quick_open.set_query(":", cx));
+        }
     }
 
     fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -600,6 +622,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::open_quick_open))
+            .on_action(cx.listener(Self::go_to_line))
             .relative()
             .size_full()
             .flex()

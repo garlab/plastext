@@ -9,8 +9,10 @@ publish.workspace = true
 
 [dependencies]
 bytes.workspace = true
+futures.workspace = true
 gpui.workspace = true
 plastext-buffer.workspace = true
+plastext-search.workspace = true
 plastext-syntax.workspace = true
 
 [lints]

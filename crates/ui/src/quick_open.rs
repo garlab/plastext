@@ -18,10 +18,8 @@ use nucleo::{
     Config, Nucleo,
     pattern::{CaseMatching, Normalization},
 };
-use plastext_editor::Theme;
+use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::{TreeOptions, walk_files};
-
-use crate::text_input::{TextInput, TextInputEvent};
 
 actions!(quick_open, [SelectNext, SelectPrevious, Confirm, Dismiss]);
 
@@ -45,7 +43,12 @@ pub fn init(cx: &mut App) {
 }
 
 pub enum QuickOpenEvent {
-    Open { path: PathBuf, line: Option<u64> },
+    Open {
+        path: PathBuf,
+        line: Option<u64>,
+    },
+    /// A bare `:line` query: go to that line in the current file (spec NAV-4).
+    GoToLine(u64),
     Dismissed,
 }
 
@@ -117,6 +120,16 @@ impl QuickOpen {
         this
     }
 
+    pub fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
+        self.input
+            .update(cx, |input, cx| input.set_text(query.to_owned(), cx));
+    }
+
+    /// A line to go to in the current file, when the query is only `:line`.
+    fn go_to_line(&self) -> Option<u64> {
+        self.line.filter(|_| self.pattern.is_empty())
+    }
+
     /// Refreshes results until the walk and the matching are both done.
     fn keep_ticking(&mut self, cx: &mut Context<Self>) {
         if self.ticking {
@@ -185,7 +198,10 @@ impl QuickOpen {
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        self.open(self.selected, cx);
+        match self.go_to_line() {
+            Some(line) => cx.emit(QuickOpenEvent::GoToLine(line)),
+            None => self.open(self.selected, cx),
+        }
     }
 
     fn open(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -227,7 +243,25 @@ impl Render for QuickOpen {
         } else {
             format!("{matched} of {total} files")
         };
-        let results = if matched == 0 {
+        let results = if let Some(line) = self.go_to_line() {
+            div()
+                .h(px(ROW_HEIGHT))
+                .px_3()
+                .flex()
+                .items_center()
+                .bg(theme.selection)
+                .child(format!("Go to line {line} in the current file"))
+                .into_any_element()
+        } else if self.pattern.is_empty() && self.input.read(cx).text().trim() == ":" {
+            div()
+                .h(px(ROW_HEIGHT))
+                .px_3()
+                .flex()
+                .items_center()
+                .text_color(theme.text_muted)
+                .child("Type a line number")
+                .into_any_element()
+        } else if matched == 0 {
             div()
                 .h(px(ROW_HEIGHT))
                 .px_3()

@@ -3,7 +3,6 @@
 mod file_tree;
 mod layout;
 mod quick_open;
-mod text_input;
 mod workspace;
 
 pub use workspace::{Workspace, init};

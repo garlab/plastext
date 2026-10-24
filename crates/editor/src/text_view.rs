@@ -8,18 +8,22 @@ use std::{
 };
 
 use bytes::Bytes;
+use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
-    App, Bounds, ClipboardItem, ContentMask, Context, DispatchPhase, Entity, FocusHandle,
-    Focusable, Font, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Rgba, ScrollWheelEvent, ShapedLine, SharedString, Task, TextRun, Window, WindowTextSystem,
-    actions, canvas, div, fill, font, point, prelude::*, px, size,
+    AnyElement, App, Bounds, ClipboardItem, ContentMask, Context, DispatchPhase, Entity,
+    FocusHandle, Focusable, Font, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Rgba, ScrollWheelEvent, ShapedLine, SharedString, Subscription, Task,
+    TextRun, Window, WindowTextSystem, actions, canvas, div, fill, font, point, prelude::*, px,
+    size,
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
+use plastext_search::Query;
 use plastext_syntax::{Highlight, Language, SyntaxTree};
 
 use crate::{
     Theme,
     row_text::{column_at, offset_at, visible_text, word_at},
+    text_input::{TextInput, TextInputEvent},
 };
 
 actions!(
@@ -35,11 +39,18 @@ actions!(
         Bottom,
         Copy,
         SelectAll,
-        ClearSelection
+        ClearSelection,
+        Find,
+        FindNext,
+        FindPrevious,
+        CloseFind
     ]
 );
 
 const KEY_CONTEXT: &str = "TextView";
+const FIND_KEY_CONTEXT: &str = "FindBar";
+/// Searches stop after this many matches.
+const MAX_MATCHES: usize = 1_000_000;
 /// Bytes loaded on each side of what's visible, so scrolling rarely waits on the disk.
 const PREFETCH: u64 = 1024 * 1024;
 const SCROLLBAR_WIDTH: f32 = 12.;
@@ -52,7 +63,7 @@ const HIGHLIGHT_LINE_LIMIT: u64 = 10_000;
 const MAX_COPY: u64 = 64_000_000;
 
 /// Registers the read-mode key bindings (spec §4.2).
-pub fn init(cx: &mut App) {
+pub(crate) fn init(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("j", LineDown, context),
@@ -74,6 +85,21 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, context),
         KeyBinding::new("cmd-a", SelectAll, context),
         KeyBinding::new("escape", ClearSelection, context),
+        KeyBinding::new("cmd-f", Find, context),
+        KeyBinding::new("/", Find, context),
+        KeyBinding::new("n", FindNext, context),
+        KeyBinding::new("shift-n", FindPrevious, context),
+        KeyBinding::new("cmd-g", FindNext, context),
+        KeyBinding::new("cmd-shift-g", FindPrevious, context),
+    ]);
+    let context = Some(FIND_KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("enter", FindNext, context),
+        KeyBinding::new("shift-enter", FindPrevious, context),
+        KeyBinding::new("cmd-g", FindNext, context),
+        KeyBinding::new("cmd-shift-g", FindPrevious, context),
+        KeyBinding::new("escape", CloseFind, context),
+        KeyBinding::new("cmd-f", Find, context),
     ]);
 }
 
@@ -142,6 +168,7 @@ pub struct TextView {
     selection: Option<Selection>,
     /// Whether a mouse drag is extending the selection.
     selecting: bool,
+    find: Option<FindState>,
     _index_refresh: Option<Task<()>>,
     _parse: Option<Task<()>>,
 }
@@ -150,8 +177,23 @@ pub struct TextView {
 enum Jump {
     /// Bring the row containing this offset to the top.
     Offset(u64),
+    /// Scroll the offset into view, a third of the way down, if it's not visible.
+    Reveal(u64),
     /// Show the last page.
     End,
+}
+
+/// The find bar and its results (spec NAV-6).
+struct FindState {
+    input: Entity<TextInput>,
+    /// Matches found so far, in order.
+    matches: Vec<Range<u64>>,
+    current: Option<usize>,
+    searching: bool,
+    /// Stops the running search.
+    cancel: Arc<AtomicBool>,
+    _search: Option<Task<()>>,
+    _input_changes: Subscription,
 }
 
 /// Selected bytes, from where the selection started to where it ends now.
@@ -240,6 +282,7 @@ impl TextView {
             drag: None,
             selection: None,
             selecting: false,
+            find: None,
             _index_refresh: index_refresh,
             _parse: parse,
         }
@@ -405,6 +448,230 @@ impl TextView {
         cx.notify();
     }
 
+    fn find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
+        // Search for a short single-line selection, if there is one.
+        let selected = self
+            .selection
+            .map(|selection| selection.range())
+            .filter(|range| !range.is_empty() && range.end - range.start <= 256)
+            .and_then(|range| self.source.bytes(range).ok())
+            .filter(|bytes| !bytes.contains(&b'\n'))
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        let input = match &self.find {
+            Some(find) => find.input.clone(),
+            None => {
+                let input = cx.new(|cx| TextInput::new("Find", cx));
+                let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
+                    this.search(cx)
+                });
+                self.find = Some(FindState {
+                    input: input.clone(),
+                    matches: Vec::new(),
+                    current: None,
+                    searching: false,
+                    cancel: Arc::new(AtomicBool::new(false)),
+                    _search: None,
+                    _input_changes: input_changes,
+                });
+                input
+            }
+        };
+        input.update(cx, |input, cx| {
+            if let Some(selected) = selected {
+                input.set_text(selected, cx);
+            }
+            input.select_all_text(cx);
+        });
+        input.focus_handle(cx).focus(window);
+        cx.notify();
+    }
+
+    fn close_find(&mut self, _: &CloseFind, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(find) = self.find.take() {
+            find.cancel.store(true, Ordering::Relaxed);
+        }
+        self.focus_handle.focus(window);
+        cx.notify();
+    }
+
+    /// Starts searching for the find bar's text, replacing any running search.
+    fn search(&mut self, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else {
+            return;
+        };
+        find.cancel.store(true, Ordering::Relaxed);
+        find.matches.clear();
+        find.current = None;
+        find.searching = false;
+        find._search = None;
+        let Some(query) = Query::new(find.input.read(cx).text()) else {
+            cx.notify();
+            return;
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        find.cancel = cancel.clone();
+        find.searching = true;
+        let (batches, mut received) = mpsc::unbounded();
+        let source = self.source.clone();
+        let searching = cx.background_executor().spawn(async move {
+            plastext_search::find_all(&source, &query, &cancel, |matches| {
+                batches.unbounded_send(matches).ok();
+            })
+        });
+        find._search = Some(cx.spawn(async move |this, cx| {
+            while let Some(matches) = received.next().await {
+                let added = this.update(cx, |this, cx| this.add_matches(matches, cx));
+                if added.is_err() {
+                    return;
+                }
+            }
+            let result = searching.await;
+            this.update(cx, |this, cx| {
+                if let Some(find) = &mut this.find {
+                    find.searching = false;
+                }
+                if let Err(err) = result {
+                    this.notice = Some(format!("Search failed: {err}").into());
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn add_matches(&mut self, matches: Vec<Range<u64>>, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else {
+            return;
+        };
+        find.matches.extend(matches);
+        if find.matches.len() >= MAX_MATCHES {
+            find.matches.truncate(MAX_MATCHES);
+            find.cancel.store(true, Ordering::Relaxed);
+        }
+        // Show the first match from the current position as soon as there is one.
+        if find.current.is_none() {
+            let top = self.top;
+            let next = find.matches.partition_point(|found| found.start < top);
+            if next < find.matches.len() {
+                self.select_match(next, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_match(true, cx);
+    }
+
+    fn find_previous(&mut self, _: &FindPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_match(false, cx);
+    }
+
+    fn step_match(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(find) = &self.find else {
+            return;
+        };
+        let count = find.matches.len();
+        if count == 0 {
+            return;
+        }
+        let index = match find.current {
+            Some(current) if forward => (current + 1) % count,
+            Some(current) => (current + count - 1) % count,
+            None => {
+                let next = find.matches.partition_point(|found| found.start < self.top);
+                if forward {
+                    next % count
+                } else {
+                    (next + count - 1) % count
+                }
+            }
+        };
+        self.select_match(index, cx);
+    }
+
+    /// Makes match `index` current: selected and scrolled into view.
+    fn select_match(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else {
+            return;
+        };
+        let Some(found) = find.matches.get(index).cloned() else {
+            return;
+        };
+        find.current = Some(index);
+        self.selection = Some(Selection {
+            anchor: found.start,
+            head: found.end,
+        });
+        self.jump(Jump::Reveal(found.start), cx);
+    }
+
+    fn render_find_bar(
+        &self,
+        find: &FindState,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let count = find.matches.len();
+        let status = match (count, find.current, find.searching) {
+            (0, _, true) => "Searching…".to_owned(),
+            (0, _, false) if find.input.read(cx).text().is_empty() => String::new(),
+            (0, _, false) => "No results".to_owned(),
+            (_, current, searching) => {
+                let more = if searching || count == MAX_MATCHES {
+                    "+"
+                } else {
+                    ""
+                };
+                match current {
+                    Some(current) => format!("{} of {count}{more}", current + 1),
+                    None => format!("{count}{more} matches"),
+                }
+            }
+        };
+        let button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .px_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_color(theme.text_muted)
+                .hover(|button| button.bg(theme.border))
+                .child(label)
+        };
+        div()
+            .key_context(FIND_KEY_CONTEXT)
+            .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
+            .on_action(cx.listener(Self::close_find))
+            .h(px(34.))
+            .flex_none()
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_2()
+            .bg(theme.surface)
+            .border_b_1()
+            .border_color(theme.border)
+            .text_sm()
+            .child(div().flex_1().child(find.input.clone()))
+            .child(div().text_xs().text_color(theme.text_muted).child(status))
+            .child(
+                button("find-previous", "↑")
+                    .on_click(cx.listener(|this, _, _, cx| this.step_match(false, cx))),
+            )
+            .child(
+                button("find-next", "↓")
+                    .on_click(cx.listener(|this, _, _, cx| this.step_match(true, cx))),
+            )
+            .child(button("close-find", "×").on_click(
+                cx.listener(|this, _, window, cx| this.close_find(&CloseFind, window, cx)),
+            ))
+            .into_any_element()
+    }
+
     fn mouse_down(&mut self, hit: Hit, click_count: usize, extend: bool, cx: &mut Context<Self>) {
         self.notice = None;
         let row = hit.row.start..hit.row.end;
@@ -559,6 +826,19 @@ impl TextView {
     fn jump_target(&self, jump: Jump) -> Result<u64, ReadError> {
         match jump {
             Jump::Offset(offset) => rows::row_start_at(&*self.source, offset),
+            Jump::Reveal(offset) => {
+                if (self.top..self.top + self.visible_len.saturating_sub(1)).contains(&offset) {
+                    return Ok(self.top);
+                }
+                let mut top = rows::row_start_at(&*self.source, offset)?;
+                for _ in 0..self.page_rows / 3 {
+                    match rows::previous_row_start(&*self.source, top)? {
+                        Some(start) => top = start,
+                        None => break,
+                    }
+                }
+                Ok(top)
+            }
             Jump::End => {
                 let last = self.source.len().saturating_sub(1);
                 let mut top = rows::row_start_at(&*self.source, last)?;
@@ -737,6 +1017,31 @@ impl TextView {
                         |column: usize| char_width * (column as f32 - first_column as f32) + shift;
                     x(column(selection.start.max(*start)))..x(column(selection.end.min(end)))
                 });
+            let matches = self
+                .find
+                .as_ref()
+                .map(|find| {
+                    let first = find.matches.partition_point(|found| found.end <= *start);
+                    find.matches[first..]
+                        .iter()
+                        .take_while(|found| found.start < end)
+                        .map(|found| {
+                            let tab_size = self.style.tab_size;
+                            let column = |offset: u64| {
+                                column_at(
+                                    content,
+                                    tab_size,
+                                    (offset.clamp(*start, end) - start) as usize,
+                                )
+                            };
+                            let x = |column: usize| {
+                                char_width * (column as f32 - first_column as f32) + shift
+                            };
+                            x(column(found.start))..x(column(found.end))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             hit_rows.push(HitRow {
                 start: *start,
                 end,
@@ -751,6 +1056,7 @@ impl TextView {
                 number,
                 text: (!visible.text.is_empty()).then(|| shaper.shape(visible.text, &runs)),
                 selected,
+                matches,
             });
         }
 
@@ -867,12 +1173,20 @@ fn spans_within(
 }
 
 impl Render for TextView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        div()
+        let theme = Theme::for_appearance(window.appearance());
+        // The find bar sits outside the view's key context, so typing in it
+        // doesn't trigger single-key bindings such as `n` or `/`.
+        let find_bar = self
+            .find
+            .as_ref()
+            .map(|find| self.render_find_bar(find, theme, cx));
+        let text = div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .size_full()
+            .flex_1()
+            .min_h_0()
             .on_action(cx.listener(Self::line_down))
             .on_action(cx.listener(Self::line_up))
             .on_action(cx.listener(Self::page_down))
@@ -884,6 +1198,9 @@ impl Render for TextView {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear_selection))
+            .on_action(cx.listener(Self::find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_mouse_down(
                 MouseButton::Left,
@@ -900,7 +1217,13 @@ impl Render for TextView {
                     move |bounds, layout, window, cx| layout.paint(bounds, view, window, cx),
                 )
                 .size_full(),
-            )
+            );
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .children(find_bar)
+            .child(text)
     }
 }
 
@@ -963,6 +1286,8 @@ struct RowLayout {
     text: Option<ShapedLine>,
     /// The selected part, as x offsets from the text's left edge.
     selected: Option<Range<Pixels>>,
+    /// Find matches, likewise.
+    matches: Vec<Range<Pixels>>,
 }
 
 /// Where the visible rows are, for turning mouse positions into offsets.
@@ -1057,11 +1382,16 @@ impl TextLayout {
         window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
             let x = bounds.left() + self.text_left + self.shift;
             for (i, row) in self.rows.iter().enumerate() {
-                if let Some(selected) = &row.selected {
-                    let left = bounds.left() + self.text_left + selected.start;
-                    let width = selected.end - selected.start;
+                let highlights = row
+                    .matches
+                    .iter()
+                    .map(|range| (range, theme.find_match))
+                    .chain(row.selected.iter().map(|range| (range, theme.selection)));
+                for (range, color) in highlights {
+                    let left = bounds.left() + self.text_left + range.start;
+                    let width = range.end - range.start;
                     let quad = Bounds::new(point(left, row_top(i)), size(width, line_height));
-                    window.paint_quad(fill(quad, theme.selection));
+                    window.paint_quad(fill(quad, color));
                 }
             }
             for (i, row) in self.rows.iter().enumerate() {

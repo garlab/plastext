@@ -13,6 +13,7 @@ pub struct Theme {
     pub text: Rgba,
     pub text_muted: Rgba,
     pub selection: Rgba,
+    pub find_match: Rgba,
     pub scrollbar_thumb: Rgba,
     dark: bool,
 }
@@ -27,6 +28,7 @@ impl Theme {
                 text: rgb(0x1f2328),
                 text_muted: rgb(0x6b7079),
                 selection: rgb(0xd6e4fa),
+                find_match: rgb(0xfff1a8),
                 scrollbar_thumb: rgb(0xc9cbd1),
                 dark: false,
             },
@@ -37,6 +39,7 @@ impl Theme {
                 text: rgb(0xe6e6e9),
                 text_muted: rgb(0x8d919b),
                 selection: rgb(0x2c3d58),
+                find_match: rgb(0x5b4b1c),
                 scrollbar_thumb: rgb(0x4a4d56),
                 dark: true,
             },

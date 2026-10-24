@@ -1,6 +1,6 @@
 //! Text engine micro-benchmarks: `cargo bench -p plastext-bench`.
 
-use std::{hint::black_box, path::Path};
+use std::{hint::black_box, path::Path, sync::atomic::AtomicBool};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use plastext_buffer::{ByteSource, FileSource, LineIndex, rows};
@@ -67,5 +67,26 @@ fn syntax(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, line_index, display_rows, syntax);
+fn search(c: &mut Criterion) {
+    let source = FileSource::from_bytes(plastext_bench::log_bytes(SIZE));
+    let mut group = c.benchmark_group("search");
+    group.throughput(Throughput::Bytes(source.len()));
+    group.sample_size(10);
+    for query in ["status=500", "warn"] {
+        let compiled = plastext_search::Query::new(query).unwrap();
+        group.bench_function(format!("find {query:?} in 64 MB of log lines"), |b| {
+            b.iter(|| {
+                let mut count = 0;
+                plastext_search::find_all(&source, &compiled, &AtomicBool::new(false), |found| {
+                    count += found.len()
+                })
+                .unwrap();
+                count
+            })
+        });
+    }
+    group.finish();
+}
+
+criterion_group!(benches, line_index, display_rows, syntax, search);
 criterion_main!(benches);
