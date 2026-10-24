@@ -1,11 +1,13 @@
 //! Native Markdown model. Parsing and source mapping never depend on GPUI.
 mod links;
+mod metadata;
 mod parser;
 mod search;
 
 use std::{ops::Range, path::Path, sync::Arc};
 
 pub use links::{LinkTarget, resolve_link};
+pub use metadata::MetadataFormat;
 pub use parser::{ParseSummary, parse, parse_stream};
 pub use search::{RenderedMatch, find_rendered};
 
@@ -62,7 +64,18 @@ pub enum BlockKind {
     },
     Math,
     Rule,
-    FrontMatter,
+    FrontMatter {
+        format: MetadataFormat,
+        error: Option<String>,
+    },
+    FrontMatterRow {
+        section: usize,
+        key: Range<usize>,
+        value: Range<usize>,
+    },
+    FrontMatterSource {
+        section: usize,
+    },
     TableRow {
         header: bool,
         cells: Vec<Range<usize>>,
@@ -73,6 +86,18 @@ pub enum BlockKind {
         title: String,
     },
     Html,
+}
+
+impl BlockKind {
+    /// Source offset of the header that owns this collapsible metadata row.
+    pub fn metadata_section(&self) -> Option<usize> {
+        match self {
+            Self::FrontMatterRow { section, .. } | Self::FrontMatterSource { section } => {
+                Some(*section)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

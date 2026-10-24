@@ -155,18 +155,10 @@ impl MarkdownView {
             }
         };
         find.current = Some(current);
-        let hit = &find.matches[current];
-        if self
-            .document
-            .blocks
-            .get(hit.block)
-            .is_some_and(|b| matches!(b.kind, BlockKind::FrontMatter))
-        {
-            self.expanded.insert(hit.block);
-            self.list.splice(hit.block..hit.block + 1, 1);
-        }
+        let hit = find.matches[current].clone();
+        self.reveal_metadata(hit.block);
         self.list.scroll_to(ListOffset {
-            item_ix: hit.block,
+            item_ix: self.visible.row(hit.block),
             offset_in_item: px(0.),
         });
         if let Some(source) = &self.source_view {
@@ -278,5 +270,74 @@ impl MarkdownView {
             }
         }
         result
+    }
+
+    pub(super) fn highlight_code_matches(
+        &self,
+        text: &str,
+        syntax: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
+        theme: Theme,
+    ) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> {
+        let query = self.find.as_ref().map_or("", |find| find.query.as_str());
+        code_matches(text, syntax, query, theme.find_match.into())
+    }
+}
+
+fn code_matches(
+    text: &str,
+    syntax: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
+    query: &str,
+    background: gpui::Hsla,
+) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> {
+    if query.is_empty() {
+        return syntax;
+    }
+    gpui::combine_highlights(
+        syntax,
+        text.match_indices(query).map(|(at, _)| {
+            (
+                at..at + query.len(),
+                gpui::HighlightStyle {
+                    background_color: Some(background),
+                    ..Default::default()
+                },
+            )
+        }),
+    )
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn code_find_spans_tokens_and_plain_text_without_losing_syntax_color() {
+        let foreground = gpui::rgb(0x123456).into();
+        let background = gpui::rgb(0xabcdef).into();
+        let syntax = vec![(
+            0..3,
+            gpui::HighlightStyle {
+                color: Some(foreground),
+                ..Default::default()
+            },
+        )];
+        let highlights = code_matches("let café = 1", syntax.clone(), "et café", background);
+        assert_eq!(
+            highlights
+                .iter()
+                .map(|(r, _)| r.clone())
+                .collect::<Vec<_>>(),
+            [0..1, 1..3, 3..9]
+        );
+        assert_eq!(highlights[0].1.color, Some(foreground));
+        assert_eq!(highlights[0].1.background_color, None);
+        assert_eq!(highlights[1].1.color, Some(foreground));
+        assert_eq!(highlights[1].1.background_color, Some(background));
+        assert_eq!(highlights[2].1.background_color, Some(background));
+        assert_eq!(
+            code_matches("let café = 1", syntax, "", background).len(),
+            1
+        );
     }
 }

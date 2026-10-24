@@ -22,7 +22,9 @@ use std::{
 
 use crate::tab_view::format_size;
 mod find;
+mod metadata;
 mod profile;
+mod visibility;
 type CodeHighlights = Arc<Vec<(std::ops::Range<usize>, Highlight)>>;
 
 actions!(
@@ -79,6 +81,7 @@ pub struct MarkdownView {
     document: Document,
     symbols: Arc<Vec<Symbol>>,
     list: ListState,
+    visible: visibility::VisibleBlocks,
     focus: FocusHandle,
     rendered: bool,
     source_view: Option<Entity<TextView>>,
@@ -204,6 +207,7 @@ impl MarkdownView {
             document: Document::default(),
             symbols: Arc::default(),
             list,
+            visible: visibility::VisibleBlocks::default(),
             focus: cx.focus_handle(),
             rendered: true,
             source_view: None,
@@ -229,7 +233,8 @@ impl MarkdownView {
         match update {
             Update::Initial(document) => {
                 self.document = document;
-                self.list.reset(self.document.blocks.len());
+                self.visible.reset(&self.document.blocks, &self.expanded);
+                self.list.reset(self.visible.len());
                 self.update_symbols();
             }
             Update::Batch { first, blocks } => {
@@ -239,13 +244,15 @@ impl MarkdownView {
                     }
                     self.pending_offset = self.pending_offset.or(Some(self.position(cx) as usize));
                     self.document.blocks.clear();
+                    self.visible.reset(&[], &self.expanded);
                     self.image_rows.clear();
                     self.code_highlights.clear();
                     self.list.reset(0);
                 }
-                let old = self.document.blocks.len();
+                let old = self.visible.len();
                 self.document.blocks.extend(blocks);
-                self.list.splice(old..old, self.document.blocks.len() - old);
+                self.visible.extend(&self.document.blocks, &self.expanded);
+                self.list.splice(old..old, self.visible.len() - old);
             }
             Update::Finished(summary, limited) => {
                 self.parsing = false;
@@ -310,9 +317,9 @@ impl MarkdownView {
         {
             return view.read(cx).position();
         }
-        self.document
-            .blocks
-            .get(self.list.logical_scroll_top().item_ix)
+        self.visible
+            .block(self.list.logical_scroll_top().item_ix)
+            .and_then(|ix| self.document.blocks.get(ix))
             .map_or(0, |b| b.source.start as u64)
     }
     pub fn scroll_to_offset(&mut self, offset: u64, cx: &mut Context<Self>) {
@@ -328,8 +335,10 @@ impl MarkdownView {
         {
             self.pending_offset = Some(offset as usize);
         } else {
+            let block = self.document.block_at(offset as usize);
+            self.reveal_metadata(block);
             self.list.scroll_to(ListOffset {
-                item_ix: self.document.block_at(offset as usize),
+                item_ix: self.visible.row(block),
                 offset_in_item: px(0.),
             });
         }
@@ -376,6 +385,7 @@ impl MarkdownView {
         let settings = self.settings.clone();
         let offset = self.position(cx);
         let rendered = self.rendered;
+        let expanded = self.expanded.clone();
         let source_view = self
             .source_view
             .as_ref()
@@ -384,6 +394,7 @@ impl MarkdownView {
             let mut view = Self::new(path, source, index, style, settings, cx);
             view.pending_offset = Some(offset as usize);
             view.rendered = rendered;
+            view.expanded = expanded;
             view.source_view = source_view;
             if let Some(source) = &view.source_view {
                 view._source_observer = Some(cx.observe(source, |_, _, cx| cx.notify()));
@@ -419,6 +430,37 @@ impl MarkdownView {
             self.focus.focus(window);
         }
         self.rendered = !self.rendered;
+        cx.notify();
+    }
+    fn reveal_metadata(&mut self, block: usize) {
+        if let Some(section) = self
+            .document
+            .blocks
+            .get(block)
+            .and_then(|b| b.kind.metadata_section())
+            && self.expanded.insert(section)
+        {
+            self.visible.reset(&self.document.blocks, &self.expanded);
+            self.list.reset(self.visible.len());
+        }
+    }
+
+    fn toggle_metadata(&mut self, section: usize, cx: &mut Context<Self>) {
+        let top = self.list.logical_scroll_top();
+        let anchor = self.visible.block(top.item_ix).unwrap_or(0);
+        if !self.expanded.remove(&section) {
+            self.expanded.insert(section);
+        }
+        self.visible.reset(&self.document.blocks, &self.expanded);
+        self.list.reset(self.visible.len());
+        self.list.scroll_to(ListOffset {
+            item_ix: self.visible.row(anchor),
+            offset_in_item: if self.visible.block(self.visible.row(anchor)) == Some(anchor) {
+                top.offset_in_item
+            } else {
+                px(0.)
+            },
+        });
         cx.notify();
     }
     fn open_link(&mut self, target: &str, cx: &mut Context<Self>) {
@@ -579,7 +621,8 @@ impl MarkdownView {
                             let anchor = this.list.logical_scroll_top();
                             for &row in rows {
                                 if row < this.document.blocks.len() {
-                                    this.list.splice(row..row + 1, 1);
+                                    let visible = this.visible.row(row);
+                                    this.list.splice(visible..visible + 1, 1);
                                 }
                             }
                             this.list.scroll_to(anchor);
@@ -700,6 +743,7 @@ impl MarkdownView {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let highlights = self.highlight_code_matches(&block.text, highlights, theme);
         div()
             .font_family(self.text_style.font_family.clone())
             .child(StyledText::new(block.text.clone()).with_highlights(highlights))
@@ -746,6 +790,10 @@ impl MarkdownView {
             .mx_auto()
             .px_6()
             .py_2()
+            .when(
+                matches!(block.kind, BlockKind::FrontMatterRow { .. }),
+                |d| d.py_0(),
+            )
             .text_size(px(16.))
             .line_height(relative(1.55))
             .text_color(theme.text);
@@ -820,36 +868,9 @@ impl MarkdownView {
                     .child(text)
                     .into_any_element()
             }
-            BlockKind::FrontMatter => {
-                let expanded = self.expanded.contains(&ix);
-                div()
-                    .p_3()
-                    .rounded_md()
-                    .bg(theme.surface)
-                    .text_sm()
-                    .child(
-                        div()
-                            .id(("md-metadata", ix))
-                            .cursor_pointer()
-                            .text_color(theme.text_muted)
-                            .child(if expanded {
-                                "▾ Front matter"
-                            } else {
-                                "▸ Front matter"
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !this.expanded.remove(&ix) {
-                                    this.expanded.insert(ix);
-                                }
-                                this.list.splice(ix..ix + 1, 1);
-                                cx.notify();
-                            })),
-                    )
-                    .when(expanded, |d| {
-                        d.child(self.rich_text(&block, 0..block.text.len(), ix, true, theme, cx))
-                    })
-                    .into_any_element()
-            }
+            BlockKind::FrontMatter { .. }
+            | BlockKind::FrontMatterRow { .. }
+            | BlockKind::FrontMatterSource { .. } => self.metadata_block(&block, ix, theme, cx),
             BlockKind::TableRow {
                 header,
                 cells,
@@ -1025,8 +1046,13 @@ impl Render for MarkdownView {
                 .into_any_element()
         } else {
             list(self.list.clone(), move |ix, window, cx| {
-                weak.update(cx, |view, cx| view.render_block(ix, window, cx))
-                    .unwrap_or_else(|_| div().into_any_element())
+                weak.update(cx, |view, cx| {
+                    view.visible
+                        .block(ix)
+                        .map(|block| view.render_block(block, window, cx))
+                        .unwrap_or_else(|| div().into_any_element())
+                })
+                .unwrap_or_else(|_| div().into_any_element())
             })
             .size_full()
             .into_any_element()
@@ -1066,7 +1092,7 @@ impl Render for MarkdownView {
             }))
             .on_action(cx.listener(|this, _: &ToEnd, _, cx| {
                 this.list
-                    .scroll_to_reveal_item(this.document.blocks.len().saturating_sub(1));
+                    .scroll_to_reveal_item(this.visible.len().saturating_sub(1));
                 cx.notify();
             }))
             .when(self.profile.is_some(), |d| {

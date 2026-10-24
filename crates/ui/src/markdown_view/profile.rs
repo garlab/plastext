@@ -64,7 +64,10 @@ impl MarkdownView {
                 prose.unwrap_or(last / 2),
                 last / 2,
                 last,
-            ];
+            ]
+            .into_iter()
+            .map(|block| self.visible.row(block))
+            .collect();
             profile.steps = 0;
         }
         if ready {

@@ -1,4 +1,7 @@
-use crate::{Alignment, BLOCK_TEXT_LIMIT, Block, BlockKind, Document, Heading, InlineStyle, Span};
+use crate::{
+    Alignment, BLOCK_TEXT_LIMIT, Block, BlockKind, Document, Heading, InlineStyle, MetadataFormat,
+    Span,
+};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::{
     collections::{HashMap, HashSet},
@@ -59,6 +62,7 @@ pub fn parse_stream(
     let mut cell_start = 0;
     let mut image_depth = None;
     let mut in_comment = false;
+    let mut in_metadata = false;
     for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
         if cancelled() || builder.stopped {
             builder.summary.cancelled = true;
@@ -85,6 +89,12 @@ pub fn parse_stream(
                 depth = depth.saturating_sub(1);
             }
             _ => {}
+        }
+        if in_metadata {
+            if matches!(event, Event::End(TagEnd::MetadataBlock(_))) {
+                in_metadata = false;
+            }
+            continue;
         }
         match event {
             Event::Start(Tag::Paragraph) => builder.start(BlockKind::Paragraph, range),
@@ -114,7 +124,14 @@ pub fn parse_stream(
                     range,
                 );
             }
-            Event::Start(Tag::MetadataBlock(_)) => builder.start(BlockKind::FrontMatter, range),
+            Event::Start(Tag::MetadataBlock(kind)) => {
+                let format = match kind {
+                    pulldown_cmark::MetadataBlockKind::YamlStyle => MetadataFormat::Yaml,
+                    pulldown_cmark::MetadataBlockKind::PlusesStyle => MetadataFormat::Toml,
+                };
+                builder.metadata(text, range, format);
+                in_metadata = true;
+            }
             Event::Start(Tag::BlockQuote(kind)) => {
                 builder.flush();
                 builder.quotes.push(
@@ -357,6 +374,46 @@ impl<'a> Builder<'a> {
             self.start(BlockKind::Paragraph, range);
         }
     }
+    fn metadata(&mut self, text: &str, range: Range<usize>, format: MetadataFormat) {
+        let source = &text[range.clone()];
+        let start = source.find('\n').map_or(source.len(), |at| at + 1);
+        let end = source
+            .trim_end_matches(['\r', '\n'])
+            .rfind('\n')
+            .map_or(start, |at| at + 1);
+        let body = range.start + start..range.start + end;
+        let parsed = crate::metadata::rows(&text[body.clone()], body.start, range.start, format);
+        self.start(
+            BlockKind::FrontMatter {
+                format,
+                error: parsed.as_ref().err().cloned(),
+            },
+            range.clone(),
+        );
+        self.flush();
+        match parsed {
+            Ok(rows) => {
+                for row in rows {
+                    if self.stopped {
+                        break;
+                    }
+                    self.current = Some(row);
+                    self.flush();
+                }
+            }
+            Err(_) if !self.stopped => {
+                self.start(
+                    BlockKind::FrontMatterSource {
+                        section: range.start,
+                    },
+                    body.clone(),
+                );
+                self.append(&text[body.clone()], body, &InlineStyle::default());
+                self.flush();
+            }
+            Err(_) => {}
+        }
+    }
     fn start(&mut self, kind: BlockKind, range: Range<usize>) {
         self.flush();
         let mut block = Block::new(kind, range);
@@ -379,6 +436,9 @@ impl<'a> Builder<'a> {
                         first: false,
                     },
                     BlockKind::Math => BlockKind::Math,
+                    BlockKind::FrontMatterSource { section } => {
+                        BlockKind::FrontMatterSource { section: *section }
+                    }
                     _ => BlockKind::Paragraph,
                 };
                 self.flatten_wide_table();
@@ -390,8 +450,10 @@ impl<'a> Builder<'a> {
                 take -= 1;
             }
             // Keep individual code items short even when a fence is huge.
-            if matches!(block.kind, BlockKind::Code { .. })
-                && let Some((end, _)) = value[..take].match_indices('\n').nth(31)
+            if matches!(
+                block.kind,
+                BlockKind::Code { .. } | BlockKind::FrontMatterSource { .. }
+            ) && let Some((end, _)) = value[..take].match_indices('\n').nth(31)
             {
                 take = end + 1;
             }
@@ -417,6 +479,9 @@ impl<'a> Builder<'a> {
                         first: false,
                     },
                     BlockKind::Math => BlockKind::Math,
+                    BlockKind::FrontMatterSource { section } => {
+                        BlockKind::FrontMatterSource { section: *section }
+                    }
                     _ => BlockKind::Paragraph,
                 };
                 self.flatten_wide_table();
@@ -444,7 +509,10 @@ impl<'a> Builder<'a> {
         if block.text.is_empty()
             && !matches!(
                 block.kind,
-                BlockKind::Rule | BlockKind::Image { .. } | BlockKind::TableRow { .. }
+                BlockKind::Rule
+                    | BlockKind::Image { .. }
+                    | BlockKind::TableRow { .. }
+                    | BlockKind::FrontMatter { .. }
             )
         {
             return;
@@ -523,7 +591,10 @@ mod tests {
     fn gfm_blocks_styles_source_maps_and_anchors() {
         let text = "---\ntitle: Demo\n---\n# Hello *world*\n\n[link](other.md#anchor) &amp; **bold** ~~gone~~\n\n- [x] done\n- next\n\n> [!WARNING]\n> Careful\n\n| Left | Right |\n| :--- | ---: |\n| one | two |\n\n# Hello world\n";
         let doc = parse(text);
-        assert!(matches!(doc.blocks[0].kind, BlockKind::FrontMatter));
+        assert!(matches!(
+            doc.blocks[0].kind,
+            BlockKind::FrontMatter { error: None, .. }
+        ));
         assert_eq!(
             doc.headings
                 .iter()

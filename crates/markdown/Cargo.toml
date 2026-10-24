@@ -12,6 +12,10 @@ pulldown-cmark = { version = "0.13.4", default-features = false }
 plastext-buffer.workspace = true
 url = "2"
 percent-encoding = "2"
+# Keep source-offset behavior deliberate; see metadata's Unicode/CRLF tests.
+saphyr-parser = "=0.2.2"
+toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
+toml_parser = "1"
 
 [dev-dependencies]
 tempfile.workspace = true
