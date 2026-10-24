@@ -18,7 +18,7 @@ use gpui::{
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
 use plastext_search::Query;
-use plastext_syntax::{Highlight, Language, SyntaxTree};
+use plastext_syntax::{Highlight, Language, Symbol, SyntaxTree};
 
 use crate::{
     Theme,
@@ -144,6 +144,8 @@ pub struct TextView {
     language: Option<&'static Language>,
     /// Set once the background parse finishes.
     syntax: Option<Arc<SyntaxTree>>,
+    /// The file's definitions, found after parsing.
+    symbols: Option<Arc<Vec<Symbol>>>,
     /// Stops the background parse when the view goes away.
     cancel_parse: Arc<AtomicBool>,
     focus_handle: FocusHandle,
@@ -246,12 +248,16 @@ impl TextView {
             .map(|(language, text)| {
                 let cancel = cancel_parse.clone();
                 let parsing = cx.background_executor().spawn(async move {
-                    SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))
+                    let tree =
+                        SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))?;
+                    let symbols = tree.symbols(&text);
+                    Some((tree, symbols))
                 });
                 cx.spawn(async move |this, cx| {
-                    if let Some(tree) = parsing.await {
+                    if let Some((tree, symbols)) = parsing.await {
                         this.update(cx, |this, cx| {
                             this.syntax = Some(Arc::new(tree));
+                            this.symbols = Some(Arc::new(symbols));
                             cx.notify();
                         })
                         .ok();
@@ -264,6 +270,7 @@ impl TextView {
             style,
             language,
             syntax: None,
+            symbols: None,
             cancel_parse,
             focus_handle: cx.focus_handle(),
             top: 0,
@@ -294,6 +301,7 @@ impl TextView {
         let index = self.index.clone();
         let style = self.style.clone();
         let syntax = self.syntax.clone();
+        let symbols = self.symbols.clone();
         // Reuse the parse if it's done; otherwise parse again.
         let language = self.language.filter(|_| syntax.is_none());
         let top = self.top;
@@ -301,6 +309,7 @@ impl TextView {
             let mut view = Self::new(source, index, style, language, cx);
             view.language = self.language;
             view.syntax = syntax;
+            view.symbols = symbols;
             view.top = top;
             view
         })
@@ -327,6 +336,11 @@ impl TextView {
             error: self.error.clone(),
             notice: self.notice.clone(),
         }
+    }
+
+    /// The file's definitions, once it's parsed; `None` for languages without them too.
+    pub fn symbols(&self) -> Option<Arc<Vec<Symbol>>> {
+        self.symbols.clone().filter(|symbols| !symbols.is_empty())
     }
 
     /// The byte offset of the row at the top of the view.

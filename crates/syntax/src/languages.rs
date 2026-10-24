@@ -11,11 +11,14 @@ pub struct Language {
     grammar: fn() -> tree_sitter::Language,
     /// Highlight queries, concatenated in order: earlier patterns win.
     highlights: &'static [&'static str],
+    /// Tags queries, for symbols; empty if the language has none.
+    tags: &'static [&'static str],
     extensions: &'static [&'static str],
     file_names: &'static [&'static str],
     /// Interpreters named on a `#!` line.
     interpreters: &'static [&'static str],
     query: OnceLock<Option<HighlightQuery>>,
+    tags_query: OnceLock<Option<Query>>,
 }
 
 pub(crate) struct HighlightQuery {
@@ -27,6 +30,25 @@ pub(crate) struct HighlightQuery {
 impl Language {
     pub(crate) fn grammar(&self) -> tree_sitter::Language {
         (self.grammar)()
+    }
+
+    /// The compiled tags query, or `None` if there's none or it doesn't compile.
+    pub(crate) fn tags_query(&self) -> Option<&Query> {
+        self.tags_query
+            .get_or_init(|| {
+                if self.tags.is_empty() {
+                    return None;
+                }
+                Query::new(&self.grammar(), &self.tags.concat())
+                    .inspect_err(|err| {
+                        eprintln!(
+                            "plastext: the {} tags query doesn't compile: {err}",
+                            self.name
+                        )
+                    })
+                    .ok()
+            })
+            .as_ref()
     }
 
     /// The compiled highlight query, or `None` if it doesn't compile.
@@ -57,15 +79,17 @@ impl Language {
 }
 
 macro_rules! language {
-    ($name:literal, $grammar:expr, [$($highlights:expr),+ $(,)?], extensions: [$($extension:literal),* $(,)?], file_names: [$($file_name:literal),* $(,)?], interpreters: [$($interpreter:literal),* $(,)?] $(,)?) => {
+    ($name:literal, $grammar:expr, [$($highlights:expr),+ $(,)?], $(tags: [$($tags:expr),+ $(,)?],)? extensions: [$($extension:literal),* $(,)?], file_names: [$($file_name:literal),* $(,)?], interpreters: [$($interpreter:literal),* $(,)?] $(,)?) => {
         Language {
             name: $name,
             grammar: || $grammar.into(),
             highlights: &[$($highlights),+],
+            tags: &[$($($tags),+)?],
             extensions: &[$($extension),*],
             file_names: &[$($file_name),*],
             interpreters: &[$($interpreter),*],
             query: OnceLock::new(),
+            tags_query: OnceLock::new(),
         }
     };
 }
@@ -83,6 +107,7 @@ static LANGUAGES: [Language; 15] = [
         "C",
         tree_sitter_c::LANGUAGE,
         [tree_sitter_c::HIGHLIGHT_QUERY],
+        tags: [tree_sitter_c::TAGS_QUERY],
         extensions: ["c", "h"],
         file_names: [],
         interpreters: [],
@@ -91,6 +116,7 @@ static LANGUAGES: [Language; 15] = [
         "C++",
         tree_sitter_cpp::LANGUAGE,
         [tree_sitter_cpp::HIGHLIGHT_QUERY, tree_sitter_c::HIGHLIGHT_QUERY],
+        tags: [tree_sitter_cpp::TAGS_QUERY],
         extensions: ["cc", "cpp", "cxx", "c++", "hh", "hpp", "hxx", "h++", "ipp", "tpp", "inl"],
         file_names: [],
         interpreters: [],
@@ -107,6 +133,7 @@ static LANGUAGES: [Language; 15] = [
         "Go",
         tree_sitter_go::LANGUAGE,
         [tree_sitter_go::HIGHLIGHTS_QUERY],
+        tags: [tree_sitter_go::TAGS_QUERY],
         extensions: ["go"],
         file_names: [],
         interpreters: [],
@@ -123,6 +150,7 @@ static LANGUAGES: [Language; 15] = [
         "JavaScript",
         tree_sitter_javascript::LANGUAGE,
         [tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_javascript::JSX_HIGHLIGHT_QUERY],
+        tags: [tree_sitter_javascript::TAGS_QUERY],
         extensions: ["js", "mjs", "cjs", "jsx"],
         file_names: [],
         interpreters: ["node", "deno", "bun"],
@@ -139,6 +167,7 @@ static LANGUAGES: [Language; 15] = [
         "Markdown",
         tree_sitter_md::LANGUAGE,
         [tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
+        tags: [crate::symbols::MARKDOWN_TAGS],
         extensions: ["md", "markdown", "mdown", "mkd", "mdx"],
         file_names: [],
         interpreters: [],
@@ -147,6 +176,7 @@ static LANGUAGES: [Language; 15] = [
         "Python",
         tree_sitter_python::LANGUAGE,
         [tree_sitter_python::HIGHLIGHTS_QUERY],
+        tags: [tree_sitter_python::TAGS_QUERY],
         extensions: ["py", "pyi", "pyw"],
         file_names: [],
         interpreters: ["python", "python2", "python3"],
@@ -155,6 +185,7 @@ static LANGUAGES: [Language; 15] = [
         "Rust",
         tree_sitter_rust::LANGUAGE,
         [tree_sitter_rust::HIGHLIGHTS_QUERY],
+        tags: [tree_sitter_rust::TAGS_QUERY],
         extensions: ["rs"],
         file_names: [],
         interpreters: [],
@@ -175,6 +206,7 @@ static LANGUAGES: [Language; 15] = [
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
         ],
+        tags: [tree_sitter_typescript::TAGS_QUERY, tree_sitter_javascript::TAGS_QUERY],
         extensions: ["tsx"],
         file_names: [],
         interpreters: [],
@@ -183,6 +215,7 @@ static LANGUAGES: [Language; 15] = [
         "TypeScript",
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
         [tree_sitter_typescript::HIGHLIGHTS_QUERY, tree_sitter_javascript::HIGHLIGHT_QUERY],
+        tags: [tree_sitter_typescript::TAGS_QUERY, tree_sitter_javascript::TAGS_QUERY],
         extensions: ["ts", "mts", "cts"],
         file_names: [],
         interpreters: [],
@@ -269,9 +302,15 @@ mod tests {
     }
 
     #[test]
-    fn every_highlight_query_compiles() {
+    fn every_query_compiles() {
         for language in languages() {
             assert!(language.highlight_query().is_some(), "{}", language.name);
+            assert_eq!(
+                language.tags_query().is_some(),
+                !language.tags.is_empty(),
+                "{}",
+                language.name
+            );
         }
     }
 }

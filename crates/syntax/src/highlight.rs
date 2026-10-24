@@ -105,6 +105,10 @@ impl SyntaxTree {
         self.language
     }
 
+    pub(crate) fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
     /// The highlighted spans within `range` of `text`, which must be the text
     /// that was parsed. Spans are sorted, don't overlap, and lie within `range`.
     ///

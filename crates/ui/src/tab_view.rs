@@ -1,5 +1,8 @@
+use std::sync::Arc;
+
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription};
 use plastext_editor::{HexView, HexViewStatus, TextView, TextViewStatus};
+use plastext_syntax::Symbol;
 
 /// What a tab shows: text, or a hex dump for binary files (spec TXT-9).
 #[derive(Clone)]
@@ -33,6 +36,13 @@ impl TabView {
     pub fn scroll_to_line(&self, line: u64, cx: &mut App) {
         if let Self::Text(view) = self {
             view.update(cx, |view, cx| view.scroll_to_line(line, cx));
+        }
+    }
+
+    pub fn symbols(&self, cx: &App) -> Option<Arc<Vec<Symbol>>> {
+        match self {
+            Self::Text(view) => view.read(cx).symbols(),
+            Self::Hex(_) => None,
         }
     }
 

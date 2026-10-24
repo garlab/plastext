@@ -18,6 +18,7 @@ use crate::{
     layout::{Axis, Layout},
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
+    symbol_picker::{SymbolPicker, SymbolPickerEvent},
     tab_view::TabView,
 };
 
@@ -32,7 +33,8 @@ actions!(
         SearchProject,
         ShowFiles,
         GoBack,
-        GoForward
+        GoForward,
+        GoToSymbol
     ]
 );
 
@@ -48,6 +50,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
     crate::quick_open::init(cx);
+    crate::symbol_picker::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("cmd-p", OpenQuickOpen, context),
@@ -58,6 +61,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift--", GoForward, context),
         KeyBinding::new("cmd-[", GoBack, context),
         KeyBinding::new("cmd-]", GoForward, context),
+        KeyBinding::new("cmd-shift-o", GoToSymbol, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -79,6 +83,7 @@ pub struct Workspace {
     sidebar: Sidebar,
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
+    symbol_picker: Option<(Entity<SymbolPicker>, Subscription)>,
     open_options: OpenOptions,
     syntax_max_file_size: u64,
     text_style: TextStyle,
@@ -171,6 +176,7 @@ impl Workspace {
             sidebar: Sidebar::Files,
             search: None,
             quick_open: None,
+            symbol_picker: None,
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
@@ -398,6 +404,7 @@ impl Workspace {
             return;
         };
         let options = self.tree_options.clone();
+        self.symbol_picker = None;
         let quick_open = cx.new(|cx| QuickOpen::new(root, options, window, cx));
         let events = cx.subscribe_in(&quick_open, window, |this, _, event, window, cx| {
             this.close_quick_open(window, cx);
@@ -555,8 +562,35 @@ impl Workspace {
         }
     }
 
+    fn go_to_symbol(&mut self, _: &GoToSymbol, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.panes[&self.active_pane].active_tab() else {
+            return;
+        };
+        let Some(symbols) = tab.view.symbols(cx) else {
+            self.notice = Some("There are no symbols in this file (yet).".into());
+            cx.notify();
+            return;
+        };
+        let position = tab.view.position(cx);
+        self.quick_open = None;
+        let picker = cx.new(|cx| SymbolPicker::new(symbols, position, window, cx));
+        let events = cx.subscribe_in(&picker, window, |this, _, event, window, cx| {
+            this.close_quick_open(window, cx);
+            if let SymbolPickerEvent::Go(offset) = event {
+                this.record_jump(cx);
+                if let Some(tab) = this.panes[&this.active_pane].active_tab() {
+                    tab.view.clone().scroll_to_offset(*offset, cx);
+                }
+            }
+        });
+        self.symbol_picker = Some((picker, events));
+        cx.notify();
+    }
+
+    /// Closes Quick Open or the symbol picker, whichever is open.
     fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.quick_open.take().is_none() {
+        let closed_symbols = self.symbol_picker.take().is_some();
+        if self.quick_open.take().is_none() && !closed_symbols {
             return;
         }
         match self.panes[&self.active_pane].active_tab() {
@@ -787,6 +821,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::show_files))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::go_forward))
+            .on_action(cx.listener(Self::go_to_symbol))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
@@ -810,6 +845,16 @@ impl Render for Workspace {
                     .child(editor_area),
             )
             .child(self.render_status_bar(theme, cx))
+            .children(self.symbol_picker.as_ref().map(|(picker, _)| {
+                div()
+                    .absolute()
+                    .top(px(56.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(picker.clone())
+            }))
             .children(self.quick_open.as_ref().map(|(quick_open, _)| {
                 div()
                     .absolute()
