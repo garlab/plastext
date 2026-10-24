@@ -15,6 +15,7 @@ use plastext_settings::ByteSize;
 
 mod m1;
 mod m2;
+mod native_log;
 
 #[derive(Parser)]
 #[command(
@@ -58,9 +59,15 @@ enum Commands {
         frames: usize,
         #[arg(long)]
         app: Option<PathBuf>,
-        /// Activate the benchmark window so occlusion cannot suspend its frames.
+        /// Activate the benchmark window; covered windows may suspend drawing.
         #[arg(long)]
         foreground: bool,
+        /// Keep the benchmark visible above other apps in a temporary popup window.
+        #[arg(long, requires = "foreground")]
+        keep_visible: bool,
+        /// Save native measurements, including incomplete or failed runs.
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Write server-log lines up to SIZE (e.g. "10GB").
     Log { size: ByteSize, path: PathBuf },
@@ -103,7 +110,17 @@ fn main() -> ExitCode {
             frames,
             app,
             foreground,
-        } => m1::read(&file, root.as_deref(), frames, app, foreground),
+            keep_visible,
+            output,
+        } => m1::read(
+            &file,
+            root.as_deref(),
+            frames,
+            app,
+            foreground,
+            keep_visible,
+            output.as_deref(),
+        ),
         Commands::Log { size, path } => {
             write_file(&path, |out| plastext_bench::write_log(out, size.0))
         }

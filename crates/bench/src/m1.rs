@@ -288,6 +288,8 @@ pub fn read(
     frames: usize,
     app: Option<PathBuf>,
     foreground: bool,
+    keep_visible: bool,
+    output: Option<&Path>,
 ) -> io::Result<()> {
     if !file.is_file() {
         return Err(io::Error::other(
@@ -303,8 +305,12 @@ pub fn read(
         command.arg(root);
     }
     command.env_remove("PLASTEXT_PROFILE_FOREGROUND");
+    command.env_remove("PLASTEXT_PROFILE_KEEP_VISIBLE");
     if foreground {
         command.env("PLASTEXT_PROFILE_FOREGROUND", "1");
+    }
+    if keep_visible {
+        command.env("PLASTEXT_PROFILE_KEEP_VISIBLE", "1");
     }
     let log = std::env::temp_dir().join(format!("plastext-read-{}.log", std::process::id()));
     println!("Native profile log: {}", log.display());
@@ -327,82 +333,81 @@ pub fn read(
     // A file without parser support must fail, not leave the app running
     // indefinitely. Allow for a slow display plus a minute of setup.
     let deadline = Instant::now() + Duration::from_secs(60 + frames as u64 / 20);
+    let mut timed_out = false;
+    let mut stalled = false;
+    let mut progress = (0, Instant::now());
+    let mut last_probe = Instant::now();
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
         }
-        if Instant::now() >= deadline {
+        if last_probe.elapsed() >= Duration::from_millis(250) {
+            let bytes = fs::metadata(&log).map_or(0, |m| m.len());
+            if bytes != progress.0 {
+                progress = (bytes, Instant::now());
+            }
+            last_probe = Instant::now();
+        }
+        if Instant::now() >= deadline || progress.1.elapsed() >= Duration::from_secs(30) {
+            timed_out = true;
+            stalled = progress.1.elapsed() >= Duration::from_secs(30);
             child.kill().ok();
-            child.wait().ok();
-            return Err(io::Error::other(format!(
-                "native profile timed out; see {}",
-                log.display()
-            )));
+            break child.wait()?;
         }
         thread::sleep(Duration::from_millis(20));
     };
     let stderr = fs::read_to_string(&log)?;
-    let mut times = Vec::new();
-    let mut scrolling = false;
-    let mut finished = false;
+    let markdown = plastext_markdown::is_markdown(file);
+    let parsed = crate::native_log::NativeLog::parse(&stderr, markdown);
+    let complete = parsed.complete(status.success(), timed_out, frames);
     let mut report = Vec::new();
     let mut passed = true;
-    for line in stderr.lines() {
-        if line == "reading: scrolling" {
-            scrolling = true;
-        }
-        if line == "reading: done" {
-            finished = true;
-            scrolling = false;
-        }
-        for (prefix, budget) in [
-            ("reading: first paint ", Some(50.)),
-            ("reading: syntax paint ", Some(100.)),
-            ("reading: full syntax paint ", None),
-        ] {
-            if let Some(value) = line
-                .strip_prefix(prefix)
-                .and_then(|value| value.strip_suffix(" ms"))
-                .and_then(|value| value.parse::<f64>().ok())
-            {
-                passed &= metric(&mut report, prefix.trim(), &mut [value], budget);
-            }
-        }
-        if scrolling
-            && let Some(time) = line
-                .strip_prefix("frame duration: ")
-                .and_then(parse_duration)
-        {
-            times.push(time);
-        }
+    for &(name, value, budget) in &parsed.paints {
+        passed &= metric(&mut report, name, &mut [value], budget);
     }
-    if !status.success() || !finished || times.len() < frames.max(1) {
+    let mut times = parsed.frames;
+    if !parsed.intervals.is_empty() {
+        metric(
+            &mut report,
+            "native frame intervals (includes display pacing)",
+            &mut parsed.intervals.clone(),
+            None,
+        );
+    }
+    if !times.is_empty() {
+        passed &= metric(
+            &mut report,
+            "native scrolling frame wall time (draw + submit)",
+            &mut times,
+            Some(8.),
+        );
+    }
+    passed &= complete;
+    if let Some(output) = output {
+        fs::write(
+            output,
+            serde_json::to_vec_pretty(&json!({
+                "schema": 1, "file": file, "view": if markdown { "markdown" } else { "code" },
+                "requested_frames": frames.max(1), "observed_frames": times.len(), "foreground": foreground,
+                "complete": complete, "timed_out": timed_out, "stalled": stalled,
+                "keep_visible": keep_visible, "passed": passed, "log": log,
+                "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
+                "metrics": report,
+            }))?,
+        )?;
+    }
+    if !complete {
         return Err(io::Error::other(format!(
-            "incomplete native profile ({} frames, status {}, finished {}):\n{}",
+            "incomplete native profile ({} frames, status {}, timed out {}):\n{}",
             times.len(),
             status,
-            finished,
+            timed_out,
             stderr.lines().rev().take(30).collect::<Vec<_>>().join("\n")
         )));
     }
-    passed &= metric(
-        &mut report,
-        "native scrolling frame wall time (draw + submit)",
-        &mut times,
-        Some(8.),
-    );
     if passed {
         Ok(())
     } else {
         Err(io::Error::other("native reading budget failed"))
     }
-}
-
-fn parse_duration(value: &str) -> Option<f64> {
-    for (suffix, multiplier) in [("ms", 1.), ("µs", 0.001), ("ns", 0.000001), ("s", 1000.)] {
-        if let Some(number) = value.strip_suffix(suffix) {
-            return number.parse::<f64>().ok().map(|n| n * multiplier);
-        }
-    }
-    None
 }

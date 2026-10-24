@@ -1,0 +1,940 @@
+{
+  "schema": 1,
+  "upstream_commit": "8000fbd4e29cca2c0cb1e88b745af3ed2f436b66",
+  "fixture_sha256": "7b69e30eddfb2f80e643ac70aaab468cce161eced7bb2143638a9a67f433b5de",
+  "scope": "KaTeX screenshot fixtures: native compilation only, not visual parity; HTML wrappers, CSS and noThrow/errorColor options are not implemented",
+  "compiled": 86,
+  "total": 128,
+  "compile_percent": 67.1875,
+  "visual_pass_percent": null,
+  "results": [
+    {
+      "name": "Accents",
+      "compiled": true,
+      "error": null,
+      "process_ms": 873.1229999102652,
+      "browser_context_options": {}
+    },
+    {
+      "name": "AccentsText",
+      "compiled": false,
+      "error": "error: unknown command: \\'\n",
+      "process_ms": 9.308042004704475,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Align",
+      "compiled": true,
+      "error": null,
+      "process_ms": 23.76737492159009,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Aligned",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.85058404877782,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Alignedat",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.462292220443487,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Arrays",
+      "compiled": false,
+      "error": "error: unknown command: \\hdashline\n",
+      "process_ms": 5.690750200301409,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ArrayMode",
+      "compiled": false,
+      "error": "Typst source error: [SourceDiagnostic { severity: Error, span: DiagSpan { span: Span(330697299582013), extra: 0 }, message: \"unknown variable: diff\", trace: [], hints: [\"if you meant to display multiple letters as is, try adding spaces between each letter: `d i f f`\", \"or if you meant to display this as text, try placing it in quotes: `\\\"diff\\\"`\"] }]\n",
+      "process_ms": 15.917540993541479,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ArrayType",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.233917023986578,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ArrayRemoveEmptyLine",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.44104130193591,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Baseline",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.86016719415784,
+      "browser_context_options": {}
+    },
+    {
+      "name": "BasicTest",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.38250022754073,
+      "browser_context_options": {}
+    },
+    {
+      "name": "BinCancellation",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.262249883264303,
+      "browser_context_options": {}
+    },
+    {
+      "name": "BinomTest",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.36037479713559,
+      "browser_context_options": {}
+    },
+    {
+      "name": "BoldSpacing",
+      "compiled": false,
+      "error": "error: unknown command: \\mathscr\n",
+      "process_ms": 5.9951250441372395,
+      "browser_context_options": {}
+    },
+    {
+      "name": "BoldSymbol",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.878292128443718,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Boxed",
+      "compiled": false,
+      "error": "error: unknown command: \\angl\n",
+      "process_ms": 5.974333733320236,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Cases",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.9087920114398,
+      "browser_context_options": {}
+    },
+    {
+      "name": "CD",
+      "compiled": false,
+      "error": "error: unknown environment: \\CD\n",
+      "process_ms": 5.629250314086676,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Colors",
+      "compiled": false,
+      "error": "error: unknown command: \\blue\n",
+      "process_ms": 5.23779122158885,
+      "browser_context_options": {
+        "nolatex": "different syntax and different scope"
+      }
+    },
+    {
+      "name": "ColorImplicit",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.232332844287157,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ColorSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.567249946296215,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Colorbox",
+      "compiled": false,
+      "error": "error: unknown command: \\fcolorbox\n",
+      "process_ms": 6.028332747519016,
+      "browser_context_options": {}
+    },
+    {
+      "name": "DashesAndQuotes",
+      "compiled": true,
+      "error": null,
+      "process_ms": 20.314416848123074,
+      "browser_context_options": {}
+    },
+    {
+      "name": "DeepFontSizing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.882291693240404,
+      "browser_context_options": {
+        "nolatex": "\\Huge inside \\dfrac doesn't work, needs an extra {\u2026}"
+      }
+    },
+    {
+      "name": "DelimiterSizing",
+      "compiled": false,
+      "error": "Typst source error: [SourceDiagnostic { severity: Error, span: DiagSpan { span: Span(330697299582013), extra: 0 }, message: \"unknown symbol modifier\", trace: [], hints: [] }]\n",
+      "process_ms": 16.767458990216255,
+      "browser_context_options": {}
+    },
+    {
+      "name": "DisplayMode",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.824416048824787,
+      "browser_context_options": {
+        "pre": "pre",
+        "post": "post"
+      }
+    },
+    {
+      "name": "DisplayStyle",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.72399991750717,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Dots",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.740291077643633,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Equation",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.865125089883804,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Exponents",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.762291245162487,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ExtensibleArrows",
+      "compiled": false,
+      "error": "Typst source error: [SourceDiagnostic { severity: Error, span: DiagSpan { span: Span(562976581085712), extra: 0 }, message: \"panicked with: Extended arrows are not implemented in this spike\", trace: [Call(Some(\"xarrow\")), Call(None), Call(Some(\"eval\"))], hints: [] }]\n",
+      "process_ms": 15.851084142923355,
+      "browser_context_options": {}
+    },
+    {
+      "name": "FractionTest",
+      "compiled": false,
+      "error": "error: unknown command: \\genfrac\n",
+      "process_ms": 5.512416362762451,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Functions",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.92754216492176,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Gather",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.442999709397554,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Gathered",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.853332985192537,
+      "browser_context_options": {}
+    },
+    {
+      "name": "GreekLetters",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.719708055257797,
+      "browser_context_options": {}
+    },
+    {
+      "name": "GreekUnicode",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.236749943345785,
+      "browser_context_options": {}
+    },
+    {
+      "name": "GroupMacros",
+      "compiled": false,
+      "error": "error: unknown command: \\bgroup\n",
+      "process_ms": 5.178040824830532,
+      "browser_context_options": {
+        "macros": {
+          "\\startExp": "e^\\bgroup",
+          "\\endExp": "\\egroup"
+        }
+      }
+    },
+    {
+      "name": "HorizontalBraces",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.057500150054693,
+      "browser_context_options": {}
+    },
+    {
+      "name": "HorizontalBrackets",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.927083790302277,
+      "browser_context_options": {}
+    },
+    {
+      "name": "HTML",
+      "compiled": false,
+      "error": "error: unknown command: \\htmlId\n",
+      "process_ms": 5.073750391602516,
+      "browser_context_options": {
+        "nolatex": "HTML extension not supported by LaTeX"
+      }
+    },
+    {
+      "name": "Includegraphics",
+      "compiled": false,
+      "error": "error: unknown command: \\logo\n",
+      "process_ms": 4.48537478223443,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Integrands",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.409541945904493,
+      "browser_context_options": {}
+    },
+    {
+      "name": "KaTeX",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.836375299841166,
+      "browser_context_options": {
+        "nolatex": "\\KaTeX not supported by LaTeX"
+      }
+    },
+    {
+      "name": "Kern",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.00429182872176,
+      "browser_context_options": {
+        "nolatex": "LaTeX fails to typeset this, \u201cMissing number, treated as zero.\u201d"
+      }
+    },
+    {
+      "name": "Lap",
+      "compiled": false,
+      "error": "error: unknown command: \\mathllap\n",
+      "process_ms": 4.998499993234873,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LargeRuleNumerator",
+      "compiled": false,
+      "error": "error: unknown command: \\rule\n",
+      "process_ms": 4.688125103712082,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LaTeX",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.491374768316746,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LeftRight",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.001374926418066,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LeftRightListStyling",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.5948749743402,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LeftRightMiddle",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.04804117232561,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LeftRightStyleSizing",
+      "compiled": false,
+      "error": "error: unknown command: \\rule\n",
+      "process_ms": 5.110292229801416,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LimitControls",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.648084226995707,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LineBreak",
+      "compiled": false,
+      "error": "error: unknown command: \\allowbreak\n",
+      "process_ms": 4.915541969239712,
+      "browser_context_options": {}
+    },
+    {
+      "name": "LowerAccent",
+      "compiled": false,
+      "error": "error: unknown command: \\underleftarrow\n",
+      "process_ms": 4.576083272695541,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Mapsfrom",
+      "compiled": false,
+      "error": "error: unknown command: \\mapsfrom\n",
+      "process_ms": 4.5749591663479805,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathAtom",
+      "compiled": false,
+      "error": "error: unknown command: \\blue\n",
+      "process_ms": 4.570667166262865,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathAtom2",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.412125270813704,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathChoice",
+      "compiled": false,
+      "error": "error: unknown command: \\mathchoice\n",
+      "process_ms": 5.021458026021719,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathDefaultFonts",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.742958057671785,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathBb",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.743833966553211,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathBf",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.780417248606682,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathCal",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.895166900008917,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathFrak",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.789458993822336,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathIt",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.906750224530697,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathNormal",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.62583339586854,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathOp",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.15750014409423,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathRm",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.46737491339445,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathSf",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.761333215981722,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathSfIt",
+      "compiled": false,
+      "error": "error: unknown command: \\mathsfit\n",
+      "process_ms": 4.918667022138834,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathScr",
+      "compiled": false,
+      "error": "error: unknown command: \\mathscr\n",
+      "process_ms": 4.782875068485737,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathtoolsMatrix",
+      "compiled": false,
+      "error": "error: unknown environment: \\matrix*\n",
+      "process_ms": 4.899666178971529,
+      "browser_context_options": {}
+    },
+    {
+      "name": "MathTt",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.859333332628012,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Mod",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.938916873186827,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ModScript",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.441917046904564,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ModSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.251916997134686,
+      "browser_context_options": {}
+    },
+    {
+      "name": "NegativeSpaceBetweenRel",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.436582896858454,
+      "browser_context_options": {}
+    },
+    {
+      "name": "NegativeSpace",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.799749970436096,
+      "browser_context_options": {
+        "post": "."
+      }
+    },
+    {
+      "name": "NestedFractions",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.36679207533598,
+      "browser_context_options": {}
+    },
+    {
+      "name": "NewLine",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.55629200488329,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Not",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.760083846747875,
+      "browser_context_options": {}
+    },
+    {
+      "name": "NullDelimiterInteraction",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.98679181188345,
+      "browser_context_options": {}
+    },
+    {
+      "name": "OldFont",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.282792203128338,
+      "browser_context_options": {}
+    },
+    {
+      "name": "OperatorName",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.560249961912632,
+      "browser_context_options": {}
+    },
+    {
+      "name": "OpLimits",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.33800007402897,
+      "browser_context_options": {}
+    },
+    {
+      "name": "OverUnderline",
+      "compiled": false,
+      "error": "error: unknown command: \\blue\n",
+      "process_ms": 5.13012520968914,
+      "browser_context_options": {}
+    },
+    {
+      "name": "OverUnderset",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.20037481188774,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Phantom",
+      "compiled": false,
+      "error": "error: unknown command: \\blue\n",
+      "process_ms": 4.988666158169508,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Phase",
+      "compiled": false,
+      "error": "error: unknown command: \\phase\n",
+      "process_ms": 4.592332988977432,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Pmb",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.273083001375198,
+      "browser_context_options": {}
+    },
+    {
+      "name": "PrimeSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.294708009809256,
+      "browser_context_options": {}
+    },
+    {
+      "name": "PrimeSuper",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.54520770534873,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Raisebox",
+      "compiled": false,
+      "error": "error: unknown command: \\vcenter\n",
+      "process_ms": 5.191707983613014,
+      "browser_context_options": {}
+    },
+    {
+      "name": "ReactionArrows",
+      "compiled": false,
+      "error": "error: unknown command: \\xrightleftarrows\n",
+      "process_ms": 4.937666933983564,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Reflectbox",
+      "compiled": false,
+      "error": "error: unknown command: \\reflectbox\n",
+      "process_ms": 4.990333691239357,
+      "browser_context_options": {}
+    },
+    {
+      "name": "RelativeUnits",
+      "compiled": false,
+      "error": "error: unknown command: \\rule\n",
+      "process_ms": 5.050832871347666,
+      "browser_context_options": {}
+    },
+    {
+      "name": "RlapBug",
+      "compiled": false,
+      "error": "error: unknown command: \\mathrlap\n",
+      "process_ms": 4.90754097700119,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Rule",
+      "compiled": false,
+      "error": "error: unknown command: \\rule\n",
+      "process_ms": 4.758375231176615,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SizingBaseline",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.5800417996943,
+      "browser_context_options": {
+        "pre": "x",
+        "post": "M"
+      }
+    },
+    {
+      "name": "Sizing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.974916983395815,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Smash",
+      "compiled": false,
+      "error": "error: unknown command: \\smash\n",
+      "process_ms": 4.9544996581971645,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Spacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 15.788665972650051,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Sqrt",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.73962501809001,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SqrtRoot",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.918542191386223,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StackRel",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.84020771831274,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StretchyAccent",
+      "compiled": false,
+      "error": "error: unknown command: \\Overrightarrow\n",
+      "process_ms": 6.687457673251629,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StretchyAccentColor",
+      "compiled": false,
+      "error": "error: unknown command: \\red\n",
+      "process_ms": 5.877125076949596,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StrikeThrough",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.370834179222584,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StrikeThroughColor",
+      "compiled": false,
+      "error": "error: unknown command: \\red\n",
+      "process_ms": 5.795666947960854,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StyleSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.65395824238658,
+      "browser_context_options": {}
+    },
+    {
+      "name": "StyleSwitching",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.313833348453045,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SupSubCharacterBox",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.118165735155344,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SupSubHorizSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.648749984800816,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SupSubLeftAlignReset",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.639791127294302,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SupSubOffsets",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.778999637812376,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SurrogatePairs",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.297416158020496,
+      "browser_context_options": {}
+    },
+    {
+      "name": "SvgReset",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.81383326649666,
+      "browser_context_options": {
+        "styles": "display:block; width:500px;border:solid yellow 5px;padding:50px;background:#ccc;color:green;font-size:92px;transform:translate(100px,250px)rotate(-45deg);fill-opacity:0;stroke-width:40;stroke:blue;"
+      }
+    },
+    {
+      "name": "Symbols1",
+      "compiled": false,
+      "error": "error: unknown command: \\textdollar\n",
+      "process_ms": 6.03970792144537,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Tag",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.25475024431944,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Text",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.35433393716812,
+      "browser_context_options": {}
+    },
+    {
+      "name": "TextSpace",
+      "compiled": false,
+      "error": "error: unknown command: \\verb\n",
+      "process_ms": 6.159292068332434,
+      "browser_context_options": {}
+    },
+    {
+      "name": "TextStacked",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.034167122095823,
+      "browser_context_options": {}
+    },
+    {
+      "name": "TextWithMath",
+      "compiled": true,
+      "error": null,
+      "process_ms": 17.850291915237904,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Unicode",
+      "compiled": true,
+      "error": null,
+      "process_ms": 18.40541698038578,
+      "browser_context_options": {}
+    },
+    {
+      "name": "Units",
+      "compiled": true,
+      "error": null,
+      "process_ms": 19.52320896089077,
+      "browser_context_options": {}
+    },
+    {
+      "name": "UnsupportedCmds",
+      "compiled": false,
+      "error": "error: unknown command: \\err\n",
+      "process_ms": 5.40970778092742,
+      "browser_context_options": {
+        "noThrow": 1,
+        "errorColor": "#dd4c4c",
+        "nolatex": "deliberately does not compile"
+      }
+    },
+    {
+      "name": "Verb",
+      "compiled": false,
+      "error": "error: unknown command: \\verb\n",
+      "process_ms": 5.056167021393776,
+      "browser_context_options": {}
+    },
+    {
+      "name": "VerticalSpacing",
+      "compiled": true,
+      "error": null,
+      "process_ms": 16.147333197295666,
+      "browser_context_options": {
+        "pre": "potato<br>blah",
+        "post": "<br>moo"
+      }
+    }
+  ]
+}

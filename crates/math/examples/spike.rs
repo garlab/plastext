@@ -3,6 +3,19 @@ use std::{fs, path::PathBuf, time::Instant};
 use typst_layout::PagedDocument;
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--case") {
+        let args: Vec<_> = std::env::args().collect();
+        let tex = fs::read_to_string(&args[2]).expect("TeX fixture");
+        let display = args.get(4).is_none_or(|v| v != "inline");
+        match render(&tex, display) {
+            Ok(svg) => fs::write(&args[3], svg).expect("SVG output"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let output = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
@@ -46,24 +59,7 @@ fn main() {
     let mut passed = 0;
     for (name, tex) in samples {
         let begin = Instant::now();
-        let result = (|| -> Result<String, String> {
-            let converted = mitex::convert_math(tex, None).map_err(|e| e.to_string())?;
-            let source = format!(
-                "#import \"standard.typ\": package\n#set page(width: auto, height: auto, margin: 8pt)\n#set text(size: 18pt)\n#math.equation(block: true, eval({:?}, scope: package.scope))",
-                format!("$ {converted} $")
-            );
-            let engine = typst_as_lib::TypstEngine::builder()
-                .main_file(source)
-                .with_static_source_file_resolver([
-                    ("standard.typ", include_str!("../spike/mitex/standard.typ")),
-                    ("prelude.typ", include_str!("../spike/mitex/prelude.typ")),
-                ])
-                .fonts(typst_assets::fonts())
-                .build();
-            let document: PagedDocument = engine.compile().output.map_err(|e| e.to_string())?;
-            let page = document.pages().first().ok_or("no page")?;
-            Ok(typst_svg::svg(page, &Default::default()))
-        })();
+        let result = render(tex, true);
         match result {
             Ok(svg) => {
                 passed += 1;
@@ -82,4 +78,27 @@ fn main() {
         start.elapsed().as_secs_f64() * 1000.,
         output.display()
     );
+}
+
+fn render(tex: &str, display: bool) -> Result<String, String> {
+    let converted = mitex::convert_math(tex, None).map_err(|e| e.to_string())?;
+    let source = format!(
+        "#import \"standard.typ\": package\n#set page(width: auto, height: auto, margin: 8pt)\n#set text(size: 18pt)\n#math.equation(block: {display}, eval({:?}, scope: package.scope))",
+        if display {
+            format!("$ {converted} $")
+        } else {
+            format!("${converted}$")
+        }
+    );
+    let engine = typst_as_lib::TypstEngine::builder()
+        .main_file(source)
+        .with_static_source_file_resolver([
+            ("standard.typ", include_str!("../spike/mitex/standard.typ")),
+            ("prelude.typ", include_str!("../spike/mitex/prelude.typ")),
+        ])
+        .fonts(typst_assets::fonts())
+        .build();
+    let document: PagedDocument = engine.compile().output.map_err(|e| e.to_string())?;
+    let page = document.pages().first().ok_or("no page")?;
+    Ok(typst_svg::svg(page, &Default::default()))
 }

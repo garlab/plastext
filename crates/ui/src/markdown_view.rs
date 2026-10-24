@@ -22,6 +22,7 @@ use std::{
 
 use crate::tab_view::format_size;
 mod find;
+mod profile;
 type CodeHighlights = Arc<Vec<(std::ops::Range<usize>, Highlight)>>;
 
 actions!(
@@ -73,6 +74,8 @@ pub struct MarkdownView {
     source: Arc<FileSource>,
     index: Arc<LineIndex>,
     text_style: TextStyle,
+    settings: Arc<plastext_settings::Markdown>,
+    prose_width: Option<gpui::Pixels>,
     document: Document,
     symbols: Arc<Vec<Symbol>>,
     list: ListState,
@@ -82,6 +85,7 @@ pub struct MarkdownView {
     _source_observer: Option<Subscription>,
     find: Option<find::FindState>,
     parsing: bool,
+    preview_complete: bool,
     notice: Option<SharedString>,
     pending_offset: Option<usize>,
     pending_anchor: Option<String>,
@@ -92,6 +96,7 @@ pub struct MarkdownView {
     code_highlights: HashMap<usize, Option<CodeHighlights>>,
     cancel: Arc<AtomicBool>,
     _parse: Task<()>,
+    profile: Option<profile::ReadingProfile>,
 }
 
 impl MarkdownView {
@@ -100,6 +105,7 @@ impl MarkdownView {
         source: Arc<FileSource>,
         index: Arc<LineIndex>,
         text_style: TextStyle,
+        settings: Arc<plastext_settings::Markdown>,
         cx: &mut Context<Self>,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
@@ -193,6 +199,8 @@ impl MarkdownView {
             source,
             index,
             text_style,
+            settings,
+            prose_width: None,
             document: Document::default(),
             symbols: Arc::default(),
             list,
@@ -202,6 +210,7 @@ impl MarkdownView {
             _source_observer: None,
             find: None,
             parsing: true,
+            preview_complete: false,
             notice: None,
             pending_offset: None,
             pending_anchor: None,
@@ -212,6 +221,7 @@ impl MarkdownView {
             code_highlights: HashMap::new(),
             cancel,
             _parse: parsing,
+            profile: None,
         }
     }
 
@@ -239,6 +249,7 @@ impl MarkdownView {
             }
             Update::Finished(summary, limited) => {
                 self.parsing = false;
+                self.preview_complete = !limited && !summary.cancelled;
                 self.document.headings = summary.headings;
                 self.document.warnings = summary.warnings;
                 self.update_symbols();
@@ -362,6 +373,7 @@ impl MarkdownView {
         let source = self.source.clone();
         let index = self.index.clone();
         let style = self.text_style.clone();
+        let settings = self.settings.clone();
         let offset = self.position(cx);
         let rendered = self.rendered;
         let source_view = self
@@ -369,7 +381,7 @@ impl MarkdownView {
             .as_ref()
             .map(|view| view.update(cx, |view, cx| view.duplicate(cx)));
         cx.new(|cx| {
-            let mut view = Self::new(path, source, index, style, cx);
+            let mut view = Self::new(path, source, index, style, settings, cx);
             view.pending_offset = Some(offset as usize);
             view.rendered = rendered;
             view.source_view = source_view;
@@ -445,7 +457,7 @@ impl MarkdownView {
                 continue;
             }
             if start > at {
-                runs.push(text_run(start - at, mono, false, false, theme.text, theme));
+                runs.push(text_run(start - at, mono, bold, false, theme.text, self));
             }
             let style = &span.style;
             let color = if style.dim {
@@ -463,7 +475,7 @@ impl MarkdownView {
                 style.strong || bold,
                 style.emphasis,
                 color,
-                theme,
+                self,
             );
             if style.strike {
                 run.strikethrough = Some(gpui::StrikethroughStyle {
@@ -485,7 +497,7 @@ impl MarkdownView {
                 false,
                 false,
                 theme.text,
-                theme,
+                self,
             ));
         }
         let weak = cx.entity().downgrade();
@@ -730,7 +742,7 @@ impl MarkdownView {
         let base = div()
             .id(("md-block", ix))
             .w_full()
-            .max_w(px(820.))
+            .max_w(self.prose_width.unwrap_or(px(820.)))
             .mx_auto()
             .px_6()
             .py_2()
@@ -922,9 +934,16 @@ fn text_run(
     bold: bool,
     italic: bool,
     color: gpui::Rgba,
-    _theme: Theme,
+    view: &MarkdownView,
 ) -> TextRun {
-    let mut face = font(if mono { "Menlo" } else { ".SystemUIFont" });
+    let family = if mono {
+        view.text_style.font_family.clone()
+    } else if view.settings.prose_font == "system" {
+        ".SystemUIFont".into()
+    } else {
+        view.settings.prose_font.clone().into()
+    };
+    let mut face = font(family);
     if bold {
         face.weight = FontWeight::BOLD;
     }
@@ -969,6 +988,22 @@ impl Focusable for MarkdownView {
 }
 impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.prose_width.is_none() {
+            let width = match self.settings.max_width {
+                plastext_settings::ProseWidth::Pixels(width) => px(width),
+                plastext_settings::ProseWidth::Chars(count) => {
+                    let family = if self.settings.prose_font == "system" {
+                        ".SystemUIFont"
+                    } else {
+                        &self.settings.prose_font
+                    };
+                    let system = window.text_system();
+                    let id = system.resolve_font(&font(family.to_owned()));
+                    system.advance(id, px(16.), '0').map_or(px(8.), |s| s.width) * count
+                }
+            };
+            self.prose_width = Some(width + px(48.));
+        }
         let theme = Theme::get(window, cx);
         let find_bar = self.find_bar(theme, cx);
         let weak = cx.entity().downgrade();
@@ -998,6 +1033,7 @@ impl Render for MarkdownView {
         };
         div()
             .key_context("Markdown")
+            .relative()
             .size_full()
             .flex()
             .flex_col()
@@ -1033,6 +1069,20 @@ impl Render for MarkdownView {
                     .scroll_to_reveal_item(this.document.blocks.len().saturating_sub(1));
                 cx.notify();
             }))
+            .when(self.profile.is_some(), |d| {
+                let weak = cx.entity().downgrade();
+                d.child(
+                    gpui::canvas(
+                        |_, _, _| (),
+                        move |_, _, window, cx| {
+                            weak.update(cx, |this, cx| this.profile_painted(window, cx))
+                                .ok();
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .child(
                 div()
                     .flex()

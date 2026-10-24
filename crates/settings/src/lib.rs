@@ -4,6 +4,7 @@
 //! the file leaves out.
 
 mod byte_size;
+mod markdown;
 mod theme;
 mod vscode;
 
@@ -15,6 +16,7 @@ use std::{
 use serde::Deserialize;
 
 pub use byte_size::ByteSize;
+pub use markdown::{Markdown, ProseWidth};
 pub use theme::{Color, SyntaxOverrides, ThemeOverrides, Themes};
 pub use vscode::{ThemeImportError, import_vscode_theme};
 
@@ -26,6 +28,7 @@ pub struct Settings {
     pub files: Files,
     pub limits: Limits,
     pub theme: Themes,
+    pub markdown: Markdown,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

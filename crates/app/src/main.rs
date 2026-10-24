@@ -199,6 +199,13 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
 
     let options = WindowOptions {
         focus: should_activate(),
+        kind: if env::var_os("PLASTEXT_PROFILE_READING").is_some()
+            && env::var_os("PLASTEXT_PROFILE_KEEP_VISIBLE").is_some()
+        {
+            gpui::WindowKind::PopUp
+        } else {
+            gpui::WindowKind::Normal
+        },
         titlebar: Some(TitlebarOptions {
             title: Some(Workspace::title(request.root.as_deref())),
             ..Default::default()

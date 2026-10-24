@@ -100,6 +100,7 @@ pub struct Workspace {
     outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
+    markdown_settings: Arc<settings::Markdown>,
     focus_handle: FocusHandle,
     /// Files in the order their tabs were last activated, most recent last.
     recent: Vec<PathBuf>,
@@ -216,6 +217,7 @@ impl Workspace {
                 sticky_scroll: settings.editor.sticky_scroll,
                 max_parse_size: settings.limits.syntax_max_file_size.0,
             },
+            markdown_settings: Arc::new(settings.markdown.clone()),
             focus_handle: cx.focus_handle(),
             recent: Vec::new(),
             back: Vec::new(),
@@ -281,6 +283,7 @@ impl Workspace {
         let options = self.open_options;
         let opening_started = Instant::now();
         let style = self.text_style.clone();
+        let markdown_settings = self.markdown_settings.clone();
         let opening = cx.background_executor().spawn({
             let path = path.clone();
             async move {
@@ -316,7 +319,21 @@ impl Workspace {
                         }
                         Opened::Text(source, index, _) if plastext_markdown::is_markdown(&path) => {
                             TabView::Markdown(cx.new(|cx| {
-                                MarkdownView::new(path.clone(), source, index, style, cx)
+                                let mut view = MarkdownView::new(
+                                    path.clone(),
+                                    source,
+                                    index,
+                                    style,
+                                    markdown_settings,
+                                    cx,
+                                );
+                                if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
+                                    .ok()
+                                    .and_then(|v| v.parse::<usize>().ok())
+                                {
+                                    view.profile_reading(opening_started, frames);
+                                }
+                                view
                             }))
                         }
                         Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {

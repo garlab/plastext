@@ -54,11 +54,24 @@ target/release/plastext-bench read /path/linux-6.12/kernel/sched/core.c --root /
 python3 scripts/m2-fixtures.py /tmp/plastext-m2          # 100 MB Markdown + 20M CSV records
 target/release/plastext-bench m2 /tmp/plastext-m2/large.md --output /tmp/m2-markdown.json
 target/release/plastext-bench csv /tmp/plastext-m2/large.csv
+target/release/plastext-bench read /tmp/plastext-m2/large.md --frames 10000 --foreground --keep-visible --output /tmp/m2-native.json
 ```
 
 `m1` measures first streamed Quick Open results and completed query rankings separately (including cached backspacing), plus warm project search. `--million` also tests one million synthetic paths derived from the real tree. `read` drives 10,000 native scroll frames and measures first paint, initial viewport highlighting, full-tree availability and GPUI frame drawing/submission. `--foreground` activates its window; leave it visible because macOS suspends drawing for covered windows. Both runners return a nonzero exit code when a measured budget fails. These checks do not substitute for the reference M1 Air run or measure GPU completion, idle memory, or features from later milestones. See [the M1 performance report](docs/m1-performance.md) for results and remaining gaps.
 
 The `m2` and `csv` commands measure core parsing/indexing, not native scrolling or milestone sign-off. Open [the M2 demo](docs/fixtures/m2.md) to exercise the new views. Markdown find currently uses case-sensitive literal text; Source offers the existing text reader's search and selection.
+
+`read` also profiles Markdown, including initial preview paint, completion of the full model, and scrolling through distant sections. `--keep-visible` uses a temporary popup window above other apps to prevent occlusion; it requires `--foreground` and changes only benchmark windows. The runner saves failed and incomplete results with `--output`, and aborts after 30 seconds without frame progress.
+
+Markdown typography can be configured in `config.toml` (restart to apply):
+
+```toml
+[markdown]
+prose_font = "system" # or an installed family, e.g. "Georgia"
+max_width = "80ch"   # zero-glyph widths in the prose font; "720px" also works
+```
+
+Code and inline code use `editor.font` independently of the prose font.
 
 ## Themes and folding
 
