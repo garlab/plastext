@@ -2,21 +2,27 @@
 
 mod windows;
 
-use std::{ffi::OsString, io, iter, process::ExitCode};
+use std::{ffi::OsString, io, iter, process::ExitCode, sync::Arc};
 
 use clap::Parser as _;
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
-    App, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
-    WindowOptions, actions, prelude::*, px, size,
+    App, Application, Bounds, Focusable, Global, KeyBinding, Menu, MenuItem, SharedString,
+    TitlebarOptions, WindowBounds, WindowOptions, actions, prelude::*, px, size,
 };
 use plastext_cli::Cli;
 use plastext_platform::instance::{self, OpenRequest};
+use plastext_settings::Settings;
 use plastext_ui::Workspace;
 
 use crate::windows::{WindowRequest, window_requests};
 
 actions!(plastext, [Quit]);
+
+/// The settings every new window starts from.
+struct AppSettings(Arc<Settings>);
+
+impl Global for AppSettings {}
 
 fn main() -> ExitCode {
     // Handles `--help` and `--version`, and rejects bad arguments.
@@ -60,10 +66,24 @@ fn main() -> ExitCode {
         })
         .detach();
 
-        open(request, cx);
+        let settings = cx.background_executor().spawn(async { Settings::load() });
         cx.spawn(async move |cx| {
+            let (settings, notice) = match settings.await {
+                Ok(settings) => (settings, None),
+                Err(err) => (
+                    Settings::default(),
+                    Some(SharedString::from(err.to_string())),
+                ),
+            };
+            let opened = cx.update(|cx| {
+                cx.set_global(AppSettings(Arc::new(settings)));
+                open(request, notice, cx);
+            });
+            if opened.is_err() {
+                return;
+            }
             while let Some(request) = requests.next().await {
-                if cx.update(|cx| open(request, cx)).is_err() {
+                if cx.update(|cx| open(request, None, cx)).is_err() {
                     break;
                 }
             }
@@ -73,8 +93,9 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Opens what a launch asked for, reusing windows that show the same folder.
-fn open(request: OpenRequest, cx: &mut App) {
+/// Opens what a launch asked for, reusing windows that show the same folder,
+/// and shows `notice` in the windows it opens.
+fn open(request: OpenRequest, notice: Option<SharedString>, cx: &mut App) {
     let args = iter::once(OsString::from("plastext")).chain(request.args.iter().cloned());
     let Ok(cli) = Cli::try_parse_from(args) else {
         return;
@@ -100,7 +121,7 @@ fn open(request: OpenRequest, cx: &mut App) {
         let requests = requests.await;
         cx.update(|cx| {
             for request in requests {
-                open_window(request, cx);
+                open_window(request, notice.clone(), cx);
             }
             cx.activate(true);
         })
@@ -109,7 +130,7 @@ fn open(request: OpenRequest, cx: &mut App) {
     .detach();
 }
 
-fn open_window(request: WindowRequest, cx: &mut App) {
+fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut App) {
     let existing = cx
         .windows()
         .into_iter()
@@ -124,6 +145,9 @@ fn open_window(request: WindowRequest, cx: &mut App) {
             .update(cx, |workspace, window, cx| {
                 for file in request.files {
                     workspace.open_file(file.path, file.line.map(u64::from), window, cx);
+                }
+                if let Some(notice) = notice {
+                    workspace.show_notice(notice, cx);
                 }
                 window.activate_window();
             })
@@ -143,11 +167,15 @@ fn open_window(request: WindowRequest, cx: &mut App) {
         ))),
         ..Default::default()
     };
+    let settings = cx.global::<AppSettings>().0.clone();
     let opened = cx.open_window(options, |window, cx| {
         let workspace = cx.new(|cx| {
-            let mut workspace = Workspace::new(request.root, window, cx);
+            let mut workspace = Workspace::new(request.root, settings, window, cx);
             for file in request.files {
                 workspace.open_file(file.path, file.line.map(u64::from), window, cx);
+            }
+            if let Some(notice) = notice {
+                workspace.show_notice(notice, cx);
             }
             workspace
         });

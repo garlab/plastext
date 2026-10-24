@@ -25,10 +25,6 @@ actions!(
 );
 
 const KEY_CONTEXT: &str = "TextView";
-const FONT_FAMILY: &str = "Menlo";
-const FONT_SIZE: f32 = 13.;
-const LINE_HEIGHT: f32 = 1.5;
-const TAB_WIDTH: usize = 4;
 /// Bytes loaded on each side of what's visible, so scrolling rarely waits on the disk.
 const PREFETCH: u64 = 1024 * 1024;
 const SCROLLBAR_WIDTH: f32 = 12.;
@@ -59,6 +55,16 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
+/// How a text view draws text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextStyle {
+    pub font_family: SharedString,
+    pub font_size: Pixels,
+    /// A multiple of the font size.
+    pub line_height: f32,
+    pub tab_size: usize,
+}
+
 /// What the status bar shows about a text view.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextViewStatus {
@@ -81,6 +87,7 @@ pub struct TextViewStatus {
 pub struct TextView {
     source: Arc<FileSource>,
     index: Arc<LineIndex>,
+    style: TextStyle,
     focus_handle: FocusHandle,
     /// The row at the top of the viewport, as a byte offset. Always a row start.
     top: u64,
@@ -118,7 +125,12 @@ struct ScrollbarDrag {
 }
 
 impl TextView {
-    pub fn new(source: Arc<FileSource>, index: Arc<LineIndex>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        source: Arc<FileSource>,
+        index: Arc<LineIndex>,
+        style: TextStyle,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let index_refresh = (!index.is_complete()).then(|| {
             cx.spawn(async move |this, cx| {
                 loop {
@@ -137,6 +149,7 @@ impl TextView {
         Self {
             source,
             index,
+            style,
             focus_handle: cx.focus_handle(),
             top: 0,
             top_offset: px(0.),
@@ -400,11 +413,11 @@ impl TextView {
     ) -> TextLayout {
         let theme = Theme::for_appearance(window.appearance());
         let text_system = window.text_system().clone();
-        let font = font(FONT_FAMILY);
-        let font_size = px(FONT_SIZE);
+        let font = font(self.style.font_family.clone());
+        let font_size = self.style.font_size;
         let font_id = text_system.resolve_font(&font);
         let char_width = text_system.ch_advance(font_id, font_size).unwrap_or(px(8.));
-        let line_height = (font_size * LINE_HEIGHT).round();
+        let line_height = (font_size * self.style.line_height).round();
         self.char_width = char_width;
         self.line_height = line_height;
         self.page_rows = ((bounds.size.height / line_height) as usize).max(1);
@@ -454,7 +467,7 @@ impl TextView {
             let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
             starts_line = content.len() < bytes.len();
             let content = content.strip_suffix(b"\r").unwrap_or(content);
-            let (text, width) = visible_text(content, first_column, columns);
+            let (text, width) = visible_text(content, self.style.tab_size, first_column, columns);
             max_columns = max_columns.max(width);
             rows.push(RowLayout {
                 number,
@@ -684,14 +697,14 @@ impl TextLayout {
 ///
 /// Each character counts as one column, which is exact for the monospace
 /// text this view targets except for wide (e.g. CJK) characters.
-fn visible_text(bytes: &[u8], first: usize, count: usize) -> (String, usize) {
+fn visible_text(bytes: &[u8], tab_size: usize, first: usize, count: usize) -> (String, usize) {
     let text: Cow<str> = String::from_utf8_lossy(bytes);
     let end = first + count;
     let mut visible = String::new();
     let mut column = 0;
     for ch in text.chars() {
         let (shown, width) = match ch {
-            '\t' => (' ', TAB_WIDTH - column % TAB_WIDTH),
+            '\t' => (' ', tab_size.max(1) - column % tab_size.max(1)),
             '\u{7f}' => ('\u{2421}', 1),
             ch if (ch as u32) < 0x20 => {
                 (char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'), 1)
@@ -715,19 +728,25 @@ mod tests {
 
     #[test]
     fn expands_tabs_and_shows_control_characters() {
-        assert_eq!(visible_text(b"a\tb", 0, 80), ("a   b".to_owned(), 5));
+        assert_eq!(visible_text(b"a\tb", 4, 0, 80), ("a   b".to_owned(), 5));
         assert_eq!(
-            visible_text(b"\x00x\x7f", 0, 80),
+            visible_text(b"\x00x\x7f", 4, 0, 80),
             ("\u{2400}x\u{2421}".to_owned(), 3)
         );
-        assert_eq!(visible_text("é\u{fffd}".as_bytes(), 0, 80).1, 2);
-        assert_eq!(visible_text(b"\xffz", 0, 80), ("\u{fffd}z".to_owned(), 2));
+        assert_eq!(visible_text("é\u{fffd}".as_bytes(), 4, 0, 80).1, 2);
+        assert_eq!(
+            visible_text(b"\xffz", 4, 0, 80),
+            ("\u{fffd}z".to_owned(), 2)
+        );
     }
 
     #[test]
     fn keeps_only_the_visible_columns() {
-        assert_eq!(visible_text(b"0123456789", 3, 4), ("3456".to_owned(), 10));
-        assert_eq!(visible_text(b"\tab", 2, 3), ("  a".to_owned(), 6));
-        assert_eq!(visible_text(b"short", 10, 5), (String::new(), 5));
+        assert_eq!(
+            visible_text(b"0123456789", 4, 3, 4),
+            ("3456".to_owned(), 10)
+        );
+        assert_eq!(visible_text(b"\tab", 4, 2, 3), ("  a".to_owned(), 6));
+        assert_eq!(visible_text(b"short", 4, 10, 5), (String::new(), 5));
     }
 }

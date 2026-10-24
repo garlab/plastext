@@ -12,6 +12,7 @@ gpui.workspace = true
 plastext-buffer.workspace = true
 plastext-editor.workspace = true
 plastext-project.workspace = true
+plastext-settings.workspace = true
 
 [lints]
 workspace = true

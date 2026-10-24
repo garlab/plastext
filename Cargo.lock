@@ -3888,6 +3888,7 @@ dependencies = [
  "gpui",
  "plastext-cli",
  "plastext-platform",
+ "plastext-settings",
  "plastext-ui",
  "tempfile",
 ]
@@ -3964,6 +3965,10 @@ version = "0.1.0"
 [[package]]
 name = "plastext-settings"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 1.1.8+spec-1.1.0",
+]
 
 [[package]]
 name = "plastext-syntax"
@@ -3977,6 +3982,7 @@ dependencies = [
  "plastext-buffer",
  "plastext-editor",
  "plastext-project",
+ "plastext-settings",
 ]
 
 [[package]]

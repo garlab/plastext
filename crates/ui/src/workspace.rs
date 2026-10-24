@@ -1,12 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
     actions, div, prelude::*, px,
 };
 use plastext_buffer::OpenOptions;
-use plastext_editor::{TextView, TextViewStatus, Theme};
-use plastext_project::TreeOptions;
+use plastext_editor::{TextStyle, TextView, TextViewStatus, Theme};
+use plastext_project::{ShowIgnored, TreeOptions};
+use plastext_settings::{self as settings, Settings};
 
 use crate::file_tree::{FileTreeEvent, FileTreeView};
 
@@ -33,6 +37,7 @@ pub struct Workspace {
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
     open_options: OpenOptions,
+    text_style: TextStyle,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -45,10 +50,27 @@ struct Tab {
 }
 
 impl Workspace {
-    pub fn new(root: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        root: Option<PathBuf>,
+        settings: Arc<Settings>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut subscriptions = vec![cx.observe_window_appearance(window, |_, _, cx| cx.notify())];
+        let files = &settings.files;
+        let show_ignored = match files.show_ignored {
+            settings::ShowIgnored::Hide => ShowIgnored::Hide,
+            settings::ShowIgnored::Dim => ShowIgnored::Dim,
+            settings::ShowIgnored::Show => ShowIgnored::Show,
+        };
+        let mut notice = None;
+        let tree_options = TreeOptions::new(files.show_hidden, show_ignored, &files.exclude)
+            .unwrap_or_else(|err| {
+                notice = Some(format!("Ignoring files.exclude in the settings: {err}").into());
+                TreeOptions::default()
+            });
         let tree = root.clone().map(|root| {
-            let tree = cx.new(|cx| FileTreeView::new(root, TreeOptions::default(), cx));
+            let tree = cx.new(|cx| FileTreeView::new(root, tree_options, cx));
             subscriptions.push(
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
                     FileTreeEvent::Open(path) => this.open_file(path.clone(), None, window, cx),
@@ -61,8 +83,17 @@ impl Workspace {
             tree,
             tabs: Vec::new(),
             active: None,
-            notice: None,
-            open_options: OpenOptions::default(),
+            notice,
+            open_options: OpenOptions {
+                large_file_threshold: settings.limits.large_file_threshold.0,
+                block_cache: settings.limits.block_cache.0,
+            },
+            text_style: TextStyle {
+                font_family: settings.editor.font.clone().into(),
+                font_size: px(settings.editor.font_size),
+                line_height: settings.editor.line_height,
+                tab_size: settings.editor.tab_size,
+            },
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
@@ -70,6 +101,12 @@ impl Workspace {
 
     pub fn root(&self) -> Option<&Path> {
         self.root.as_deref()
+    }
+
+    /// Shows `notice` in the status bar until it's clicked away.
+    pub fn show_notice(&mut self, notice: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.notice = Some(notice.into());
+        cx.notify();
     }
 
     /// The window title for a project: its folder name, or the app name without one.
@@ -103,6 +140,7 @@ impl Workspace {
             return;
         }
         let options = self.open_options;
+        let style = self.text_style.clone();
         let opening = cx.background_executor().spawn({
             let path = path.clone();
             async move { plastext_buffer::open(&path, options) }
@@ -111,7 +149,7 @@ impl Workspace {
             let opened = opening.await;
             this.update_in(cx, |this, window, cx| match opened {
                 Ok((source, index)) => {
-                    let view = cx.new(|cx| TextView::new(source, index, cx));
+                    let view = cx.new(|cx| TextView::new(source, index, style, cx));
                     if let Some(line) = line {
                         view.update(cx, |view, cx| view.scroll_to_line(line, cx));
                     }
@@ -153,7 +191,6 @@ impl Workspace {
 
     fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.active = Some(index);
-        self.notice = None;
         let tab = &self.tabs[index];
         tab.view.focus_handle(cx).focus(window);
         let path = tab.path.clone();
@@ -237,15 +274,23 @@ impl Workspace {
             }))
     }
 
-    fn render_status_bar(&self, theme: Theme, cx: &App) -> impl IntoElement {
+    fn render_status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let status = self
             .active
             .and_then(|active| self.tabs.get(active))
             .map(|tab| tab.view.read(cx).status());
-        let notice = self
-            .notice
-            .clone()
-            .or_else(|| status.as_ref().and_then(|status| status.error.clone()));
+        let notice = self.notice.clone().map(|notice| {
+            div()
+                .id("notice")
+                .cursor_pointer()
+                .text_color(theme.text)
+                .child(format!("{notice}  ×"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.notice = None;
+                    cx.notify();
+                }))
+        });
+        let view_error = status.as_ref().and_then(|status| status.error.clone());
         div()
             .h(px(STATUS_BAR_HEIGHT))
             .flex_none()
@@ -260,6 +305,7 @@ impl Workspace {
             .text_color(theme.text_muted)
             .child("READ")
             .children(notice)
+            .children(view_error)
             .child(div().flex_1())
             .children(status.map(status_text))
     }
