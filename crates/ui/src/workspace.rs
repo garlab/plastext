@@ -6,7 +6,8 @@ use std::{
 
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    NavigationDirection, SharedString, Subscription, Window, actions, div, prelude::*, px,
+    NavigationDirection, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
+    Window, actions, div, prelude::*, px, uniform_list,
 };
 use plastext_buffer::{FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
@@ -35,7 +36,8 @@ actions!(
         GoBack,
         GoForward,
         GoToSymbol,
-        OpenCommandPalette
+        OpenCommandPalette,
+        ToggleOutline
     ]
 );
 
@@ -44,6 +46,7 @@ const HISTORY_LEN: usize = 100;
 
 const KEY_CONTEXT: &str = "Workspace";
 const SIDEBAR_WIDTH: f32 = 260.;
+const OUTLINE_WIDTH: f32 = 240.;
 const TAB_BAR_HEIGHT: f32 = 34.;
 const STATUS_BAR_HEIGHT: f32 = 24.;
 
@@ -64,6 +67,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-]", GoForward, context),
         KeyBinding::new("cmd-shift-o", GoToSymbol, context),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, context),
+        // A read-mode key (spec §4.2), so only where the text view has focus.
+        KeyBinding::new("o", ToggleOutline, Some("TextView")),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -86,9 +91,12 @@ pub struct Workspace {
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
+    outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
     focus_handle: FocusHandle,
+    /// Files in the order their tabs were last activated, most recent last.
+    recent: Vec<PathBuf>,
     /// Where jumps came from (spec NAV-5), most recent last.
     back: Vec<Place>,
     /// Where going back came from.
@@ -108,6 +116,15 @@ struct Place {
 enum Target {
     Line(u64),
     Offset(u64),
+}
+
+/// The outline panel on the right: the active file's symbols.
+#[derive(Default)]
+struct Outline {
+    shown: bool,
+    /// The symbol containing the top of the view, as last shown.
+    current: Option<usize>,
+    scroll_handle: UniformListScrollHandle,
 }
 
 /// What the sidebar shows.
@@ -178,6 +195,7 @@ impl Workspace {
             search: None,
             quick_open: None,
             picker: None,
+            outline: Outline::default(),
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
@@ -191,6 +209,7 @@ impl Workspace {
                 max_parse_size: settings.limits.syntax_max_file_size.0,
             },
             focus_handle: cx.focus_handle(),
+            recent: Vec::new(),
             back: Vec::new(),
             forward: Vec::new(),
             _subscriptions: subscriptions,
@@ -327,6 +346,12 @@ impl Workspace {
             return;
         };
         tab.view.focus_handle(cx).focus(window);
+        let path = tab.path.clone();
+        self.recent.retain(|recent| *recent != path);
+        self.recent.push(path);
+        if self.recent.len() > HISTORY_LEN {
+            self.recent.remove(0);
+        }
         self.active_pane = pane;
         self.sync_tree_selection(cx);
         cx.notify();
@@ -403,7 +428,18 @@ impl Workspace {
         };
         let options = self.tree_options.clone();
         self.picker = None;
-        let quick_open = cx.new(|cx| QuickOpen::new(root, options, window, cx));
+        // Most recent first, without the file already in front.
+        let current = self.panes[&self.active_pane]
+            .active_tab()
+            .map(|tab| tab.path.clone());
+        let recent: Vec<PathBuf> = self
+            .recent
+            .iter()
+            .rev()
+            .filter(|path| Some(*path) != current.as_ref())
+            .cloned()
+            .collect();
+        let quick_open = cx.new(|cx| QuickOpen::new(root, options, &recent, window, cx));
         let events = cx.subscribe_in(&quick_open, window, |this, _, event, window, cx| {
             this.close_quick_open(window, cx);
             match event {
@@ -482,6 +518,110 @@ impl Workspace {
             self.back.extend(self.place(cx));
             self.open(place.path, Some(Target::Offset(place.offset)), window, cx);
         }
+    }
+
+    fn toggle_outline(&mut self, _: &ToggleOutline, _: &mut Window, cx: &mut Context<Self>) {
+        self.outline.shown = !self.outline.shown;
+        self.outline.current = None;
+        cx.notify();
+    }
+
+    /// The outline panel (spec §4.1): the active file's symbols, following
+    /// the scroll position; clicking one goes there.
+    fn render_outline(&mut self, theme: Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.outline.shown {
+            return None;
+        }
+        let tab = self.panes[&self.active_pane].active_tab();
+        let view = tab.map(|tab| tab.view.clone());
+        let symbols = view.as_ref().and_then(|view| view.symbols(cx));
+        let current = symbols
+            .as_ref()
+            .zip(view.as_ref())
+            .and_then(|(symbols, view)| {
+                let position = view.position(cx) as usize;
+                symbols
+                    .iter()
+                    .rposition(|symbol| symbol.range.start <= position)
+            });
+        if current != self.outline.current {
+            self.outline.current = current;
+            if let Some(current) = current {
+                self.outline
+                    .scroll_handle
+                    .scroll_to_item(current, ScrollStrategy::Center);
+            }
+        }
+        let body = match symbols.zip(view) {
+            Some((symbols, view)) => uniform_list(
+                "outline",
+                symbols.len(),
+                cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+                    range
+                        .map(|index| {
+                            let symbol = &symbols[index];
+                            let view = view.clone();
+                            let offset = symbol.range.start as u64;
+                            div()
+                                .id(index)
+                                .h(px(24.))
+                                .pl(px(10. + 12. * symbol.depth as f32))
+                                .pr_2()
+                                .flex()
+                                .items_center()
+                                .cursor_pointer()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .when(Some(index) == current, |row| row.bg(theme.selection))
+                                .when(Some(index) != current, |row| {
+                                    row.hover(|row| row.bg(theme.background))
+                                })
+                                .child(symbol.name.clone())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.record_jump(cx);
+                                    view.scroll_to_offset(offset, cx);
+                                }))
+                        })
+                        .collect()
+                }),
+            )
+            .track_scroll(self.outline.scroll_handle.clone())
+            .flex_1()
+            .into_any_element(),
+            None => div()
+                .p_3()
+                .text_color(theme.text_muted)
+                .child("No outline for this file.")
+                .into_any_element(),
+        };
+        Some(
+            div()
+                .w(px(OUTLINE_WIDTH))
+                .flex_none()
+                .h_full()
+                .flex()
+                .flex_col()
+                .bg(theme.surface)
+                .border_l_1()
+                .border_color(theme.border)
+                .text_sm()
+                .child(
+                    div()
+                        .h(px(TAB_BAR_HEIGHT))
+                        .flex_none()
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child("Outline"),
+                )
+                .child(body)
+                .into_any_element(),
+        )
     }
 
     fn show_files(&mut self, _: &ShowFiles, _: &mut Window, cx: &mut Context<Self>) {
@@ -915,6 +1055,7 @@ impl Render for Workspace {
                 .flex_1()
                 .min_w_0()
                 .child(self.render_layout(&self.layout, theme, cx));
+        let outline = self.render_outline(theme, cx);
 
         div()
             .key_context(KEY_CONTEXT)
@@ -930,6 +1071,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::go_to_symbol))
             .on_action(cx.listener(Self::open_command_palette))
+            .on_action(cx.listener(Self::toggle_outline))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
@@ -950,7 +1092,8 @@ impl Render for Workspace {
                     .min_h_0()
                     .flex()
                     .child(sidebar)
-                    .child(editor_area),
+                    .child(editor_area)
+                    .children(outline),
             )
             .child(self.render_status_bar(theme, cx))
             .children(self.picker.as_ref().map(|(picker, _)| {

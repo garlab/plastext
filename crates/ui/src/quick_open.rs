@@ -64,6 +64,8 @@ pub struct QuickOpen {
     ticking: bool,
     pattern: String,
     line: Option<u64>,
+    /// Recently opened files, relative to the root, most recent first.
+    recent: Vec<String>,
     selected: usize,
     scroll_handle: UniformListScrollHandle,
     _input_changes: Subscription,
@@ -72,12 +74,20 @@ pub struct QuickOpen {
 impl EventEmitter<QuickOpenEvent> for QuickOpen {}
 
 impl QuickOpen {
+    /// A palette over the files under `root`, listing `recent` files (most
+    /// recent first) until something is typed.
     pub fn new(
         root: PathBuf,
         options: TreeOptions,
+        recent: &[PathBuf],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let recent = recent
+            .iter()
+            .filter_map(|path| path.strip_prefix(&root).ok())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
         let input = cx.new(|cx| TextInput::new("Go to file (path:line works too)", cx));
         let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
             this.query_changed(cx)
@@ -112,6 +122,7 @@ impl QuickOpen {
             ticking: false,
             pattern: String::new(),
             line: None,
+            recent,
             selected: 0,
             scroll_handle: UniformListScrollHandle::new(),
             _input_changes: input_changes,
@@ -123,6 +134,29 @@ impl QuickOpen {
     pub fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
         self.input
             .update(cx, |input, cx| input.set_text(query.to_owned(), cx));
+    }
+
+    /// Whether the recent files are listed, rather than matches.
+    fn showing_recent(&self) -> bool {
+        self.pattern.is_empty() && self.line.is_none() && !self.recent.is_empty()
+    }
+
+    fn count(&self) -> usize {
+        if self.showing_recent() {
+            self.recent.len()
+        } else {
+            self.matcher.snapshot().matched_item_count() as usize
+        }
+    }
+
+    /// The listed path at `index`, relative to the root.
+    fn item(&self, index: usize) -> Option<&str> {
+        if self.showing_recent() {
+            self.recent.get(index).map(String::as_str)
+        } else {
+            let item = self.matcher.snapshot().get_matched_item(index as u32)?;
+            Some(item.data.as_str())
+        }
     }
 
     /// A line to go to in the current file, when the query is only `:line`.
@@ -142,8 +176,7 @@ impl QuickOpen {
                 let busy = this.update(cx, |this, cx| {
                     let status = this.matcher.tick(0);
                     if status.changed {
-                        let count = this.matcher.snapshot().matched_item_count() as usize;
-                        this.selected = this.selected.min(count.saturating_sub(1));
+                        this.selected = this.selected.min(this.count().saturating_sub(1));
                         cx.notify();
                     }
                     let busy = status.running || this.walking.load(Ordering::Relaxed);
@@ -177,14 +210,14 @@ impl QuickOpen {
     }
 
     fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
-        let count = self.matcher.snapshot().matched_item_count() as usize;
+        let count = self.count();
         if count > 0 {
             self.select(((self.selected + 1) % count) as isize, cx);
         }
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
-        let count = self.matcher.snapshot().matched_item_count() as isize;
+        let count = self.count() as isize;
         if count > 0 {
             self.select((self.selected as isize - 1).rem_euclid(count), cx);
         }
@@ -205,10 +238,10 @@ impl QuickOpen {
     }
 
     fn open(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(item) = self.matcher.snapshot().get_matched_item(index as u32) else {
+        let Some(item) = self.item(index) else {
             return;
         };
-        let path = self.root.join(item.data);
+        let path = self.root.join(item);
         cx.emit(QuickOpenEvent::Open {
             path,
             line: self.line,
@@ -236,9 +269,11 @@ impl Render for QuickOpen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
         let snapshot = self.matcher.snapshot();
-        let matched = snapshot.matched_item_count() as usize;
+        let matched = self.count();
         let total = snapshot.item_count();
-        let footer = if self.walking.load(Ordering::Relaxed) {
+        let footer = if self.showing_recent() {
+            format!("Recently opened · {total} files")
+        } else if self.walking.load(Ordering::Relaxed) {
             format!("{matched} of {total} files so far…")
         } else {
             format!("{matched} of {total} files")
@@ -275,11 +310,9 @@ impl Render for QuickOpen {
                 "quick-open-results",
                 matched,
                 cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                    let snapshot = this.matcher.snapshot();
                     range
                         .filter_map(|index| {
-                            let item = snapshot.get_matched_item(index as u32)?;
-                            let (dir, name) = split_path(item.data);
+                            let (dir, name) = split_path(this.item(index)?);
                             let selected = index == this.selected;
                             Some(
                                 div()

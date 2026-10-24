@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** milestone M1 (reading code). You can browse a folder and read files of any size with syntax highlighting, Quick Open, find, project search, symbols and a hex view for binaries. There's no Markdown rendering, editing or git yet. The full specification is in [docs/specs.md](docs/specs.md).
+> **Status:** milestone M1 (reading code). You can browse a folder and read files of any size with syntax highlighting, sticky scroll, folding, Quick Open, find, project search, symbols, an outline and a hex view for binaries; colors can be themed in the settings. There's no Markdown rendering, editing or git yet. The full specification is in [docs/specs.md](docs/specs.md).
 
 ## Building
 
@@ -22,7 +22,8 @@ cargo build --release            # builds target/release/plastext and plastext-a
 |---|---|
 | `⌘P` / `⌃G` | Quick Open (`path:line` works) / go to line |
 | `⇧⌘P` | Command palette: every command and its shortcut |
-| `⇧⌘O` | Go to symbol |
+| `⇧⌘O` / `o` | Go to symbol / toggle the outline panel |
+| Gutter chevrons, `⌘K ⌘0` / `⌘K ⌘J` | Fold a block / fold all top-level blocks / unfold all |
 | `⌘F` or `/`, then `n` / `N` | Find in file, next / previous match |
 | `⇧⌘F` / `⇧⌘E` | Search the project / show files |
 | `j` `k`, `space` `⇧space`, `g` `G` | Scroll by line, by page, to top / bottom |
