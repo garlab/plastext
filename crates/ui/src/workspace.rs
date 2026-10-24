@@ -1,20 +1,24 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, KeyBinding, SharedString, Subscription, Window,
-    actions, div, prelude::*, px,
+    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
+    SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
 use plastext_buffer::OpenOptions;
 use plastext_editor::{TextStyle, TextView, TextViewStatus, Theme};
 use plastext_project::{ShowIgnored, TreeOptions};
 use plastext_settings::{self as settings, Settings};
 
-use crate::file_tree::{FileTreeEvent, FileTreeView};
+use crate::{
+    file_tree::{FileTreeEvent, FileTreeView},
+    layout::{Axis, Layout},
+};
 
-actions!(workspace, [CloseTab]);
+actions!(workspace, [CloseTab, SplitRight, SplitDown]);
 
 const KEY_CONTEXT: &str = "Workspace";
 const SIDEBAR_WIDTH: f32 = 260.;
@@ -24,16 +28,23 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// Registers the workspace's and its views' key bindings.
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
-    cx.bind_keys([KeyBinding::new("cmd-w", CloseTab, Some(KEY_CONTEXT))]);
+    let context = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("cmd-w", CloseTab, context),
+        KeyBinding::new("cmd-\\", SplitRight, context),
+        KeyBinding::new("cmd-alt-\\", SplitDown, context),
+    ]);
 }
 
-/// A window's root view: one project with its file tree, tabs and status bar
-/// (spec §4.1, PRJ-1).
+/// A window's root view: one project with its file tree, panes of tabs and
+/// status bar (spec §4.1, PRJ-1).
 pub struct Workspace {
     root: Option<PathBuf>,
     tree: Option<Entity<FileTreeView>>,
-    tabs: Vec<Tab>,
-    active: Option<usize>,
+    panes: HashMap<usize, Pane>,
+    layout: Layout,
+    active_pane: usize,
+    next_pane: usize,
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
     open_options: OpenOptions,
@@ -42,11 +53,23 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
 }
 
+#[derive(Default)]
+struct Pane {
+    tabs: Vec<Tab>,
+    active: Option<usize>,
+}
+
 struct Tab {
     path: PathBuf,
     title: SharedString,
     view: Entity<TextView>,
     _status: Subscription,
+}
+
+impl Pane {
+    fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active?)
+    }
 }
 
 impl Workspace {
@@ -81,8 +104,10 @@ impl Workspace {
         Self {
             root,
             tree,
-            tabs: Vec::new(),
-            active: None,
+            panes: HashMap::from([(0, Pane::default())]),
+            layout: Layout::Pane(0),
+            active_pane: 0,
+            next_pane: 1,
             notice,
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
@@ -122,7 +147,8 @@ impl Workspace {
         }
     }
 
-    /// Opens `path` in a tab, or switches to its tab, and scrolls to 1-based `line`.
+    /// Opens `path` in a tab of the active pane, or switches to its tab there,
+    /// and scrolls to 1-based `line`.
     pub fn open_file(
         &mut self,
         path: PathBuf,
@@ -130,10 +156,15 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(index) = self.tabs.iter().position(|tab| tab.path == path) {
-            self.activate(index, window, cx);
+        let pane = self.active_pane;
+        if let Some(index) = self.panes[&pane]
+            .tabs
+            .iter()
+            .position(|tab| tab.path == path)
+        {
+            self.activate(pane, index, window, cx);
             if let Some(line) = line {
-                self.tabs[index]
+                self.panes[&pane].tabs[index]
                     .view
                     .update(cx, |view, cx| view.scroll_to_line(line, cx));
             }
@@ -165,6 +196,7 @@ impl Workspace {
         .detach();
     }
 
+    /// Adds a tab to the active pane, or the first pane if that one is gone.
     fn add_tab(
         &mut self,
         path: PathBuf,
@@ -180,53 +212,188 @@ impl Workspace {
             )
             .into();
         let status = cx.observe(&view, |_, _, cx| cx.notify());
-        self.tabs.push(Tab {
+        let pane_id = self.active_pane;
+        let pane = self.panes.entry(pane_id).or_default();
+        pane.tabs.push(Tab {
             path,
             title,
             view,
             _status: status,
         });
-        self.activate(self.tabs.len() - 1, window, cx);
+        let index = pane.tabs.len() - 1;
+        self.activate(pane_id, index, window, cx);
     }
 
-    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.active = Some(index);
-        let tab = &self.tabs[index];
+    fn activate(&mut self, pane: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.panes.get_mut(&pane).and_then(|pane_state| {
+            pane_state.active = Some(index);
+            pane_state.tabs.get(index)
+        }) else {
+            return;
+        };
         tab.view.focus_handle(cx).focus(window);
-        let path = tab.path.clone();
-        if let Some(tree) = &self.tree {
-            tree.update(cx, |tree, cx| tree.select(Some(path), cx));
-        }
+        self.active_pane = pane;
+        self.sync_tree_selection(cx);
         cx.notify();
     }
 
-    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
+    /// Makes `pane` the one new files open in, without moving focus.
+    fn focus_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+        if self.active_pane != pane {
+            self.active_pane = pane;
+            self.sync_tree_selection(cx);
+            cx.notify();
+        }
+    }
+
+    fn sync_tree_selection(&self, cx: &mut Context<Self>) {
+        let path = self.panes[&self.active_pane]
+            .active_tab()
+            .map(|tab| tab.path.clone());
+        if let Some(tree) = &self.tree {
+            tree.update(cx, |tree, cx| tree.select(path, cx));
+        }
+    }
+
+    fn close_tab(
+        &mut self,
+        pane_id: usize,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return;
+        };
+        if index >= pane.tabs.len() {
             return;
         }
-        self.tabs.remove(index);
-        match self.active {
-            _ if self.tabs.is_empty() => {
-                self.active = None;
+        pane.tabs.remove(index);
+        if !pane.tabs.is_empty() {
+            let active = pane.active.unwrap_or(0);
+            let next = if active >= index {
+                active.saturating_sub(1)
+            } else {
+                active
+            };
+            let next = next.min(pane.tabs.len() - 1);
+            self.activate(pane_id, next, window, cx);
+            return;
+        }
+        pane.active = None;
+        if self.layout.remove(pane_id) {
+            self.panes.remove(&pane_id);
+        }
+        let next_pane = self.layout.panes()[0];
+        match self.panes[&next_pane].active {
+            Some(index) => self.activate(next_pane, index, window, cx),
+            None => {
+                self.active_pane = next_pane;
                 self.focus_handle.focus(window);
-                if let Some(tree) = &self.tree {
-                    tree.update(cx, |tree, cx| tree.select(None, cx));
-                }
+                self.sync_tree_selection(cx);
             }
-            Some(active) if active >= index => self.activate(active.saturating_sub(1), window, cx),
-            Some(active) => self.activate(active, window, cx),
-            None => {}
         }
         cx.notify();
     }
 
     fn close_active_tab(&mut self, _: &CloseTab, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(active) = self.active {
-            self.close_tab(active, window, cx);
+        if let Some(index) = self.panes[&self.active_pane].active {
+            self.close_tab(self.active_pane, index, window, cx);
         }
     }
 
-    fn render_tab_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn split_right(&mut self, _: &SplitRight, window: &mut Window, cx: &mut Context<Self>) {
+        self.split(Axis::Horizontal, window, cx);
+    }
+
+    fn split_down(&mut self, _: &SplitDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.split(Axis::Vertical, window, cx);
+    }
+
+    /// Adds a pane next to the active one, showing the active tab's file at
+    /// the same position.
+    fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        let new_pane = self.next_pane;
+        self.next_pane += 1;
+        if !self.layout.split(self.active_pane, axis, new_pane) {
+            return;
+        }
+        let duplicate = self.panes[&self.active_pane].active_tab().map(|tab| {
+            (
+                tab.path.clone(),
+                tab.view.update(cx, |view, cx| view.duplicate(cx)),
+            )
+        });
+        self.panes.insert(new_pane, Pane::default());
+        self.active_pane = new_pane;
+        match duplicate {
+            Some((path, view)) => self.add_tab(path, view, window, cx),
+            None => cx.notify(),
+        }
+    }
+
+    fn render_layout(&self, layout: &Layout, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
+        match layout {
+            Layout::Pane(id) => self.render_pane(*id, theme, cx).into_any_element(),
+            Layout::Split(axis, children) => div()
+                .size_full()
+                .flex()
+                .when(*axis == Axis::Vertical, |split| split.flex_col())
+                .children(children.iter().enumerate().map(|(i, child)| {
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .border_color(theme.border)
+                        .when(i > 0 && *axis == Axis::Horizontal, |child| {
+                            child.border_l_1()
+                        })
+                        .when(i > 0 && *axis == Axis::Vertical, |child| child.border_t_1())
+                        .child(self.render_layout(child, theme, cx))
+                }))
+                .into_any_element(),
+        }
+    }
+
+    fn render_pane(&self, id: usize, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let pane = &self.panes[&id];
+        let content = match pane.active_tab() {
+            Some(tab) => div().flex_1().min_h_0().child(tab.view.clone()),
+            None => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .text_color(theme.text_muted)
+                .child(match &self.root {
+                    Some(root) => format!("{}: pick a file in the sidebar", root.display()),
+                    None => "Nothing open".to_owned(),
+                }),
+        };
+        div()
+            .id(("pane", id))
+            .size_full()
+            .flex()
+            .flex_col()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| this.focus_pane(id, cx)),
+            )
+            .when(!pane.tabs.is_empty(), |pane_element| {
+                pane_element.child(self.render_tab_bar(id, theme, cx))
+            })
+            .child(content)
+    }
+
+    fn render_tab_bar(
+        &self,
+        pane_id: usize,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pane = &self.panes[&pane_id];
+        let focused_pane = pane_id == self.active_pane;
         div()
             .id("tabs")
             .h(px(TAB_BAR_HEIGHT))
@@ -236,8 +403,8 @@ impl Workspace {
             .bg(theme.surface)
             .border_b_1()
             .border_color(theme.border)
-            .children(self.tabs.iter().enumerate().map(|(index, tab)| {
-                let active = self.active == Some(index);
+            .children(pane.tabs.iter().enumerate().map(|(index, tab)| {
+                let active = pane.active == Some(index);
                 div()
                     .id(("tab", index))
                     .h_full()
@@ -250,10 +417,12 @@ impl Workspace {
                     .border_r_1()
                     .border_color(theme.border)
                     .cursor_pointer()
-                    .when(active, |tab| {
-                        tab.bg(theme.background).text_color(theme.text)
+                    .when(active, |tab| tab.bg(theme.background))
+                    .text_color(if active && focused_pane {
+                        theme.text
+                    } else {
+                        theme.text_muted
                     })
-                    .when(!active, |tab| tab.text_color(theme.text_muted))
                     .child(tab.title.clone())
                     .child(
                         div()
@@ -265,19 +434,18 @@ impl Workspace {
                             .child("×")
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
-                                this.close_tab(index, window, cx);
+                                this.close_tab(pane_id, index, window, cx);
                             })),
                     )
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.activate(index, window, cx)),
-                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate(pane_id, index, window, cx)
+                    }))
             }))
     }
 
     fn render_status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let status = self
-            .active
-            .and_then(|active| self.tabs.get(active))
+        let status = self.panes[&self.active_pane]
+            .active_tab()
             .map(|tab| tab.view.read(cx).status());
         let notice = self.notice.clone().map(|notice| {
             div()
@@ -368,34 +536,18 @@ impl Render for Workspace {
                     .text_color(theme.text_muted)
                     .child("No folder open. Run `plastext <folder>` to open one."),
             });
-        let content = match self.active.and_then(|active| self.tabs.get(active)) {
-            Some(tab) => div().flex_1().min_h_0().child(tab.view.clone()),
-            None => div()
+        let editor_area =
+            div()
                 .flex_1()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.text_muted)
-                .child(match &self.root {
-                    Some(root) => format!("{}: pick a file in the sidebar", root.display()),
-                    None => "Nothing open".to_owned(),
-                }),
-        };
-        let editor_area = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .when(!self.tabs.is_empty(), |area| {
-                area.child(self.render_tab_bar(theme, cx))
-            })
-            .child(content);
+                .min_w_0()
+                .child(self.render_layout(&self.layout, theme, cx));
 
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(Self::split_right))
+            .on_action(cx.listener(Self::split_down))
             .size_full()
             .flex()
             .flex_col()

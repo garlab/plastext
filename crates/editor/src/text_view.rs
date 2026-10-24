@@ -168,6 +168,19 @@ impl TextView {
         }
     }
 
+    /// Another view of the same file at the same position, as for a split.
+    pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
+        let source = self.source.clone();
+        let index = self.index.clone();
+        let style = self.style.clone();
+        let top = self.top;
+        cx.new(|cx| {
+            let mut view = Self::new(source, index, style, cx);
+            view.top = top;
+            view
+        })
+    }
+
     pub fn status(&self) -> TextViewStatus {
         let progress = self.index.progress();
         let line = self.index.line_at(self.top, &*self.source).ok().flatten();
