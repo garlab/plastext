@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** early scaffolding. It opens a window and nothing more yet. The full specification is in [docs/specs.md](docs/specs.md).
+> **Status:** milestone M0. You can browse a folder and read plain-text files of any size, in tabs and splits; there's no highlighting, Markdown rendering, editing or git yet. The full specification is in [docs/specs.md](docs/specs.md).
 
 ## Building
 
