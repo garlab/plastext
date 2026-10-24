@@ -36,6 +36,21 @@ impl TabView {
         }
     }
 
+    /// The byte offset at the top of the view.
+    pub fn position(&self, cx: &App) -> u64 {
+        match self {
+            Self::Text(view) => view.read(cx).position(),
+            Self::Hex(view) => view.read(cx).position(),
+        }
+    }
+
+    pub fn scroll_to_offset(&self, offset: u64, cx: &mut App) {
+        match self {
+            Self::Text(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+            Self::Hex(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+        }
+    }
+
     pub fn status(&self, cx: &App) -> TabStatus {
         match self {
             Self::Text(view) => TabStatus::Text(view.read(cx).status()),

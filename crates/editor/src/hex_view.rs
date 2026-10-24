@@ -113,6 +113,16 @@ impl HexView {
         }
     }
 
+    /// The byte offset of the top row.
+    pub fn position(&self) -> u64 {
+        self.top_row * ROW_BYTES
+    }
+
+    /// Brings the row containing `offset` to the top.
+    pub fn scroll_to_offset(&mut self, offset: u64, cx: &mut Context<Self>) {
+        self.scroll_to_row(offset / ROW_BYTES, cx);
+    }
+
     fn last_row(&self) -> u64 {
         self.source.len().div_ceil(ROW_BYTES).saturating_sub(1)
     }

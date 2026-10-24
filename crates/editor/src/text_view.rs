@@ -329,6 +329,17 @@ impl TextView {
         }
     }
 
+    /// The byte offset of the row at the top of the view.
+    pub fn position(&self) -> u64 {
+        self.top
+    }
+
+    /// Brings the row containing `offset` to the top.
+    pub fn scroll_to_offset(&mut self, offset: u64, cx: &mut Context<Self>) {
+        self.pending_line = None;
+        self.jump(Jump::Offset(offset), cx);
+    }
+
     /// Scrolls so that 1-based `line` is at the top, waiting for the line
     /// index to reach it if needed.
     pub fn scroll_to_line(&mut self, line: u64, cx: &mut Context<Self>) {

@@ -6,7 +6,7 @@ use std::{
 
 use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    SharedString, Subscription, Window, actions, div, prelude::*, px,
+    NavigationDirection, SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
 use plastext_buffer::{ByteSource as _, FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
@@ -30,9 +30,14 @@ actions!(
         OpenQuickOpen,
         GoToLine,
         SearchProject,
-        ShowFiles
+        ShowFiles,
+        GoBack,
+        GoForward
     ]
 );
+
+/// How far back navigation history goes.
+const HISTORY_LEN: usize = 100;
 
 const KEY_CONTEXT: &str = "Workspace";
 const SIDEBAR_WIDTH: f32 = 260.;
@@ -49,6 +54,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl-g", GoToLine, context),
         KeyBinding::new("cmd-shift-f", SearchProject, context),
         KeyBinding::new("cmd-shift-e", ShowFiles, context),
+        KeyBinding::new("ctrl--", GoBack, context),
+        KeyBinding::new("ctrl-shift--", GoForward, context),
+        KeyBinding::new("cmd-[", GoBack, context),
+        KeyBinding::new("cmd-]", GoForward, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -74,7 +83,25 @@ pub struct Workspace {
     syntax_max_file_size: u64,
     text_style: TextStyle,
     focus_handle: FocusHandle,
+    /// Where jumps came from (spec NAV-5), most recent last.
+    back: Vec<Place>,
+    /// Where going back came from.
+    forward: Vec<Place>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// A position in a file, for navigation history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Place {
+    path: PathBuf,
+    offset: u64,
+}
+
+/// Where to scroll a file once it's open.
+#[derive(Clone, Copy)]
+enum Target {
+    Line(u64),
+    Offset(u64),
 }
 
 /// What the sidebar shows.
@@ -156,6 +183,8 @@ impl Workspace {
                 tab_size: settings.editor.tab_size,
             },
             focus_handle: cx.focus_handle(),
+            back: Vec::new(),
+            forward: Vec::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -192,6 +221,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.record_jump(cx);
+        self.open(path, line.map(Target::Line), window, cx);
+    }
+
+    fn open(
+        &mut self,
+        path: PathBuf,
+        target: Option<Target>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.active_pane;
         if let Some(index) = self.panes[&pane]
             .tabs
@@ -199,9 +239,8 @@ impl Workspace {
             .position(|tab| tab.path == path)
         {
             self.activate(pane, index, window, cx);
-            if let Some(line) = line {
-                self.panes[&pane].tabs[index].view.scroll_to_line(line, cx);
-            }
+            let view = self.panes[&pane].tabs[index].view.clone();
+            scroll_to(&view, target, cx);
             return;
         }
         let options = self.open_options;
@@ -235,9 +274,7 @@ impl Workspace {
                             TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
                         }
                     };
-                    if let Some(line) = line {
-                        view.scroll_to_line(line, cx);
-                    }
+                    scroll_to(&view, target, cx);
                     this.add_tab(path, view, window, cx);
                 }
                 Err(err) => {
@@ -369,6 +406,7 @@ impl Workspace {
                     this.open_file(path.clone(), *line, window, cx)
                 }
                 QuickOpenEvent::GoToLine(line) => {
+                    this.record_jump(cx);
                     if let Some(tab) = this.panes[&this.active_pane].active_tab() {
                         tab.view.clone().scroll_to_line(*line, cx);
                     }
@@ -402,6 +440,43 @@ impl Workspace {
         self.sidebar = Sidebar::Search;
         search.update(cx, |search, cx| search.focus(window, cx));
         cx.notify();
+    }
+
+    /// Where the active tab is, if there is one.
+    fn place(&self, cx: &App) -> Option<Place> {
+        let tab = self.panes[&self.active_pane].active_tab()?;
+        Some(Place {
+            path: tab.path.clone(),
+            offset: tab.view.position(cx),
+        })
+    }
+
+    /// Remembers the current place before a jump, for going back to it.
+    fn record_jump(&mut self, cx: &App) {
+        let Some(place) = self.place(cx) else {
+            return;
+        };
+        if self.back.last() != Some(&place) {
+            self.back.push(place);
+            if self.back.len() > HISTORY_LEN {
+                self.back.remove(0);
+            }
+        }
+        self.forward.clear();
+    }
+
+    fn go_back(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(place) = self.back.pop() {
+            self.forward.extend(self.place(cx));
+            self.open(place.path, Some(Target::Offset(place.offset)), window, cx);
+        }
+    }
+
+    fn go_forward(&mut self, _: &GoForward, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(place) = self.forward.pop() {
+            self.back.extend(self.place(cx));
+            self.open(place.path, Some(Target::Offset(place.offset)), window, cx);
+        }
     }
 
     fn show_files(&mut self, _: &ShowFiles, _: &mut Window, cx: &mut Context<Self>) {
@@ -666,6 +741,14 @@ impl Workspace {
     }
 }
 
+fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
+    match target {
+        Some(Target::Line(line)) => view.scroll_to_line(line, cx),
+        Some(Target::Offset(offset)) => view.scroll_to_offset(offset, cx),
+        None => {}
+    }
+}
+
 /// A file opened in the background, ready for a view.
 enum Opened {
     Text(
@@ -702,6 +785,16 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::go_to_line))
             .on_action(cx.listener(Self::search_project))
             .on_action(cx.listener(Self::show_files))
+            .on_action(cx.listener(Self::go_back))
+            .on_action(cx.listener(Self::go_forward))
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|this, _, window, cx| this.go_forward(&GoForward, window, cx)),
+            )
             .relative()
             .size_full()
             .flex()
