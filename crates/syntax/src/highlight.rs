@@ -76,9 +76,34 @@ impl CaptureKind {
 pub struct SyntaxTree {
     tree: Tree,
     language: &'static Language,
+    parsed_len: usize,
 }
 
 impl SyntaxTree {
+    /// Parse a bounded prefix first, preserving lexical context from byte zero.
+    /// It covers the initial viewport plus a margin; the full parse replaces
+    /// it later. Structural features must wait for the complete document.
+    pub fn parse_initial(
+        language: &'static Language,
+        text: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Self> {
+        const INITIAL_BYTES: usize = 64 * 1024;
+        let end = if text.len() <= INITIAL_BYTES {
+            text.len()
+        } else {
+            text[..INITIAL_BYTES]
+                .iter()
+                .rposition(|&byte| byte == b'\n')
+                .map_or(INITIAL_BYTES, |i| i + 1)
+        };
+        Self::parse(language, &text[..end], cancelled)
+    }
+
+    pub fn parsed_len(&self) -> usize {
+        self.parsed_len
+    }
+
     /// Parses `text`, giving up if `cancelled` starts returning true. Blocks:
     /// call it off the main thread.
     pub fn parse(
@@ -86,6 +111,9 @@ impl SyntaxTree {
         text: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Option<Self> {
+        if cancelled() {
+            return None;
+        }
         let mut parser = Parser::new();
         parser.set_language(&language.grammar()?).ok()?;
         let mut progress = |_: &tree_sitter::ParseState| {
@@ -98,7 +126,16 @@ impl SyntaxTree {
         let options = ParseOptions::new().progress_callback(&mut progress);
         let mut read = |offset: usize, _| &text[offset.min(text.len())..];
         let tree = parser.parse_with_options(&mut read, None, Some(options))?;
-        Some(Self { tree, language })
+        if cancelled() {
+            return None;
+        }
+        // Compilation belongs to the background parse, not the first frame.
+        language.highlight_query();
+        Some(Self {
+            tree,
+            language,
+            parsed_len: text.len(),
+        })
     }
 
     pub fn language(&self) -> &'static Language {
@@ -119,7 +156,11 @@ impl SyntaxTree {
         let Some(query) = self.language.highlight_query() else {
             return Vec::new();
         };
-        let range = range.start.min(text.len())..range.end.min(text.len());
+        let len = text.len().min(self.parsed_len);
+        let range = range.start.min(len)..range.end.min(len);
+        if range.is_empty() {
+            return Vec::new();
+        }
         let mut captures = Vec::new();
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(range.clone());
@@ -214,6 +255,36 @@ mod tests {
         let text = "x = 1\n".repeat(100_000);
         let language = detect(Path::new("big.py"), b"").unwrap();
         assert!(SyntaxTree::parse(language, text.as_bytes(), || true).is_none());
+    }
+
+    #[test]
+    fn initial_parse_matches_full_viewport_and_is_bounded() {
+        for (file, unit) in [
+            (
+                "code.c",
+                "/* a comment */\nint f(int x) {\nreturn x + 1;\n}\n",
+            ),
+            ("code.rs", "// café\nfn f() {\n    let s = \"hello\";\n}\n"),
+            ("code.py", "def f():\n    # café\n    return 'hello'\n"),
+            ("code.js", "function f() {\n    return 'hello';\n}\n"),
+        ] {
+            let text = unit.repeat(4000);
+            let language = detect(Path::new(file), b"").unwrap();
+            let initial = SyntaxTree::parse_initial(language, text.as_bytes(), || false).unwrap();
+            let full = SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+            assert!(initial.parsed_len() <= 64 * 1024);
+            assert!(initial.parsed_len() < full.parsed_len());
+            assert_eq!(
+                initial.highlights(text.as_bytes(), 0..unit.len() * 2),
+                full.highlights(text.as_bytes(), 0..unit.len() * 2),
+                "{file}"
+            );
+            assert!(
+                initial
+                    .highlights(text.as_bytes(), text.len() - 100..text.len())
+                    .is_empty()
+            );
+        }
     }
 
     #[test]

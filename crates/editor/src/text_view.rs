@@ -198,11 +198,13 @@ pub struct TextView {
 }
 
 /// Opt-in only, driven by plastext-bench. Normal windows schedule no work
-/// for this. GPUI's ZED_MEASUREMENTS reports whole-frame CPU durations.
+/// for this. GPUI's ZED_MEASUREMENTS reports draw/submit wall time, which may
+/// include driver waits; it does not measure GPU completion.
 struct ReadingProfile {
     opened: Instant,
     painted: bool,
     syntax_painted: bool,
+    full_syntax_painted: bool,
     frames_left: usize,
     frame_pending: bool,
 }
@@ -282,18 +284,74 @@ impl TextView {
             .cloned();
         let parse = language.zip(parsable).map(|(language, text)| {
             let cancel = cancel_parse.clone();
-            let parsing = cx.background_executor().spawn(async move {
-                let tree = SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))?;
-                let symbols = tree.symbols(&text);
-                let folds = tree.folds(&text);
-                Some((tree, symbols, folds))
-            });
             cx.spawn(async move |this, cx| {
-                if let Some((tree, symbols, folds)) = parsing.await {
+                let initial = cx
+                    .background_executor()
+                    .spawn({
+                        let text = text.clone();
+                        let cancel = cancel.clone();
+                        async move {
+                            SyntaxTree::parse_initial(language, &text, || {
+                                cancel.load(Ordering::Relaxed)
+                            })
+                            .map(Arc::new)
+                        }
+                    })
+                    .await;
+                let Some(mut tree) = initial else { return };
+                if this
+                    .update(cx, |this, cx| {
+                        this.syntax = Some(tree.clone());
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                if tree.parsed_len() < text.len() {
+                    let full = cx
+                        .background_executor()
+                        .spawn({
+                            let text = text.clone();
+                            let cancel = cancel.clone();
+                            async move {
+                                SyntaxTree::parse(language, &text, || {
+                                    cancel.load(Ordering::Relaxed)
+                                })
+                                .map(Arc::new)
+                            }
+                        })
+                        .await;
+                    let Some(full) = full else { return };
+                    tree = full;
+                    if this
+                        .update(cx, |this, cx| {
+                            this.syntax = Some(tree.clone());
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                // Outline/folds no longer delay the first highlighted frame.
+                let structures = cx
+                    .background_executor()
+                    .spawn(async move {
+                        if cancel.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                        let symbols = tree.symbols(&text);
+                        if cancel.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                        Some((symbols, tree.folds(&text)))
+                    })
+                    .await;
+                if let Some((symbols, folds)) = structures {
                     this.update(cx, |this, cx| {
-                        this.syntax = Some(Arc::new(tree));
-                        this.syntax_folds = folds.map(Arc::new);
                         this.symbols = Some(Arc::new(symbols));
+                        this.syntax_folds = folds.map(Arc::new);
                         cx.notify();
                     })
                     .ok();
@@ -342,6 +400,7 @@ impl TextView {
             opened,
             painted: false,
             syntax_painted: false,
+            full_syntax_painted: false,
             frames_left: frames,
             frame_pending: false,
         });
@@ -358,6 +417,12 @@ impl TextView {
         profile.painted = true;
         let syntax = self.syntax.is_some();
         let first_syntax = syntax && !profile.syntax_painted;
+        let full_syntax = self
+            .syntax
+            .as_ref()
+            .is_some_and(|tree| tree.parsed_len() as u64 == self.source.len());
+        let first_full_syntax = full_syntax && !profile.full_syntax_painted;
+        profile.full_syntax_painted |= full_syntax;
         if syntax && !first_syntax {
             profile.frames_left = profile.frames_left.saturating_sub(1);
         }
@@ -394,6 +459,12 @@ impl TextView {
                 );
                 eprintln!("reading: scrolling");
             }
+            if first_full_syntax {
+                eprintln!(
+                    "reading: full syntax paint {:.3} ms",
+                    opened.elapsed().as_secs_f64() * 1000.
+                );
+            }
             if done {
                 eprintln!("reading: done");
                 cx.quit();
@@ -423,7 +494,12 @@ impl TextView {
         let top = self.top;
         cx.new(|cx| {
             // Reuse the parse if it's done; otherwise parse again.
-            let parse = language.filter(|_| syntax.is_none());
+            let parse = language.filter(|_| {
+                syntax
+                    .as_ref()
+                    .is_none_or(|tree| (tree.parsed_len() as u64) < source.len())
+                    || symbols.is_none()
+            });
             let mut view = Self::new(source, index, style, parse, cx);
             view.language = language;
             view.syntax = syntax;
@@ -1413,44 +1489,48 @@ impl TextView {
     /// of each line, up to [`HIGHLIGHT_LINE_LIMIT`] bytes of it. Without a
     /// parse tree (yet), lines are highlighted one by one.
     fn highlights(&self, rows: &[(u64, Bytes, bool)]) -> Vec<(Range<u64>, Highlight)> {
-        let (Some(syntax), Some(text)) = (&self.syntax, self.source.in_memory()) else {
-            let Some(language) = self.language else {
-                return Vec::new();
-            };
-            return rows
-                .iter()
-                .filter(|(_, _, starts_line)| *starts_line)
-                .flat_map(|(start, bytes, _)| {
-                    let line = &bytes[..bytes.len().min(HIGHLIGHT_LINE_LIMIT as usize)];
-                    language
-                        .lexical
-                        .highlights(line)
-                        .into_iter()
-                        .map(move |(span, highlight)| {
-                            (
-                                start + span.start as u64..start + span.end as u64,
-                                highlight,
-                            )
-                        })
-                })
-                .collect();
+        let Some(language) = self.language else {
+            return Vec::new();
         };
+        let syntax = self.syntax.as_deref().zip(self.source.in_memory());
         let mut ranges: Vec<Range<u64>> = Vec::new();
+        let mut spans = Vec::new();
         for (start, bytes, starts_line) in rows {
             if !starts_line {
                 continue;
             }
-            let end = start + (bytes.len() as u64).min(HIGHLIGHT_LINE_LIMIT);
-            match ranges.last_mut() {
-                Some(last) if last.end == *start => last.end = end,
-                _ => ranges.push(*start..end),
+            let line = &bytes[..bytes.len().min(HIGHLIGHT_LINE_LIMIT as usize)];
+            let end = start + line.len() as u64;
+            if syntax.is_some_and(|(tree, _)| end <= tree.parsed_len() as u64) {
+                match ranges.last_mut() {
+                    Some(last) if last.end == *start => last.end = end,
+                    _ => ranges.push(*start..end),
+                }
+            } else {
+                // Scrolling beyond the initial parse uses the lexical fallback
+                // until the full tree is ready, never an unrelated partial tree.
+                spans.extend(
+                    language
+                        .lexical
+                        .highlights(line)
+                        .into_iter()
+                        .map(|(range, kind)| {
+                            (start + range.start as u64..start + range.end as u64, kind)
+                        }),
+                );
             }
         }
-        ranges
-            .into_iter()
-            .flat_map(|range| syntax.highlights(text, range.start as usize..range.end as usize))
-            .map(|(span, highlight)| (span.start as u64..span.end as u64, highlight))
-            .collect()
+        if let Some((tree, text)) = syntax {
+            for range in ranges {
+                spans.extend(
+                    tree.highlights(text, range.start as usize..range.end as usize)
+                        .into_iter()
+                        .map(|(range, kind)| (range.start as u64..range.end as u64, kind)),
+                );
+            }
+        }
+        spans.sort_unstable_by_key(|(range, _)| range.start);
+        spans
     }
 }
 

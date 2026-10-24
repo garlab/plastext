@@ -14,7 +14,7 @@ plastext-assets = { path = "crates/assets" }
 plastext-buffer = { path = "crates/buffer" }
 plastext-cli = { path = "crates/cli" }
 plastext-diff = { path = "crates/diff" }
-plastext-editor = { path = "crates/editor" }
+plastext-editor = { path = "crates/editor", default-features = false }
 plastext-git = { path = "crates/git" }
 plastext-markdown = { path = "crates/markdown" }
 plastext-math = { path = "crates/math" }
@@ -23,7 +23,7 @@ plastext-project = { path = "crates/project" }
 plastext-search = { path = "crates/search" }
 plastext-settings = { path = "crates/settings" }
 plastext-syntax = { path = "crates/syntax" }
-plastext-ui = { path = "crates/ui" }
+plastext-ui = { path = "crates/ui", default-features = false }
 
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -33,8 +33,9 @@ futures = "0.3"
 # `runtime_shaders` compiles the Metal shaders at launch, so building doesn't need
 # Xcode's `metal` compiler. That costs ~150 ms only while macOS's shader cache is
 # cold (first launch after an install or OS update), under 1 ms after (measured
-# 2026-10-24, M2 Pro). Release builds should still precompile them (spec M5).
-gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+# 2026-10-24, M2 Pro). UI crates enable it by default for CLT-only development;
+# --no-default-features precompiles Metal shaders for release (requires Xcode).
+gpui = { version = "=0.2.2" }
 globset = "0.4"
 ignore = "0.4"
 memchr = "2"

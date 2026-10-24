@@ -4151,6 +4151,7 @@ dependencies = [
  "nucleo",
  "plastext-buffer",
  "plastext-project",
+ "rayon",
  "tempfile",
 ]
 
@@ -4189,6 +4190,7 @@ dependencies = [
 name = "plastext-ui"
 version = "0.1.0"
 dependencies = [
+ "async-channel 2.5.0",
  "futures",
  "gpui",
  "nucleo",

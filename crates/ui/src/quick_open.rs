@@ -6,13 +6,12 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
 };
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ScrollStrategy,
-    SharedString, Subscription, UniformListScrollHandle, Window, actions, div, prelude::*, px,
-    uniform_list,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, actions, div, prelude::*,
+    px, uniform_list,
 };
 use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::{TreeOptions, walk_files};
@@ -24,8 +23,6 @@ const KEY_CONTEXT: &str = "QuickOpen";
 const WIDTH: f32 = 640.;
 const ROW_HEIGHT: f32 = 30.;
 const VISIBLE_ROWS: usize = 12;
-/// How often results refresh while files are found or matched.
-const TICK: Duration = Duration::from_millis(16);
 
 pub fn init(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
@@ -58,7 +55,6 @@ pub struct QuickOpen {
     /// Set while the background walk is still finding files.
     walking: Arc<AtomicBool>,
     cancel_walk: Arc<AtomicBool>,
-    ticking: bool,
     pattern: String,
     line: Option<u64>,
     /// Recently opened files, relative to the root, most recent first.
@@ -66,6 +62,7 @@ pub struct QuickOpen {
     selected: usize,
     scroll_handle: UniformListScrollHandle,
     _input_changes: Subscription,
+    _matching: Task<()>,
 }
 
 impl EventEmitter<QuickOpenEvent> for QuickOpen {}
@@ -91,7 +88,11 @@ impl QuickOpen {
         });
         input.focus_handle(cx).focus(window);
 
-        let matcher = FileMatcher::new(&recent);
+        let (notifications, incoming) = async_channel::bounded(1);
+        let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+            notifications.try_send(()).ok();
+        });
+        let matcher = FileMatcher::with_notify(&recent, notify.clone());
         let injector = matcher.injector();
         let walking = Arc::new(AtomicBool::new(true));
         let cancel_walk = Arc::new(AtomicBool::new(false));
@@ -106,26 +107,35 @@ impl QuickOpen {
                         injector.push(path);
                     });
                     walking.store(false, Ordering::Relaxed);
+                    injector.finish();
                 }
             })
             .detach();
 
-        let mut this = Self {
+        let matching = cx.spawn(async move |this, cx| {
+            while incoming.recv().await.is_ok() {
+                if this
+                    .update(cx, |this, cx| this.refresh_matches(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self {
             root,
             input,
             matcher,
             walking,
             cancel_walk,
-            ticking: false,
             pattern: String::new(),
             line: None,
             recent,
             selected: 0,
             scroll_handle: UniformListScrollHandle::new(),
             _input_changes: input_changes,
-        };
-        this.keep_ticking(cx);
-        this
+            _matching: matching,
+        }
     }
 
     pub fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
@@ -160,31 +170,13 @@ impl QuickOpen {
         self.line.filter(|_| self.pattern.is_empty())
     }
 
-    /// Refreshes results until the walk and the matching are both done.
-    fn keep_ticking(&mut self, cx: &mut Context<Self>) {
-        if self.ticking {
-            return;
+    /// Wake on completed work rather than paying a polling interval per key.
+    fn refresh_matches(&mut self, cx: &mut Context<Self>) {
+        let status = self.matcher.tick();
+        if status.changed || !self.walking.load(Ordering::Relaxed) {
+            self.selected = self.selected.min(self.count().saturating_sub(1));
+            cx.notify();
         }
-        self.ticking = true;
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor().timer(TICK).await;
-                let busy = this.update(cx, |this, cx| {
-                    let status = this.matcher.tick();
-                    if status.changed {
-                        this.selected = this.selected.min(this.count().saturating_sub(1));
-                        cx.notify();
-                    }
-                    let busy = status.running || this.walking.load(Ordering::Relaxed);
-                    this.ticking = busy;
-                    busy
-                });
-                if !matches!(busy, Ok(true)) {
-                    break;
-                }
-            }
-        })
-        .detach();
     }
 
     fn query_changed(&mut self, cx: &mut Context<Self>) {
@@ -195,7 +187,7 @@ impl QuickOpen {
         self.line = line;
         self.selected = 0;
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-        self.keep_ticking(cx);
+        self.refresh_matches(cx);
         cx.notify();
     }
 
@@ -262,10 +254,15 @@ impl Render for QuickOpen {
         let total = self.matcher.item_count();
         let footer = if self.showing_recent() {
             format!("Recently opened · {total} files")
-        } else if self.walking.load(Ordering::Relaxed) {
+        } else if self.walking.load(Ordering::Relaxed) || self.matcher.is_running() {
             format!("{matched} of {total} files so far…")
         } else {
-            format!("{matched} of {total} files")
+            let all = self.matcher.total_matches();
+            if all > matched {
+                format!("Best {matched} of {all} matches · {total} files · type more to narrow")
+            } else {
+                format!("{matched} of {total} files")
+            }
         };
         let results = if let Some(line) = self.go_to_line() {
             div()
@@ -292,7 +289,11 @@ impl Render for QuickOpen {
                 .flex()
                 .items_center()
                 .text_color(theme.text_muted)
-                .child("No matching files")
+                .child(if self.matcher.is_running() {
+                    "Searching…"
+                } else {
+                    "No matching files"
+                })
                 .into_any_element()
         } else {
             uniform_list(

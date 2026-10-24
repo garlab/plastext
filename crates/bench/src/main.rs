@@ -49,6 +49,9 @@ enum Commands {
         frames: usize,
         #[arg(long)]
         app: Option<PathBuf>,
+        /// Activate the benchmark window so occlusion cannot suspend its frames.
+        #[arg(long)]
+        foreground: bool,
     },
     /// Write server-log lines up to SIZE (e.g. "10GB").
     Log { size: ByteSize, path: PathBuf },
@@ -88,7 +91,8 @@ fn main() -> ExitCode {
             root,
             frames,
             app,
-        } => m1::read(&file, root.as_deref(), frames, app),
+            foreground,
+        } => m1::read(&file, root.as_deref(), frames, app, foreground),
         Commands::Log { size, path } => {
             write_file(&path, |out| plastext_bench::write_log(out, size.0))
         }

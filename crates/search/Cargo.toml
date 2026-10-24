@@ -15,6 +15,7 @@ grep-searcher = "0.1"
 plastext-buffer.workspace = true
 plastext-project.workspace = true
 nucleo.workspace = true
+rayon = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

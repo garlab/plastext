@@ -75,7 +75,12 @@ fn main() -> ExitCode {
             });
         }
         plastext_ui::init(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Quit, cx| {
+            if env::var_os("PLASTEXT_PROFILE_READING").is_some() {
+                eprintln!("reading: quit action received");
+            }
+            cx.quit();
+        });
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus(vec![Menu {
             name: "plastext".into(),
@@ -84,6 +89,9 @@ fn main() -> ExitCode {
         // Nothing can open a folder from the UI yet, so a windowless app is useless.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
+                if env::var_os("PLASTEXT_PROFILE_READING").is_some() {
+                    eprintln!("reading: last window closed");
+                }
                 cx.quit();
             }
         })
@@ -148,15 +156,20 @@ fn open(request: OpenRequest, notice: Option<SharedString>, cx: &mut App) {
             for request in requests {
                 open_window(request, notice.clone(), cx);
             }
-            // Automated scrolling must not take keyboard focus from the
-            // user's active application while it runs for several minutes.
-            if env::var_os("PLASTEXT_PROFILE_READING").is_none() {
+            // Leave focus alone unless the benchmark explicitly requests a
+            // foreground window (covered macOS windows stop frame callbacks).
+            if should_activate() {
                 cx.activate(true);
             }
         })
         .ok();
     })
     .detach();
+}
+
+fn should_activate() -> bool {
+    env::var_os("PLASTEXT_PROFILE_READING").is_none()
+        || env::var_os("PLASTEXT_PROFILE_FOREGROUND").is_some()
 }
 
 fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut App) {
@@ -185,7 +198,7 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
     }
 
     let options = WindowOptions {
-        focus: env::var_os("PLASTEXT_PROFILE_READING").is_none(),
+        focus: should_activate(),
         titlebar: Some(TitlebarOptions {
             title: Some(Workspace::title(request.root.as_deref())),
             ..Default::default()

@@ -14,6 +14,15 @@ cargo test --workspace
 cargo build --release            # builds target/release/plastext and plastext-app
 ```
 
+With full Xcode and its Metal compiler installed, precompile the shaders to avoid runtime shader compilation on a cold launch:
+
+```sh
+cargo build --release -p plastext-app --no-default-features
+cargo build --release -p plastext-cli
+```
+
+Default builds use the `runtime-shaders` feature so development works with Command Line Tools alone. Use the package-specific command above: building the whole workspace enables the UI crates' default features again.
+
 `plastext` is the command-line launcher. It hands its arguments to the running app, or starts the `plastext-app` binary sitting next to it, so keep the two in the same directory. Settings are read from `~/.config/plastext/config.toml`; see spec §5.10.
 
 ## Keys
@@ -40,14 +49,14 @@ cargo build --release -p plastext-app -p plastext-bench
 target/release/plastext-bench launch -- .               # time to first frame, 10 launches
 target/release/plastext-bench log 10GB /path/big.log    # spec §6.2 fixtures; also long-line, wide-dir
 target/release/plastext-bench m1 /path/linux-6.12 --million --output /tmp/m1.json
-target/release/plastext-bench read /path/linux-6.12/kernel/sched/core.c --root /path/linux-6.12
+target/release/plastext-bench read /path/linux-6.12/kernel/sched/core.c --root /path/linux-6.12 --foreground
 ```
 
-`m1` measures streamed Quick Open results, completed query updates (including backspacing), and warm project search. `--million` also tests one million synthetic paths derived from the real tree. `read` drives 10,000 native scroll frames and measures first paint, tree-based highlighting and GPUI frame drawing/submission. Both return a nonzero exit code when a measured budget fails. These checks do not substitute for the reference M1 Air run or measure GPU completion, idle memory, or features from later milestones. See [the M1 performance report](docs/m1-performance.md) for results and remaining gaps.
+`m1` measures first streamed Quick Open results and completed query rankings separately (including cached backspacing), plus warm project search. `--million` also tests one million synthetic paths derived from the real tree. `read` drives 10,000 native scroll frames and measures first paint, initial viewport highlighting, full-tree availability and GPUI frame drawing/submission. `--foreground` activates its window; leave it visible because macOS suspends drawing for covered windows. Both runners return a nonzero exit code when a measured budget fails. These checks do not substitute for the reference M1 Air run or measure GPU completion, idle memory, or features from later milestones. See [the M1 performance report](docs/m1-performance.md) for results and remaining gaps.
 
 ## Themes and folding
 
-Folding uses bundled tree-sitter queries when a parse is available, including unindented blocks and multiline comments/literals. Before parsing finishes, and for files without syntax support, it falls back to indentation. Quick Open boosts matching recent files in most-recent-first order, followed by other files in fuzzy relevance order.
+Folding uses bundled tree-sitter queries when a full parse is available, including unindented blocks and multiline comments/literals. Large source files first parse a 64 KiB prefix for viewport coloring, then replace it with the full tree in the background. Before folding queries finish, and for files without syntax support, folding falls back to indentation. Quick Open boosts matching recent files in most-recent-first order, followed by other files in fuzzy relevance order. It streams and refines the best 256 results; type more to narrow a broad query.
 
 To import a local VS Code JSON or JSONC color theme, add its path to `config.toml` and restart plastext:
 

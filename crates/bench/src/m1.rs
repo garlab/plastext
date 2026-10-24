@@ -54,10 +54,11 @@ fn metric(report: &mut Vec<Value>, name: &str, samples: &mut [f64], budget: Opti
 }
 
 /// Each query is typed, then erased, so broad prefixes and backspacing are
-/// measured too. Timing ends at a fresh completed matcher snapshot, including
-/// ranking, rather than at the call that merely enqueues the new pattern.
-fn queries(matcher: &mut FileMatcher, runs: usize) -> io::Result<Vec<f64>> {
-    let mut times = Vec::new();
+/// measured too. Record both the first fresh nonempty snapshot (or completed
+/// empty result), and final ranking of the entire index. Cached answers count.
+fn queries(matcher: &mut FileMatcher, runs: usize) -> io::Result<(Vec<f64>, Vec<f64>)> {
+    let mut first_results = Vec::new();
+    let mut completed = Vec::new();
     for _ in 0..runs {
         let mut previous = String::new();
         for query in ["sched", "net", "drivers", "include", "core.c"] {
@@ -65,14 +66,35 @@ fn queries(matcher: &mut FileMatcher, runs: usize) -> io::Result<Vec<f64>> {
                 let pattern = &query[..len];
                 let start = Instant::now();
                 matcher.reparse(pattern, pattern.starts_with(&previous));
-                settle(matcher)?;
+                let mut first = None;
+                loop {
+                    let status = matcher.tick();
+                    if status.changed && (matcher.matched_count() > 0 || !status.running) {
+                        first.get_or_insert(ms(start.elapsed()));
+                    }
+                    if !status.running {
+                        break;
+                    }
+                    if start.elapsed() > Duration::from_secs(30) {
+                        return Err(io::Error::other("query timed out"));
+                    }
+                    thread::sleep(Duration::from_micros(100));
+                }
                 std::hint::black_box(matcher.item(0));
-                times.push(ms(start.elapsed()));
+                let finished = ms(start.elapsed());
+                first_results.push(first.unwrap_or(finished));
+                completed.push(finished);
+                if std::env::var_os("PLASTEXT_TRACE_QUERIES").is_some() {
+                    eprintln!(
+                        "{pattern:?}: first {:.3} ms; complete {finished:.3} ms",
+                        first.unwrap_or(finished)
+                    );
+                }
                 previous = pattern.to_owned();
             }
         }
     }
-    Ok(times)
+    Ok((first_results, completed))
 }
 
 pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io::Result<()> {
@@ -129,6 +151,7 @@ pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io
         root.display(),
         paths.len()
     );
+    let (mut first, mut completed) = queries(&mut matcher, runs)?;
     pass &= metric(
         &mut report,
         "Quick Open first snapshot from walk start",
@@ -144,7 +167,13 @@ pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io
     pass &= metric(
         &mut report,
         "Quick Open per keystroke (core)",
-        &mut queries(&mut matcher, runs)?,
+        &mut first,
+        Some(16.),
+    );
+    pass &= metric(
+        &mut report,
+        "Quick Open completed ranking per keystroke (core)",
+        &mut completed,
         Some(16.),
     );
     if million {
@@ -158,10 +187,17 @@ pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io
             ));
         }
         settle(&mut large)?;
+        let (mut first, mut completed) = queries(&mut large, runs)?;
         pass &= metric(
             &mut report,
             "Quick Open 1M synthetic paths per keystroke (core)",
-            &mut queries(&mut large, runs)?,
+            &mut first,
+            Some(16.),
+        );
+        pass &= metric(
+            &mut report,
+            "Quick Open 1M completed ranking per keystroke (core)",
+            &mut completed,
             Some(16.),
         );
     }
@@ -251,6 +287,7 @@ pub fn read(
     root: Option<&Path>,
     frames: usize,
     app: Option<PathBuf>,
+    foreground: bool,
 ) -> io::Result<()> {
     if !file.is_file() {
         return Err(io::Error::other(
@@ -264,6 +301,10 @@ pub fn read(
     let mut command = Command::new(&app);
     if let Some(root) = root {
         command.arg(root);
+    }
+    command.env_remove("PLASTEXT_PROFILE_FOREGROUND");
+    if foreground {
+        command.env("PLASTEXT_PROFILE_FOREGROUND", "1");
     }
     let log = std::env::temp_dir().join(format!("plastext-read-{}.log", std::process::id()));
     println!("Native profile log: {}", log.display());
@@ -315,15 +356,16 @@ pub fn read(
             scrolling = false;
         }
         for (prefix, budget) in [
-            ("reading: first paint ", 50.),
-            ("reading: syntax paint ", 100.),
+            ("reading: first paint ", Some(50.)),
+            ("reading: syntax paint ", Some(100.)),
+            ("reading: full syntax paint ", None),
         ] {
             if let Some(value) = line
                 .strip_prefix(prefix)
                 .and_then(|value| value.strip_suffix(" ms"))
                 .and_then(|value| value.parse::<f64>().ok())
             {
-                passed &= metric(&mut report, prefix.trim(), &mut [value], Some(budget));
+                passed &= metric(&mut report, prefix.trim(), &mut [value], budget);
             }
         }
         if scrolling
@@ -345,7 +387,7 @@ pub fn read(
     }
     passed &= metric(
         &mut report,
-        "native scrolling frame CPU time (draw + submit)",
+        "native scrolling frame wall time (draw + submit)",
         &mut times,
         Some(8.),
     );

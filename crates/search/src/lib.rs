@@ -15,7 +15,7 @@ use std::{
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use plastext_buffer::{ByteSource as _, FileSource};
 
-pub use files::{FileInjector, FileMatcher};
+pub use files::{FileInjector, FileMatchStatus, FileMatcher, MAX_FILE_RESULTS};
 pub use project::{FileMatches, LineMatch, ProjectQuery, SearchOptions, search_project};
 
 /// Reads this much at a time, so matches reach the caller as the scan goes.
