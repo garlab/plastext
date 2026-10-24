@@ -16,9 +16,9 @@ use plastext_settings::{self as settings, Settings};
 use crate::{
     file_tree::{FileTreeEvent, FileTreeView},
     layout::{Axis, Layout},
+    picker::{Picker, PickerEvent, PickerItem},
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
-    symbol_picker::{SymbolPicker, SymbolPickerEvent},
     tab_view::TabView,
 };
 
@@ -34,7 +34,8 @@ actions!(
         ShowFiles,
         GoBack,
         GoForward,
-        GoToSymbol
+        GoToSymbol,
+        OpenCommandPalette
     ]
 );
 
@@ -50,7 +51,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
     crate::quick_open::init(cx);
-    crate::symbol_picker::init(cx);
+    crate::picker::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("cmd-p", OpenQuickOpen, context),
@@ -62,6 +63,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-[", GoBack, context),
         KeyBinding::new("cmd-]", GoForward, context),
         KeyBinding::new("cmd-shift-o", GoToSymbol, context),
+        KeyBinding::new("cmd-shift-p", OpenCommandPalette, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -83,7 +85,7 @@ pub struct Workspace {
     sidebar: Sidebar,
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
-    symbol_picker: Option<(Entity<SymbolPicker>, Subscription)>,
+    picker: Option<(Entity<Picker>, Subscription)>,
     open_options: OpenOptions,
     syntax_max_file_size: u64,
     text_style: TextStyle,
@@ -176,7 +178,7 @@ impl Workspace {
             sidebar: Sidebar::Files,
             search: None,
             quick_open: None,
-            symbol_picker: None,
+            picker: None,
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
@@ -404,7 +406,7 @@ impl Workspace {
             return;
         };
         let options = self.tree_options.clone();
-        self.symbol_picker = None;
+        self.picker = None;
         let quick_open = cx.new(|cx| QuickOpen::new(root, options, window, cx));
         let events = cx.subscribe_in(&quick_open, window, |this, _, event, window, cx| {
             this.close_quick_open(window, cx);
@@ -571,26 +573,106 @@ impl Workspace {
             cx.notify();
             return;
         };
-        let position = tab.view.position(cx);
-        self.quick_open = None;
-        let picker = cx.new(|cx| SymbolPicker::new(symbols, position, window, cx));
-        let events = cx.subscribe_in(&picker, window, |this, _, event, window, cx| {
-            this.close_quick_open(window, cx);
-            if let SymbolPickerEvent::Go(offset) = event {
+        let position = tab.view.position(cx) as usize;
+        let current = symbols
+            .iter()
+            .rposition(|symbol| symbol.range.start <= position)
+            .unwrap_or(0);
+        let items = symbols
+            .iter()
+            .map(|symbol| PickerItem {
+                label: symbol.name.clone().into(),
+                detail: symbol.kind.clone().into(),
+                depth: symbol.depth,
+            })
+            .collect();
+        self.open_picker(
+            "Go to symbol",
+            items,
+            current,
+            window,
+            cx,
+            move |this, picked, _, cx| {
                 this.record_jump(cx);
                 if let Some(tab) = this.panes[&this.active_pane].active_tab() {
-                    tab.view.clone().scroll_to_offset(*offset, cx);
+                    let offset = symbols[picked].range.start as u64;
+                    tab.view.clone().scroll_to_offset(offset, cx);
                 }
+            },
+        );
+    }
+
+    /// Lists the commands available where the focus is, with their shortcuts.
+    fn open_command_palette(
+        &mut self,
+        _: &OpenCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut actions = window.available_actions(cx);
+        actions.sort_by_key(|action| command_name(action.name()));
+        actions.dedup_by_key(|action| action.name());
+        let items = actions
+            .iter()
+            .map(|action| {
+                let shortcut = window
+                    .bindings_for_action(action.as_ref())
+                    .last()
+                    .map(|binding| {
+                        let keys: Vec<String> = binding
+                            .keystrokes()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect();
+                        keys.join(" ")
+                    })
+                    .unwrap_or_default();
+                PickerItem {
+                    label: command_name(action.name()).into(),
+                    detail: shortcut.into(),
+                    depth: 0,
+                }
+            })
+            .collect();
+        self.open_picker(
+            "Run a command",
+            items,
+            0,
+            window,
+            cx,
+            move |_, picked, window, cx| {
+                window.dispatch_action(actions[picked].boxed_clone(), cx);
+            },
+        );
+    }
+
+    /// Shows a picker over `items`; `picked` runs with the chosen index once
+    /// the picker has closed and focus is back where it was.
+    fn open_picker(
+        &mut self,
+        placeholder: &'static str,
+        items: Vec<PickerItem>,
+        selected: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        picked: impl Fn(&mut Self, usize, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        self.quick_open = None;
+        let picker = cx.new(|cx| Picker::new(placeholder, items, selected, window, cx));
+        let events = cx.subscribe_in(&picker, window, move |this, _, event, window, cx| {
+            this.close_quick_open(window, cx);
+            if let PickerEvent::Picked(index) = event {
+                picked(this, *index, window, cx);
             }
         });
-        self.symbol_picker = Some((picker, events));
+        self.picker = Some((picker, events));
         cx.notify();
     }
 
-    /// Closes Quick Open or the symbol picker, whichever is open.
+    /// Closes Quick Open or the picker, whichever is open.
     fn close_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let closed_symbols = self.symbol_picker.take().is_some();
-        if self.quick_open.take().is_none() && !closed_symbols {
+        let closed_picker = self.picker.take().is_some();
+        if self.quick_open.take().is_none() && !closed_picker {
             return;
         }
         match self.panes[&self.active_pane].active_tab() {
@@ -775,6 +857,35 @@ impl Workspace {
     }
 }
 
+/// A readable name for an action: `workspace::OpenQuickOpen` becomes
+/// "Workspace: Open Quick Open".
+fn command_name(action: &str) -> String {
+    let (namespace, name) = action.rsplit_once("::").unwrap_or(("", action));
+    let mut words = String::new();
+    for (i, ch) in name.char_indices() {
+        if i > 0 && ch.is_uppercase() {
+            words.push(' ');
+        }
+        words.push(ch);
+    }
+    let namespace: Vec<String> = namespace
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut chars = word.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    if namespace.is_empty() {
+        words
+    } else {
+        format!("{}: {words}", namespace.join(" "))
+    }
+}
+
 fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
     match target {
         Some(Target::Line(line)) => view.scroll_to_line(line, cx),
@@ -822,6 +933,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::go_to_symbol))
+            .on_action(cx.listener(Self::open_command_palette))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),
@@ -845,7 +957,7 @@ impl Render for Workspace {
                     .child(editor_area),
             )
             .child(self.render_status_bar(theme, cx))
-            .children(self.symbol_picker.as_ref().map(|(picker, _)| {
+            .children(self.picker.as_ref().map(|(picker, _)| {
                 div()
                     .absolute()
                     .top(px(56.))
@@ -865,5 +977,20 @@ impl Render for Workspace {
                     .justify_center()
                     .child(quick_open.clone())
             }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_name;
+
+    #[test]
+    fn names_commands_readably() {
+        assert_eq!(
+            command_name("workspace::OpenQuickOpen"),
+            "Workspace: Open Quick Open"
+        );
+        assert_eq!(command_name("text_view::Top"), "Text View: Top");
+        assert_eq!(command_name("Quit"), "Quit");
     }
 }

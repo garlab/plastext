@@ -2,9 +2,9 @@
 
 mod file_tree;
 mod layout;
+mod picker;
 mod quick_open;
 mod search_panel;
-mod symbol_picker;
 mod tab_view;
 mod workspace;
 

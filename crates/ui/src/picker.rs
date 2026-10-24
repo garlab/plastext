@@ -1,24 +1,20 @@
-//! Go to symbol (spec NAV-4): the outline of the current file, filtered by a fuzzy query.
-
-use std::sync::Arc;
+//! A palette of items filtered by a fuzzy query, for going to a symbol (spec
+//! NAV-4) and for the command palette (spec NAV-3).
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyBinding, ScrollStrategy,
-    Subscription, UniformListScrollHandle, Window, actions, div, prelude::*, px, uniform_list,
+    SharedString, Subscription, UniformListScrollHandle, Window, actions, div, prelude::*, px,
+    uniform_list,
 };
 use nucleo::{
     Config, Matcher,
     pattern::{CaseMatching, Normalization, Pattern},
 };
 use plastext_editor::{TextInput, TextInputEvent, Theme};
-use plastext_syntax::Symbol;
 
-actions!(
-    symbol_picker,
-    [SelectNext, SelectPrevious, Confirm, Dismiss]
-);
+actions!(picker, [SelectNext, SelectPrevious, Confirm, Dismiss]);
 
-const KEY_CONTEXT: &str = "SymbolPicker";
+const KEY_CONTEXT: &str = "Picker";
 const WIDTH: f32 = 560.;
 const ROW_HEIGHT: f32 = 28.;
 const VISIBLE_ROWS: usize = 14;
@@ -36,50 +32,55 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-pub enum SymbolPickerEvent {
-    /// Go to the symbol starting at this byte offset.
-    Go(u64),
+pub struct PickerItem {
+    pub label: SharedString,
+    /// Shown dimmed on the right.
+    pub detail: SharedString,
+    /// Indentation, shown while the query is empty.
+    pub depth: usize,
+}
+
+pub enum PickerEvent {
+    /// The item at this index was chosen.
+    Picked(usize),
     Dismissed,
 }
 
-pub struct SymbolPicker {
-    symbols: Arc<Vec<Symbol>>,
+pub struct Picker {
+    items: Vec<PickerItem>,
     input: Entity<TextInput>,
-    /// Indices into `symbols` that match the query, best first.
+    /// Indices into `items` that match the query, best first.
     shown: Vec<usize>,
-    /// Whether `shown` is filtered, rather than the whole outline in order.
+    /// Whether `shown` is filtered, rather than all items in order.
     filtered: bool,
     selected: usize,
     scroll_handle: UniformListScrollHandle,
     _input_changes: Subscription,
 }
 
-impl EventEmitter<SymbolPickerEvent> for SymbolPicker {}
+impl EventEmitter<PickerEvent> for Picker {}
 
-impl SymbolPicker {
-    /// A picker over `symbols`, starting on the last one before `position`.
+impl Picker {
+    /// A picker over `items`, starting on item `selected`.
     pub fn new(
-        symbols: Arc<Vec<Symbol>>,
-        position: u64,
+        placeholder: &'static str,
+        items: Vec<PickerItem>,
+        selected: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input = cx.new(|cx| TextInput::new("Go to symbol", cx));
+        let input = cx.new(|cx| TextInput::new(placeholder, cx));
         let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
             this.filter(cx)
         });
         input.focus_handle(cx).focus(window);
-        let position = position as usize;
-        let selected = symbols
-            .iter()
-            .rposition(|symbol| symbol.range.start <= position)
-            .unwrap_or(0);
+        let selected = selected.min(items.len().saturating_sub(1));
         let scroll_handle = UniformListScrollHandle::new();
         scroll_handle.scroll_to_item(selected, ScrollStrategy::Center);
         Self {
-            shown: (0..symbols.len()).collect(),
+            shown: (0..items.len()).collect(),
             filtered: false,
-            symbols,
+            items,
             input,
             selected,
             scroll_handle,
@@ -92,18 +93,18 @@ impl SymbolPicker {
         self.filtered = !query.is_empty();
         self.shown = if self.filtered {
             let pattern = Pattern::parse(&query, CaseMatching::Smart, Normalization::Smart);
-            let names = self
-                .symbols
+            let labels = self
+                .items
                 .iter()
                 .enumerate()
-                .map(|(index, symbol)| Name(index, &symbol.name));
+                .map(|(index, item)| Label(index, &item.label));
             pattern
-                .match_list(names, &mut Matcher::new(Config::DEFAULT))
+                .match_list(labels, &mut Matcher::new(Config::DEFAULT))
                 .into_iter()
-                .map(|(Name(index, _), _)| index)
+                .map(|(Label(index, _), _)| index)
                 .collect()
         } else {
-            (0..self.symbols.len()).collect()
+            (0..self.items.len()).collect()
         };
         self.selected = 0;
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
@@ -133,38 +134,36 @@ impl SymbolPicker {
     }
 
     fn confirm(&mut self, _: &Confirm, _: &mut Window, cx: &mut Context<Self>) {
-        self.go(self.selected, cx);
+        self.pick(self.selected, cx);
     }
 
-    fn go(&mut self, index: usize, cx: &mut Context<Self>) {
-        if let Some(&symbol) = self.shown.get(index) {
-            cx.emit(SymbolPickerEvent::Go(
-                self.symbols[symbol].range.start as u64,
-            ));
+    fn pick(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(&item) = self.shown.get(index) {
+            cx.emit(PickerEvent::Picked(item));
         }
     }
 
     fn dismiss(&mut self, _: &Dismiss, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(SymbolPickerEvent::Dismissed);
+        cx.emit(PickerEvent::Dismissed);
     }
 }
 
-/// A symbol name with its index, for matching.
-struct Name<'a>(usize, &'a str);
+/// An item label with its index, for matching.
+struct Label<'a>(usize, &'a str);
 
-impl AsRef<str> for Name<'_> {
+impl AsRef<str> for Label<'_> {
     fn as_ref(&self) -> &str {
         self.1
     }
 }
 
-impl Focusable for SymbolPicker {
+impl Focusable for Picker {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.input.focus_handle(cx)
     }
 }
 
-impl Render for SymbolPicker {
+impl Render for Picker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_appearance(window.appearance());
         let count = self.shown.len();
@@ -175,20 +174,20 @@ impl Render for SymbolPicker {
                 .flex()
                 .items_center()
                 .text_color(theme.text_muted)
-                .child("No matching symbols")
+                .child("No matches")
                 .into_any_element()
         } else {
             uniform_list(
-                "symbols",
+                "picker-items",
                 count,
                 cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                     range
                         .map(|index| {
-                            let symbol = &this.symbols[this.shown[index]];
+                            let item = &this.items[this.shown[index]];
                             let indent = if this.filtered {
                                 0.
                             } else {
-                                INDENT * symbol.depth as f32
+                                INDENT * item.depth as f32
                             };
                             div()
                                 .id(index)
@@ -208,15 +207,15 @@ impl Render for SymbolPicker {
                                         .whitespace_nowrap()
                                         .text_ellipsis()
                                         .text_color(theme.text)
-                                        .child(symbol.name.clone()),
+                                        .child(item.label.clone()),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(theme.text_muted)
-                                        .child(symbol.kind.clone()),
+                                        .child(item.detail.clone()),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| this.go(index, cx)))
+                                .on_click(cx.listener(move |this, _, _, cx| this.pick(index, cx)))
                         })
                         .collect()
                 }),
@@ -231,7 +230,7 @@ impl Render for SymbolPicker {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::dismiss))
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(SymbolPickerEvent::Dismissed)))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(PickerEvent::Dismissed)))
             .w(px(WIDTH))
             .flex()
             .flex_col()
