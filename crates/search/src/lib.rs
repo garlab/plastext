@@ -1,7 +1,9 @@
 //! Quick Open and project-wide content search (spec §5.6).
 //!
 //! So far: [`find_all`], which finds every occurrence of a query in a file
-//! of any size.
+//! of any size, and [`search_project`], which searches a whole project.
+
+mod project;
 
 use std::{
     io,
@@ -11,6 +13,8 @@ use std::{
 
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use plastext_buffer::{ByteSource as _, FileSource};
+
+pub use project::{FileMatches, LineMatch, ProjectQuery, SearchOptions, search_project};
 
 /// Reads this much at a time, so matches reach the caller as the scan goes.
 const CHUNK: u64 = 4 * 1024 * 1024;

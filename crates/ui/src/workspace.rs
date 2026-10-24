@@ -17,12 +17,21 @@ use crate::{
     file_tree::{FileTreeEvent, FileTreeView},
     layout::{Axis, Layout},
     quick_open::{QuickOpen, QuickOpenEvent},
+    search_panel::{SearchPanel, SearchPanelEvent},
     tab_view::TabView,
 };
 
 actions!(
     workspace,
-    [CloseTab, SplitRight, SplitDown, OpenQuickOpen, GoToLine]
+    [
+        CloseTab,
+        SplitRight,
+        SplitDown,
+        OpenQuickOpen,
+        GoToLine,
+        SearchProject,
+        ShowFiles
+    ]
 );
 
 const KEY_CONTEXT: &str = "Workspace";
@@ -38,6 +47,8 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-p", OpenQuickOpen, context),
         KeyBinding::new("ctrl-g", GoToLine, context),
+        KeyBinding::new("cmd-shift-f", SearchProject, context),
+        KeyBinding::new("cmd-shift-e", ShowFiles, context),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -56,12 +67,21 @@ pub struct Workspace {
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
     tree_options: TreeOptions,
+    sidebar: Sidebar,
+    search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     open_options: OpenOptions,
     syntax_max_file_size: u64,
     text_style: TextStyle,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
+}
+
+/// What the sidebar shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sidebar {
+    Files,
+    Search,
 }
 
 #[derive(Default)]
@@ -121,6 +141,8 @@ impl Workspace {
             next_pane: 1,
             notice,
             tree_options,
+            sidebar: Sidebar::Files,
+            search: None,
             quick_open: None,
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
@@ -358,6 +380,96 @@ impl Workspace {
         cx.notify();
     }
 
+    fn search_project(&mut self, _: &SearchProject, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            return;
+        };
+        let search = match &self.search {
+            Some((search, _)) => search.clone(),
+            None => {
+                let options = self.tree_options.clone();
+                let search = cx.new(|cx| SearchPanel::new(root, options, cx));
+                let events =
+                    cx.subscribe_in(&search, window, |this, _, event, window, cx| match event {
+                        SearchPanelEvent::Open { path, line } => {
+                            this.open_file(path.clone(), Some(*line), window, cx)
+                        }
+                    });
+                self.search = Some((search.clone(), events));
+                search
+            }
+        };
+        self.sidebar = Sidebar::Search;
+        search.update(cx, |search, cx| search.focus(window, cx));
+        cx.notify();
+    }
+
+    fn show_files(&mut self, _: &ShowFiles, _: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar = Sidebar::Files;
+        cx.notify();
+    }
+
+    fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
+        let sidebar = div()
+            .w(px(SIDEBAR_WIDTH))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.surface)
+            .border_r_1()
+            .border_color(theme.border)
+            .text_sm();
+        let Some(tree) = &self.tree else {
+            return sidebar
+                .p_3()
+                .text_color(theme.text_muted)
+                .child("No folder open. Run `plastext <folder>` to open one.")
+                .into_any_element();
+        };
+        let tab = |id: &'static str, label: &'static str, shown: bool| {
+            div()
+                .id(id)
+                .px_2()
+                .py_1()
+                .rounded_sm()
+                .cursor_pointer()
+                .text_xs()
+                .when(shown, |tab| tab.bg(theme.border).text_color(theme.text))
+                .when(!shown, |tab| tab.text_color(theme.text_muted))
+                .child(label)
+        };
+        let header = div()
+            .h(px(TAB_BAR_HEIGHT))
+            .flex_none()
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                tab("sidebar-files", "Files", self.sidebar == Sidebar::Files).on_click(
+                    cx.listener(|this, _, window, cx| this.show_files(&ShowFiles, window, cx)),
+                ),
+            )
+            .child(
+                tab("sidebar-search", "Search", self.sidebar == Sidebar::Search).on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.search_project(&SearchProject, window, cx)
+                    }),
+                ),
+            );
+        let content = match (&self.search, self.sidebar) {
+            (Some((search, _)), Sidebar::Search) => search.clone().into_any_element(),
+            _ => tree.clone().into_any_element(),
+        };
+        sidebar
+            .child(header)
+            .child(div().flex_1().min_h_0().child(content))
+            .into_any_element()
+    }
+
     fn go_to_line(&mut self, _: &GoToLine, window: &mut Window, cx: &mut Context<Self>) {
         if self.panes[&self.active_pane].active_tab().is_none() {
             return;
@@ -573,21 +685,7 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_appearance(window.appearance());
-        let sidebar = div()
-            .w(px(SIDEBAR_WIDTH))
-            .flex_none()
-            .h_full()
-            .bg(theme.surface)
-            .border_r_1()
-            .border_color(theme.border)
-            .text_sm()
-            .map(|sidebar| match &self.tree {
-                Some(tree) => sidebar.child(tree.clone()),
-                None => sidebar
-                    .p_3()
-                    .text_color(theme.text_muted)
-                    .child("No folder open. Run `plastext <folder>` to open one."),
-            });
+        let sidebar = self.render_sidebar(theme, cx);
         let editor_area =
             div()
                 .flex_1()
@@ -602,6 +700,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::open_quick_open))
             .on_action(cx.listener(Self::go_to_line))
+            .on_action(cx.listener(Self::search_project))
+            .on_action(cx.listener(Self::show_files))
             .relative()
             .size_full()
             .flex()

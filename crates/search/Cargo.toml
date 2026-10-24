@@ -9,7 +9,14 @@ publish.workspace = true
 
 [dependencies]
 aho-corasick = "1"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
 plastext-buffer.workspace = true
+plastext-project.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

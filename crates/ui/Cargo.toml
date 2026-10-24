@@ -14,6 +14,7 @@ nucleo.workspace = true
 plastext-buffer.workspace = true
 plastext-editor.workspace = true
 plastext-project.workspace = true
+plastext-search.workspace = true
 plastext-settings.workspace = true
 plastext-syntax.workspace = true
 

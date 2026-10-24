@@ -10,12 +10,12 @@ publish.workspace = true
 [dependencies]
 clap.workspace = true
 plastext-project.workspace = true
+plastext-search.workspace = true
 plastext-settings.workspace = true
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 plastext-buffer.workspace = true
-plastext-search.workspace = true
 plastext-syntax.workspace = true
 
 [[bench]]

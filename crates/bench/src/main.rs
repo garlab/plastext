@@ -33,6 +33,8 @@ enum Commands {
     WideDir { count: u64, dir: PathBuf },
     /// Time how long Quick Open's file walk takes over DIR.
     Walk { dir: PathBuf },
+    /// Time a project search for QUERY over DIR.
+    Search { dir: PathBuf, query: String },
     /// Launch the app RUNS times and report how long its first frame takes.
     ///
     /// Build the app first, e.g. `cargo build --release -p plastext-app`.
@@ -59,6 +61,10 @@ fn main() -> ExitCode {
         Commands::WideDir { count, dir } => plastext_bench::create_wide_dir(&dir, count),
         Commands::Walk { dir } => {
             walk(&dir);
+            Ok(())
+        }
+        Commands::Search { dir, query } => {
+            search(&dir, &query);
             Ok(())
         }
         Commands::Launch { runs, app, args } => launch(runs, app, &args),
@@ -100,6 +106,45 @@ fn walk(dir: &std::path::Path) {
     println!(
         "{} files; first after {:.1} ms, all after {:.1} ms",
         count.into_inner(),
+        first.as_secs_f64() * 1000.,
+        start.elapsed().as_secs_f64() * 1000.
+    );
+}
+
+/// Searches `dir` as the search panel does, reporting the first and last results.
+fn search(dir: &std::path::Path, query: &str) {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    };
+    let Ok(compiled) =
+        plastext_search::ProjectQuery::new(query, plastext_search::SearchOptions::default())
+    else {
+        eprintln!("plastext-bench: invalid query");
+        return;
+    };
+    let start = Instant::now();
+    let first = Mutex::new(None);
+    let lines = AtomicU64::new(0);
+    let files = AtomicU64::new(0);
+    let options = plastext_project::TreeOptions::default();
+    plastext_search::search_project(
+        dir,
+        &options,
+        &compiled,
+        10_000,
+        &AtomicBool::new(false),
+        |found| {
+            first.lock().unwrap().get_or_insert(start.elapsed());
+            files.fetch_add(1, Ordering::Relaxed);
+            lines.fetch_add(found.lines.len() as u64, Ordering::Relaxed);
+        },
+    );
+    let first = first.into_inner().unwrap().unwrap_or_default();
+    println!(
+        "{} lines in {} files; first after {:.1} ms, done after {:.1} ms",
+        lines.into_inner(),
+        files.into_inner(),
         first.as_secs_f64() * 1000.,
         start.elapsed().as_secs_f64() * 1000.
     );

@@ -3,6 +3,7 @@
 mod file_tree;
 mod layout;
 mod quick_open;
+mod search_panel;
 mod tab_view;
 mod workspace;
 
