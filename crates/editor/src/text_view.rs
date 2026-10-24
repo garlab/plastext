@@ -23,6 +23,7 @@ use plastext_syntax::{Highlight, Language, Symbol, SyntaxTree};
 use crate::{
     Theme,
     row_text::{column_at, offset_at, visible_text, word_at},
+    scroll::{ScrollPosition, scroll},
     text_input::{TextInput, TextInputEvent},
 };
 
@@ -791,34 +792,22 @@ impl TextView {
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
         self.pending_line = None;
         self.pending_jump = None;
-        let mut offset = self.top_offset + delta;
-        while offset >= self.line_height {
-            match rows::row_end(&*self.source, self.top) {
-                Ok(end) if end < self.source.len() => {
-                    self.top = end;
-                    offset -= self.line_height;
-                }
-                Ok(_) => offset = px(0.),
-                Err(err) => {
-                    self.handle_read_error(err, cx);
-                    offset = px(0.);
-                }
-            }
+        let source = &*self.source;
+        let next = |row| {
+            let end = rows::row_end(source, row)?;
+            Ok((end < source.len()).then_some(end))
+        };
+        let previous = |row| rows::previous_row_start(source, row);
+        let position = ScrollPosition {
+            top: self.top,
+            offset: self.top_offset,
+        };
+        let (position, err) = scroll(position, delta, self.line_height, next, previous);
+        self.top = position.top;
+        self.top_offset = position.offset;
+        if let Some(err) = err {
+            self.handle_read_error(err, cx);
         }
-        while offset < px(0.) {
-            match rows::previous_row_start(&*self.source, self.top) {
-                Ok(Some(start)) => {
-                    self.top = start;
-                    offset += self.line_height;
-                }
-                Ok(None) => offset = px(0.),
-                Err(err) => {
-                    self.handle_read_error(err, cx);
-                    offset = px(0.);
-                }
-            }
-        }
-        self.top_offset = offset;
         cx.notify();
     }
 

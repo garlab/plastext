@@ -9,6 +9,7 @@ use plastext_buffer::{ByteSource, FileSource, ReadError};
 
 use crate::{
     TextStyle, Theme,
+    scroll::{ScrollPosition, scroll},
     text_view::{Bottom, LineDown, LineUp, PageDown, PageUp, Shaper, Top},
 };
 
@@ -128,18 +129,16 @@ impl HexView {
     }
 
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
-        if self.line_height <= px(0.) {
-            return;
-        }
-        let offset = self.top_offset + delta;
-        let rows = (offset / self.line_height).floor();
-        let top = (self.top_row as f64 + rows as f64).clamp(0., self.last_row() as f64) as u64;
-        self.top_offset = if top as f64 == self.top_row as f64 + rows as f64 {
-            offset - self.line_height * rows
-        } else {
-            px(0.)
+        let last_row = self.last_row();
+        let next = |row: u64| Ok::<_, ()>((row < last_row).then_some(row + 1));
+        let previous = |row: u64| Ok(row.checked_sub(1));
+        let position = ScrollPosition {
+            top: self.top_row,
+            offset: self.top_offset,
         };
-        self.top_row = top;
+        let (position, _) = scroll(position, delta, self.line_height, next, previous);
+        self.top_row = position.top;
+        self.top_offset = position.offset;
         cx.notify();
     }
 

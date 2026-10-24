@@ -2,6 +2,7 @@
 
 mod hex_view;
 mod row_text;
+mod scroll;
 mod text_input;
 mod text_view;
 mod theme;
