@@ -2,13 +2,20 @@
 
 mod windows;
 
-use std::{ffi::OsString, io, iter, process::ExitCode, sync::Arc};
+use std::{
+    env,
+    ffi::OsString,
+    io, iter,
+    process::ExitCode,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use clap::Parser as _;
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
     App, Application, Bounds, Focusable, Global, KeyBinding, Menu, MenuItem, SharedString,
-    TitlebarOptions, WindowBounds, WindowOptions, actions, prelude::*, px, size,
+    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
 };
 use plastext_cli::Cli;
 use plastext_platform::instance::{self, OpenRequest};
@@ -24,7 +31,17 @@ struct AppSettings(Arc<Settings>);
 
 impl Global for AppSettings {}
 
+/// Set by `PLASTEXT_PROFILE_STARTUP`: report how long the first window took
+/// to draw, then quit. `plastext-bench launch` runs the app this way.
+struct StartupProfile {
+    start: Instant,
+    reported: bool,
+}
+
+impl Global for StartupProfile {}
+
 fn main() -> ExitCode {
+    let start = Instant::now();
     // Handles `--help` and `--version`, and rejects bad arguments.
     Cli::parse();
     let request = match OpenRequest::from_env() {
@@ -51,6 +68,12 @@ fn main() -> ExitCode {
     };
 
     Application::new().run(move |cx: &mut App| {
+        if env::var_os("PLASTEXT_PROFILE_STARTUP").is_some() {
+            cx.set_global(StartupProfile {
+                start,
+                reported: false,
+            });
+        }
         plastext_ui::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
@@ -168,6 +191,7 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
         ..Default::default()
     };
     let settings = cx.global::<AppSettings>().0.clone();
+    let opening = Instant::now();
     let opened = cx.open_window(options, |window, cx| {
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(request.root, settings, window, cx);
@@ -182,7 +206,38 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
         workspace.focus_handle(cx).focus(window);
         workspace
     });
-    if let Err(err) = opened {
-        eprintln!("plastext: cannot open a window: {err:#}");
+    match opened {
+        Ok(window) => profile_first_frame(window, opening.elapsed(), cx),
+        Err(err) => eprintln!("plastext: cannot open a window: {err:#}"),
     }
+}
+
+/// When profiling startup, reports once `window` has drawn its first frame, then quits.
+fn profile_first_frame(window: WindowHandle<Workspace>, opening: Duration, cx: &mut App) {
+    let Some(profile) = cx.try_global::<StartupProfile>() else {
+        return;
+    };
+    if profile.reported {
+        return;
+    }
+    let start = profile.start;
+    cx.global_mut::<StartupProfile>().reported = true;
+    let millis = |duration: Duration| duration.as_secs_f64() * 1000.;
+    window
+        .update(cx, |_, window, _| {
+            // Frame callbacks run before drawing, so the second one runs after
+            // the first frame: an upper bound within one display refresh.
+            window.on_next_frame(move |window, _| {
+                window.refresh();
+                window.on_next_frame(move |_, cx| {
+                    eprintln!(
+                        "startup: window opened in {:.1} ms, first frame drawn by {:.1} ms",
+                        millis(opening),
+                        millis(start.elapsed())
+                    );
+                    cx.quit();
+                });
+            });
+        })
+        .ok();
 }

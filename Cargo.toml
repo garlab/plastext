@@ -31,7 +31,9 @@ futures = "0.3"
 # Pinned exactly: GPUI is pre-1.0 and upgrades are deliberate (spec §7.1).
 # Only `app`, `ui` and `editor` may depend on it (spec §7.3, enforced in CI).
 # `runtime_shaders` compiles the Metal shaders at launch, so building doesn't need
-# Xcode's `metal` compiler. Release builds should precompile them instead (M5).
+# Xcode's `metal` compiler. That costs ~150 ms only while macOS's shader cache is
+# cold (first launch after an install or OS update), under 1 ms after (measured
+# 2026-10-24, M2 Pro). Release builds should still precompile them (spec M5).
 gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
 globset = "0.4"
 ignore = "0.4"

@@ -14,7 +14,16 @@ cargo test --workspace
 cargo build --release            # builds target/release/plastext and plastext-app
 ```
 
-`plastext` is the command-line launcher. It starts the `plastext-app` binary sitting next to it, so keep the two in the same directory.
+`plastext` is the command-line launcher. It hands its arguments to the running app, or starts the `plastext-app` binary sitting next to it, so keep the two in the same directory. Settings are read from `~/.config/plastext/config.toml`; see spec §5.10.
+
+## Benchmarks
+
+```sh
+cargo bench -p plastext-bench --bench text              # text engine micro-benchmarks
+cargo build --release -p plastext-app -p plastext-bench
+target/release/plastext-bench launch -- .               # time to first frame, 10 launches
+target/release/plastext-bench log 10GB /path/big.log    # spec §6.2 fixtures; also long-line, wide-dir
+```
 
 ## Layout
 
