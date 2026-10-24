@@ -1,0 +1,14 @@
+[package]
+name = "plastext-ui"
+description = "GPUI views: workspace, sidebar, tree, tabs, splits, palette and banners (spec §4.1)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui.workspace = true
+
+[lints]
+workspace = true

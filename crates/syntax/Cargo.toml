@@ -1,0 +1,11 @@
+[package]
+name = "plastext-syntax"
+description = "tree-sitter integration, language registry, highlighter and lexical fallback (spec §5.3)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

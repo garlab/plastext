@@ -1,0 +1,11 @@
+[package]
+name = "plastext-search"
+description = "Quick Open and project-wide content search (spec §5.6)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

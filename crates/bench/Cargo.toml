@@ -1,0 +1,11 @@
+[package]
+name = "plastext-bench"
+description = "Extreme-case fixture generators and benchmarks (spec §6, §9)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

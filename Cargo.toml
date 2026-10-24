@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+plastext-assets = { path = "crates/assets" }
+plastext-buffer = { path = "crates/buffer" }
+plastext-cli = { path = "crates/cli" }
+plastext-diff = { path = "crates/diff" }
+plastext-editor = { path = "crates/editor" }
+plastext-git = { path = "crates/git" }
+plastext-markdown = { path = "crates/markdown" }
+plastext-math = { path = "crates/math" }
+plastext-platform = { path = "crates/platform" }
+plastext-project = { path = "crates/project" }
+plastext-search = { path = "crates/search" }
+plastext-settings = { path = "crates/settings" }
+plastext-syntax = { path = "crates/syntax" }
+plastext-ui = { path = "crates/ui" }
+
+clap = { version = "4", features = ["derive"] }
+# Pinned exactly: GPUI is pre-1.0 and upgrades are deliberate (spec §7.1).
+# Only `app`, `ui` and `editor` may depend on it (spec §7.3, enforced in CI).
+# `runtime_shaders` compiles the Metal shaders at launch, so building doesn't need
+# Xcode's `metal` compiler. Release builds should precompile them instead (M5).
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+# Unoptimized GPUI is too slow to judge rendering; optimize dependencies in dev builds.
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
