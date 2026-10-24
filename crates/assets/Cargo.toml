@@ -7,5 +7,16 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico", "tiff"] }
+resvg = { version = "0.45.1", default-features = false, features = ["text", "system-fonts"] }
+base64 = "0.22"
+percent-encoding = "2"
+plastext-buffer.workspace = true
+csv = "1.4"
+
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

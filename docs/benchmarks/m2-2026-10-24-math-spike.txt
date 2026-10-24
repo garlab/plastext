@@ -1,0 +1,21 @@
+PASS fraction: 62.44 ms
+PASS root: 9.55 ms
+PASS sum: 8.77 ms
+PASS integral: 8.97 ms
+PASS matrix: 9.11 ms
+PASS cases: 9.10 ms
+PASS aligned: 10.64 ms
+PASS gather: 9.18 ms
+PASS array: 9.92 ms
+PASS fonts: 8.87 ms
+PASS text: 8.75 ms
+PASS operator: 8.57 ms
+PASS accents: 8.77 ms
+FAIL ams: Typst source error: [SourceDiagnostic { severity: Error, span: DiagSpan { span: Span(330697299582013), extra: 0 }, message: "unknown variable: sect", trace: [], hints: ["if you meant to display multiple letters as is, try adding spaces between each letter: `s e c t`", "or if you meant to display this as text, try placing it in quotes: `\"sect\"`"] }]
+PASS tag: 8.60 ms
+PASS macro: 8.60 ms
+FAIL def: error: unknown command: \sq
+PASS color: 8.62 ms
+PASS binomial: 8.69 ms
+PASS limits: 8.96 ms
+18/20 representative expressions compiled in 224.88 ms. This is not the KaTeX corpus or a visual-equivalence score. Output: /private/tmp/plastext-math-spike

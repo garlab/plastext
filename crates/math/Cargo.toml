@@ -7,5 +7,19 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+spike = ["dep:mitex", "dep:typst-layout", "dep:typst-as-lib", "dep:typst-svg", "dep:typst-assets"]
+
+[dependencies]
+mitex = { version = "0.2.4", optional = true }
+typst-layout = { version = "0.15.1", optional = true }
+typst-as-lib = { version = "0.17", default-features = false, optional = true }
+typst-svg = { version = "0.15.1", optional = true }
+typst-assets = { version = "0.15.1", features = ["fonts"], optional = true }
+
+[[example]]
+name = "spike"
+required-features = ["spike"]
+
 [lints]
 workspace = true

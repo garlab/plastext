@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "file": "/private/tmp/plastext-m2/large.csv",
+  "bytes": 546670014,
+  "rows": 20000001,
+  "index_ms": 489.507834,
+  "final_page_ms": 0.9590420000000001,
+  "page_rows": 60,
+  "scope": "core indexing and page decode only; excludes native layout/paint"
+}

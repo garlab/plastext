@@ -16,8 +16,11 @@ use plastext_project::{ShowIgnored, TreeOptions};
 use plastext_settings::{self as settings, Settings};
 
 use crate::{
+    csv_view::CsvView,
     file_tree::{FileTreeEvent, FileTreeView},
+    image_view::ImageView,
     layout::{Axis, Layout},
+    markdown_view::{MarkdownEvent, MarkdownView},
     picker::{Picker, PickerEvent, PickerItem},
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
@@ -54,6 +57,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// Registers the workspace's and its views' key bindings.
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
+    crate::markdown_view::init(cx);
     crate::quick_open::init(cx);
     crate::picker::init(cx);
     let context = Some(KEY_CONTEXT);
@@ -70,6 +74,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, context),
         // A read-mode key (spec §4.2), so only where the text view has focus.
         KeyBinding::new("o", ToggleOutline, Some("TextView")),
+        KeyBinding::new("o", ToggleOutline, Some("MarkdownPreview")),
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
@@ -113,10 +118,11 @@ struct Place {
 }
 
 /// Where to scroll a file once it's open.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Target {
     Line(u64),
     Offset(u64),
+    Anchor(String),
 }
 
 /// The outline panel on the right: the active file's symbols.
@@ -146,6 +152,7 @@ struct Tab {
     title: SharedString,
     view: TabView,
     _status: Subscription,
+    _links: Option<Subscription>,
 }
 
 impl Pane {
@@ -277,6 +284,9 @@ impl Workspace {
         let opening = cx.background_executor().spawn({
             let path = path.clone();
             async move {
+                if plastext_assets::is_image(&path) {
+                    return Ok(Opened::Image(plastext_assets::load_local(&path)));
+                }
                 let source = Arc::new(FileSource::open(&path, options)?);
                 let head = source.head(plastext_buffer::SNIFF_LEN)?;
                 if plastext_buffer::looks_binary(&head) {
@@ -292,6 +302,23 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| match opened {
                 Ok(opened) => {
                     let view = match opened {
+                        Opened::Text(source, index, _)
+                            if path.extension().is_some_and(|s| {
+                                s.eq_ignore_ascii_case("csv") || s.eq_ignore_ascii_case("tsv")
+                            }) =>
+                        {
+                            TabView::Csv(
+                                cx.new(|cx| CsvView::new(path.clone(), source, index, style, cx)),
+                            )
+                        }
+                        Opened::Image(preview) => {
+                            TabView::Image(cx.new(|cx| ImageView::new(path.clone(), preview, cx)))
+                        }
+                        Opened::Text(source, index, _) if plastext_markdown::is_markdown(&path) => {
+                            TabView::Markdown(cx.new(|cx| {
+                                MarkdownView::new(path.clone(), source, index, style, cx)
+                            }))
+                        }
                         Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {
                             let mut view = TextView::new(source, index, style, language, cx);
                             if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
@@ -335,6 +362,22 @@ impl Workspace {
             )
             .into();
         let status = view.observe(cx);
+        let links = if let TabView::Markdown(markdown) = &view {
+            Some(
+                cx.subscribe_in(markdown, window, |this, _, event, window, cx| {
+                    let MarkdownEvent::Open { path, fragment } = event;
+                    this.record_jump(cx);
+                    this.open(
+                        path.clone(),
+                        fragment.clone().map(Target::Anchor),
+                        window,
+                        cx,
+                    );
+                }),
+            )
+        } else {
+            None
+        };
         let pane_id = self.active_pane;
         let pane = self.panes.entry(pane_id).or_default();
         pane.tabs.push(Tab {
@@ -342,6 +385,7 @@ impl Workspace {
             title,
             view,
             _status: status,
+            _links: links,
         });
         let index = pane.tabs.len() - 1;
         self.activate(pane_id, index, window, cx);
@@ -1035,12 +1079,14 @@ fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
     match target {
         Some(Target::Line(line)) => view.scroll_to_line(line, cx),
         Some(Target::Offset(offset)) => view.scroll_to_offset(offset, cx),
+        Some(Target::Anchor(anchor)) => view.scroll_to_anchor(anchor, cx),
         None => {}
     }
 }
 
 /// A file opened in the background, ready for a view.
 enum Opened {
+    Image(Result<plastext_assets::Preview, String>),
     Text(
         Arc<FileSource>,
         Arc<LineIndex>,

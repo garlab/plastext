@@ -1,5 +1,7 @@
 # M1 performance check — 2026-10-24
 
+**Accepted baseline for M2:** the user accepted the current performance at `01fcbb3` on 2026-10-24 and chose to proceed to M2. Keep the measurements below for regression comparisons; this decision does not change the spec's budgets or certify the remaining checks.
+
 **M1 is not ready for performance sign-off.** The optimization pass makes a 10 MB file's initial tree-highlighted viewport available in 25.31 ms instead of 1,133.02 ms. Million-path Quick Open streams fresh results at 2.28 ms p99, while completing its full ranking improves from 85.63 to 28.68 ms p99 and still misses 16 ms. Cold launch, the reference-machine run and the remaining end-to-end checks are still outstanding.
 
 ## Environment and fixtures

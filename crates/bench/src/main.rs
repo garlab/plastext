@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use plastext_settings::ByteSize;
 
 mod m1;
+mod m2;
 
 #[derive(Parser)]
 #[command(
@@ -27,6 +28,14 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Measure bounded Markdown parsing; does not measure native painting.
+    M2 {
+        file: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Measure sparse CSV/TSV indexing and fetching the final visible page.
+    Csv { file: PathBuf },
     /// Check M1's core budgets on a Linux source tree. Reports failures with a
     /// nonzero exit code; use `read` and `launch` for native rendering timings.
     M1 {
@@ -80,6 +89,8 @@ enum Commands {
 
 fn main() -> ExitCode {
     let result = match Args::parse().command {
+        Commands::M2 { file, output } => m2::run(&file, output.as_deref()),
+        Commands::Csv { file } => m2::csv(&file),
         Commands::M1 {
             dir,
             runs,

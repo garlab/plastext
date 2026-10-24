@@ -1,0 +1,5 @@
+name,description,value
+Markdown,"Native, virtualized",42
+CSV,"A quoted field
+across two source lines",123
+SVG,Native vector preview,7

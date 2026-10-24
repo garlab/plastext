@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use crate::csv_view::CsvView;
+use crate::image_view::ImageView;
+use crate::markdown_view::MarkdownView;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription};
 use plastext_editor::{HexView, HexViewStatus, TextView, TextViewStatus};
 use plastext_syntax::Symbol;
@@ -9,11 +12,18 @@ use plastext_syntax::Symbol;
 pub(crate) enum TabView {
     Text(Entity<TextView>),
     Hex(Entity<HexView>),
+    Markdown(Entity<MarkdownView>),
+    Image(Entity<ImageView>),
+    Csv(Entity<CsvView>),
 }
 
 pub(crate) enum TabStatus {
     Text(TextViewStatus),
     Hex(HexViewStatus),
+    Preview {
+        notice: Option<SharedString>,
+        summary: String,
+    },
 }
 
 impl TabView {
@@ -21,6 +31,9 @@ impl TabView {
         match self {
             Self::Text(view) => view.focus_handle(cx),
             Self::Hex(view) => view.focus_handle(cx),
+            Self::Markdown(view) => view.focus_handle(cx),
+            Self::Image(view) => view.focus_handle(cx),
+            Self::Csv(view) => view.focus_handle(cx),
         }
     }
 
@@ -29,6 +42,9 @@ impl TabView {
         match self {
             Self::Text(view) => Self::Text(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Hex(view) => Self::Hex(view.update(cx, |view, cx| view.duplicate(cx))),
+            Self::Markdown(view) => Self::Markdown(view.update(cx, |view, cx| view.duplicate(cx))),
+            Self::Image(view) => Self::Image(view.update(cx, |view, cx| view.duplicate(cx))),
+            Self::Csv(view) => Self::Csv(view.update(cx, |view, cx| view.duplicate(cx))),
         }
     }
 
@@ -37,12 +53,29 @@ impl TabView {
         if let Self::Text(view) = self {
             view.update(cx, |view, cx| view.scroll_to_line(line, cx));
         }
+        if let Self::Markdown(view) = self {
+            view.update(cx, |view, cx| view.scroll_to_line(line, cx));
+        }
+        if let Self::Csv(view) = self {
+            view.update(cx, |view, cx| view.scroll_to_line(line, cx));
+        }
+    }
+
+    pub fn scroll_to_anchor(&self, anchor: String, cx: &mut App) {
+        if let Self::Markdown(view) = self {
+            view.update(cx, |view, cx| view.scroll_to_anchor(anchor, cx));
+        } else if let Some(line) = anchor.strip_prefix('L').and_then(|s| s.parse::<u64>().ok()) {
+            self.scroll_to_line(line, cx);
+        }
     }
 
     pub fn symbols(&self, cx: &App) -> Option<Arc<Vec<Symbol>>> {
         match self {
             Self::Text(view) => view.read(cx).symbols(),
             Self::Hex(_) => None,
+            Self::Markdown(view) => Some(view.read(cx).symbols()),
+            Self::Image(_) => None,
+            Self::Csv(_) => None,
         }
     }
 
@@ -51,6 +84,9 @@ impl TabView {
         match self {
             Self::Text(view) => view.read(cx).position(),
             Self::Hex(view) => view.read(cx).position(),
+            Self::Markdown(view) => view.read(cx).position(cx),
+            Self::Image(_) => 0,
+            Self::Csv(view) => view.read(cx).position(cx),
         }
     }
 
@@ -58,6 +94,9 @@ impl TabView {
         match self {
             Self::Text(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Hex(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+            Self::Markdown(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+            Self::Image(_) => {}
+            Self::Csv(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
         }
     }
 
@@ -65,6 +104,18 @@ impl TabView {
         match self {
             Self::Text(view) => TabStatus::Text(view.read(cx).status()),
             Self::Hex(view) => TabStatus::Hex(view.read(cx).status()),
+            Self::Markdown(view) => TabStatus::Preview {
+                notice: view.read(cx).notice(),
+                summary: view.read(cx).summary(),
+            },
+            Self::Csv(view) => TabStatus::Preview {
+                notice: view.read(cx).notice(),
+                summary: view.read(cx).summary(),
+            },
+            Self::Image(view) => TabStatus::Preview {
+                notice: view.read(cx).notice(),
+                summary: view.read(cx).summary(),
+            },
         }
     }
 
@@ -73,6 +124,9 @@ impl TabView {
         match self {
             Self::Text(view) => cx.observe(view, |_, _, cx| cx.notify()),
             Self::Hex(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Markdown(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Image(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Csv(view) => cx.observe(view, |_, _, cx| cx.notify()),
         }
     }
 
@@ -80,6 +134,9 @@ impl TabView {
         match self {
             Self::Text(view) => view.clone().into(),
             Self::Hex(view) => view.clone().into(),
+            Self::Markdown(view) => view.clone().into(),
+            Self::Image(view) => view.clone().into(),
+            Self::Csv(view) => view.clone().into(),
         }
     }
 }
@@ -90,6 +147,7 @@ impl TabStatus {
         match self {
             Self::Text(status) => status.error.clone().or_else(|| status.notice.clone()),
             Self::Hex(status) => status.error.clone(),
+            Self::Preview { notice, .. } => notice.clone(),
         }
     }
 
@@ -121,6 +179,7 @@ impl TabStatus {
                 parts.push(format_size(status.len));
                 parts.push("Binary".to_owned());
             }
+            Self::Preview { summary, .. } => return summary.clone(),
         }
         parts.join("    ")
     }
