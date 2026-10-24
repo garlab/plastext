@@ -13,5 +13,8 @@ gpui.workspace = true
 plastext-cli.workspace = true
 plastext-ui.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

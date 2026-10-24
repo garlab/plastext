@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 gpui.workspace = true
+plastext-buffer.workspace = true
+plastext-editor.workspace = true
+plastext-project.workspace = true
 
 [lints]
 workspace = true

@@ -2760,6 +2760,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ignore"
+version = "0.4.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f"
+dependencies = [
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3871,6 +3887,7 @@ dependencies = [
  "gpui",
  "plastext-cli",
  "plastext-ui",
+ "tempfile",
 ]
 
 [[package]]
@@ -3904,6 +3921,10 @@ version = "0.1.0"
 [[package]]
 name = "plastext-editor"
 version = "0.1.0"
+dependencies = [
+ "gpui",
+ "plastext-buffer",
+]
 
 [[package]]
 name = "plastext-git"
@@ -3924,6 +3945,11 @@ version = "0.1.0"
 [[package]]
 name = "plastext-project"
 version = "0.1.0"
+dependencies = [
+ "globset",
+ "ignore",
+ "tempfile",
+]
 
 [[package]]
 name = "plastext-search"
@@ -3942,6 +3968,9 @@ name = "plastext-ui"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "plastext-buffer",
+ "plastext-editor",
+ "plastext-project",
 ]
 
 [[package]]

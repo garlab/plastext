@@ -1,26 +1,36 @@
 //! The plastext application: startup, windows, single-instance server and session restore (spec §7.3).
 
-use std::path::{self, PathBuf};
+mod windows;
+
+use std::path;
 
 use clap::Parser as _;
 use gpui::{
-    App, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
+    App, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
     WindowOptions, actions, prelude::*, px, size,
 };
-use plastext_cli::Cli;
+use plastext_cli::{Cli, Location};
 use plastext_ui::Workspace;
+
+use crate::windows::{WindowRequest, window_requests};
 
 actions!(plastext, [Quit]);
 
 fn main() {
     let cli = Cli::parse();
-    let roots: Vec<PathBuf> = cli
+    let locations: Vec<Location> = cli
         .locations
         .into_iter()
-        .map(|location| path::absolute(&location.path).unwrap_or(location.path))
+        .map(|mut location| {
+            if let Ok(path) = path::absolute(&location.path) {
+                location.path = path;
+            }
+            location
+        })
         .collect();
 
     Application::new().run(move |cx: &mut App| {
+        plastext_ui::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus(vec![Menu {
@@ -35,32 +45,49 @@ fn main() {
         })
         .detach();
 
-        if roots.is_empty() {
-            open_window(None, cx);
-        }
-        for root in roots {
-            open_window(Some(root), cx);
-        }
-        cx.activate(true);
+        // Telling files from folders touches the disk, so it happens off the main thread.
+        let requests = cx
+            .background_executor()
+            .spawn(async move { window_requests(locations) });
+        cx.spawn(async move |cx| {
+            let requests = requests.await;
+            cx.update(|cx| {
+                for request in requests {
+                    open_window(request, cx);
+                }
+                cx.activate(true);
+            })
+            .ok();
+        })
+        .detach();
     });
 }
 
-fn open_window(root: Option<PathBuf>, cx: &mut App) {
+fn open_window(request: WindowRequest, cx: &mut App) {
     let options = WindowOptions {
         titlebar: Some(TitlebarOptions {
-            title: Some(Workspace::title(root.as_deref())),
+            title: Some(Workspace::title(request.root.as_deref())),
             ..Default::default()
         }),
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,
-            size(px(1100.), px(720.)),
+            size(px(1200.), px(780.)),
             cx,
         ))),
         ..Default::default()
     };
-    if let Err(err) = cx.open_window(options, |window, cx| {
-        cx.new(|cx| Workspace::new(root, window, cx))
-    }) {
+    let opened = cx.open_window(options, |window, cx| {
+        let workspace = cx.new(|cx| {
+            let mut workspace = Workspace::new(request.root, window, cx);
+            for file in request.files {
+                workspace.open_file(file.path, file.line.map(u64::from), window, cx);
+            }
+            workspace
+        });
+        workspace.focus_handle(cx).focus(window);
+        workspace
+    });
+    if let Err(err) = opened {
         eprintln!("plastext: cannot open a window: {err:#}");
     }
 }

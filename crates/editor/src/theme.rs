@@ -4,12 +4,13 @@ use gpui::{Rgba, WindowAppearance, rgb};
 ///
 /// Hard-coded until themes are loaded by `plastext-settings`.
 #[derive(Clone, Copy)]
-pub(crate) struct Theme {
+pub struct Theme {
     pub background: Rgba,
     pub surface: Rgba,
     pub border: Rgba,
     pub text: Rgba,
     pub text_muted: Rgba,
+    pub scrollbar_thumb: Rgba,
 }
 
 impl Theme {
@@ -21,6 +22,7 @@ impl Theme {
                 border: rgb(0xe1e1e4),
                 text: rgb(0x1f2328),
                 text_muted: rgb(0x6b7079),
+                scrollbar_thumb: rgb(0xc9cbd1),
             },
             WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
                 background: rgb(0x1c1d21),
@@ -28,6 +30,7 @@ impl Theme {
                 border: rgb(0x34363d),
                 text: rgb(0xe6e6e9),
                 text_muted: rgb(0x8d919b),
+                scrollbar_thumb: rgb(0x4a4d56),
             },
         }
     }
