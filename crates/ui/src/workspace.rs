@@ -189,6 +189,7 @@ impl Workspace {
                 font_size: px(settings.editor.font_size),
                 line_height: settings.editor.line_height,
                 tab_size: settings.editor.tab_size,
+                sticky_scroll: settings.editor.sticky_scroll,
             },
             focus_handle: cx.focus_handle(),
             back: Vec::new(),

@@ -303,6 +303,7 @@ font = "Menlo"                # SF Mono is private to Apple's own apps
 font_size = 13
 line_height = 1.5
 soft_wrap = false
+sticky_scroll = true
 atomic_save = true
 
 [markdown]

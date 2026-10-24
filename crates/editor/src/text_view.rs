@@ -22,8 +22,9 @@ use plastext_syntax::{Highlight, Language, Symbol, SyntaxTree};
 
 use crate::{
     Theme,
-    row_text::{column_at, offset_at, visible_text, word_at},
+    row_text::{VisibleText, column_at, offset_at, visible_text, word_at},
     scroll::{ScrollPosition, scroll},
+    sticky::sticky_rows,
     text_input::{TextInput, TextInputEvent},
 };
 
@@ -60,6 +61,8 @@ const MIN_THUMB_HEIGHT: f32 = 24.;
 const INDEX_REFRESH: Duration = Duration::from_millis(200);
 /// Only this many bytes at the start of each line are highlighted (spec TXT-6).
 const HIGHLIGHT_LINE_LIMIT: u64 = 10_000;
+/// At most this many sticky lines are pinned above the text.
+const MAX_STICKY: usize = 4;
 /// Larger selections aren't copied to the clipboard.
 const MAX_COPY: u64 = 64_000_000;
 
@@ -112,6 +115,8 @@ pub struct TextStyle {
     /// A multiple of the font size.
     pub line_height: f32,
     pub tab_size: usize,
+    /// Pin the first lines of the definitions enclosing the view's top (spec CODE-7).
+    pub sticky_scroll: bool,
 }
 
 /// What the status bar shows about a text view.
@@ -1011,7 +1016,8 @@ impl TextView {
                 first_column..first_column + columns,
                 &row_spans,
             );
-            max_columns = max_columns.max(visible.width);
+            let width = visible.width;
+            max_columns = max_columns.max(width);
             let end = start + bytes.len() as u64;
             let selected = selection
                 .clone()
@@ -1022,7 +1028,7 @@ impl TextView {
                         let offset = (offset - start) as usize;
                         if offset > content.len() {
                             // The selection includes the line break.
-                            visible.width + 1
+                            width + 1
                         } else {
                             column_at(content, tab_size, offset)
                         }
@@ -1061,18 +1067,30 @@ impl TextView {
                 end,
                 content: bytes.slice(0..content.len()),
             });
-            let runs: Vec<(usize, Rgba)> = visible
-                .runs
-                .iter()
-                .map(|&(len, highlight)| (len, highlight.map_or(theme.text, |h| theme.syntax(h))))
-                .collect();
             rows.push(RowLayout {
                 number,
-                text: (!visible.text.is_empty()).then(|| shaper.shape(visible.text, &runs)),
+                text: shape_visible(visible, &theme, &shaper),
                 selected,
                 matches,
             });
         }
+        let sticky: Vec<StickyRow> = self
+            .sticky_headers(&visible_rows)
+            .into_iter()
+            .map(|(start, content)| {
+                let line = self.index.line_at(start, &*self.source).ok().flatten();
+                let spans = self.highlights(&[(start, content.clone(), true)]);
+                let spans = spans_within(&spans, start..start + content.len() as u64);
+                let columns = first_column..first_column + columns;
+                let visible = visible_text(&content, self.style.tab_size, columns, &spans);
+                StickyRow {
+                    start,
+                    number: line
+                        .map(|line| shaper.shape((line + 1).to_string(), &[(0, theme.text_muted)])),
+                    text: shape_visible(visible, &theme, &shaper),
+                }
+            })
+            .collect();
 
         let shown_end = ranges.last().map_or(self.top, |range| range.end);
         self.visible_len = shown_end - self.top;
@@ -1119,6 +1137,10 @@ impl TextView {
             text_left,
             shift,
             rows,
+            sticky: sticky
+                .iter()
+                .map(|row| (row.number.clone(), row.text.clone()))
+                .collect(),
             hits: HitMap {
                 bounds,
                 gutter_width,
@@ -1129,6 +1151,7 @@ impl TextView {
                 top_offset: self.top_offset,
                 tab_size: self.style.tab_size,
                 rows: hit_rows,
+                sticky: sticky.iter().map(|row| row.start).collect(),
             },
             scrollbar,
             message: self
@@ -1136,6 +1159,31 @@ impl TextView {
                 .clone()
                 .map(|error| shaper.shape(error.to_string(), &[(0, theme.text_muted)])),
         }
+    }
+
+    /// The rows sticky scroll pins, without their line breaks.
+    fn sticky_headers(&self, visible: &[(u64, Bytes, bool)]) -> Vec<(u64, Bytes)> {
+        let Some(symbols) = &self.symbols else {
+            return Vec::new();
+        };
+        if !self.style.sticky_scroll {
+            return Vec::new();
+        }
+        let source = &*self.source;
+        let visible: Vec<u64> = visible.iter().map(|(start, _, _)| *start).collect();
+        let starts = sticky_rows(symbols, &visible, MAX_STICKY, |offset| {
+            rows::row_start_at(source, offset).ok()
+        });
+        starts
+            .into_iter()
+            .filter_map(|start| {
+                let end = rows::row_end(source, start).ok()?;
+                let bytes = source.bytes(start..end).ok()?;
+                let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+                let content = content.strip_suffix(b"\r").unwrap_or(content);
+                Some((start, bytes.slice(0..content.len())))
+            })
+            .collect()
     }
 
     /// Highlighted spans for the visible rows, as absolute offsets: the start
@@ -1167,6 +1215,26 @@ impl Drop for TextView {
     fn drop(&mut self) {
         self.cancel_parse.store(true, Ordering::Relaxed);
     }
+}
+
+/// Shapes a row's visible text in its syntax colors.
+fn shape_visible(visible: VisibleText, theme: &Theme, shaper: &Shaper) -> Option<ShapedLine> {
+    if visible.text.is_empty() {
+        return None;
+    }
+    let runs: Vec<(usize, Rgba)> = visible
+        .runs
+        .iter()
+        .map(|&(len, highlight)| (len, highlight.map_or(theme.text, |h| theme.syntax(h))))
+        .collect();
+    Some(shaper.shape(visible.text, &runs))
+}
+
+/// A pinned first row of an enclosing definition.
+struct StickyRow {
+    start: u64,
+    number: Option<ShapedLine>,
+    text: Option<ShapedLine>,
 }
 
 /// The spans overlapping `row`, relative to its start.
@@ -1290,6 +1358,8 @@ struct TextLayout {
     /// Horizontal offset of each row's text: the scrolled-off part of its first column.
     shift: Pixels,
     rows: Vec<RowLayout>,
+    /// Pinned rows: their line numbers and text.
+    sticky: Vec<(Option<ShapedLine>, Option<ShapedLine>)>,
     hits: HitMap,
     scrollbar: Option<ScrollbarLayout>,
     message: Option<ShapedLine>,
@@ -1317,6 +1387,8 @@ struct HitMap {
     top_offset: Pixels,
     tab_size: usize,
     rows: Vec<HitRow>,
+    /// Where the pinned rows start.
+    sticky: Vec<u64>,
 }
 
 #[derive(Clone)]
@@ -1336,6 +1408,15 @@ struct Hit {
 }
 
 impl HitMap {
+    /// The start of the pinned row at `position`, if there's one there.
+    fn sticky_at(&self, position: gpui::Point<Pixels>) -> Option<u64> {
+        let y = position.y - self.bounds.top();
+        if y < px(0.) {
+            return None;
+        }
+        self.sticky.get((y / self.line_height) as usize).copied()
+    }
+
     /// The offset nearest `position`, clamped to the visible rows.
     fn hit(&self, position: gpui::Point<Pixels>) -> Option<Hit> {
         let last = self.rows.len().checked_sub(1)?;
@@ -1427,6 +1508,42 @@ impl TextLayout {
             }
         });
 
+        if !self.sticky.is_empty() {
+            let height = line_height * self.sticky.len() as f32;
+            let area = Bounds::new(
+                bounds.origin,
+                size(bounds.size.width - px(SCROLLBAR_WIDTH), height),
+            );
+            window.paint_quad(fill(area, theme.background));
+            window.paint_quad(fill(
+                Bounds::new(area.origin, size(self.gutter_width, height)),
+                theme.surface,
+            ));
+            let border = Bounds::new(
+                point(area.left(), area.bottom()),
+                size(area.size.width, px(1.)),
+            );
+            window.paint_quad(fill(border, theme.border));
+            for (i, (number, _)) in self.sticky.iter().enumerate() {
+                if let Some(number) = number {
+                    let x = gutter.right() - number.width - line_height / 2.;
+                    let y = bounds.top() + line_height * i as f32;
+                    number.paint(point(x, y), line_height, window, cx).ok();
+                }
+            }
+            let text_area =
+                Bounds::from_corners(point(gutter.right(), area.top()), area.bottom_right());
+            window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
+                let x = bounds.left() + self.text_left + self.shift;
+                for (i, (_, text)) in self.sticky.iter().enumerate() {
+                    if let Some(text) = text {
+                        let y = bounds.top() + line_height * i as f32;
+                        text.paint(point(x, y), line_height, window, cx).ok();
+                    }
+                }
+            });
+        }
+
         if let Some(scrollbar) = self.scrollbar {
             window.paint_quad(fill(scrollbar.thumb, theme.scrollbar_thumb).corner_radii(px(3.)));
             let view = view.clone();
@@ -1449,11 +1566,19 @@ impl TextLayout {
         let hits = self.hits.clone();
         let pressed = view.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble
-                && event.button == MouseButton::Left
-                && text_bounds.contains(&event.position)
-                && let Some(hit) = hits.hit(event.position)
+            if phase != DispatchPhase::Bubble
+                || event.button != MouseButton::Left
+                || !text_bounds.contains(&event.position)
             {
+                return;
+            }
+            // A click on a pinned row goes to the definition it starts.
+            if let Some(start) = hits.sticky_at(event.position) {
+                pressed.update(cx, |view, cx| view.jump(Jump::Offset(start), cx));
+                cx.stop_propagation();
+                return;
+            }
+            if let Some(hit) = hits.hit(event.position) {
                 let extend = event.modifiers.shift;
                 pressed.update(cx, |view, cx| {
                     view.mouse_down(hit, event.click_count, extend, cx)

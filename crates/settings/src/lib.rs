@@ -28,6 +28,8 @@ pub struct Editor {
     /// A multiple of the font size.
     pub line_height: f32,
     pub tab_size: usize,
+    /// Pin the first lines of the definitions enclosing the view's top.
+    pub sticky_scroll: bool,
 }
 
 impl Default for Editor {
@@ -37,6 +39,7 @@ impl Default for Editor {
             font_size: 13.,
             line_height: 1.5,
             tab_size: 4,
+            sticky_scroll: true,
         }
     }
 }
