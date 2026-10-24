@@ -437,7 +437,7 @@ impl Element for TextElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Prepainted {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let input = self.input.read(cx);
         let style = window.text_style();
         let (text, color) = if input.text.is_empty() {

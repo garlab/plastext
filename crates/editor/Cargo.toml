@@ -13,6 +13,7 @@ futures.workspace = true
 gpui.workspace = true
 plastext-buffer.workspace = true
 plastext-search.workspace = true
+plastext-settings.workspace = true
 plastext-syntax.workspace = true
 
 [lints]

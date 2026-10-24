@@ -908,7 +908,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let sidebar = self.render_sidebar(theme, cx);
         let editor_area =
             div()

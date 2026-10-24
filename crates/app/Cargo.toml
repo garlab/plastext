@@ -12,6 +12,7 @@ clap.workspace = true
 futures.workspace = true
 gpui.workspace = true
 plastext-cli.workspace = true
+plastext-editor.workspace = true
 plastext-platform.workspace = true
 plastext-settings.workspace = true
 plastext-ui.workspace = true

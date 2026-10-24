@@ -4,12 +4,14 @@
 //! the file leaves out.
 
 mod byte_size;
+mod theme;
 
 use std::{fmt, fs, io, path::PathBuf};
 
 use serde::Deserialize;
 
 pub use byte_size::ByteSize;
+pub use theme::{Color, SyntaxOverrides, ThemeOverrides, Themes};
 
 /// Everything configurable, as read from `config.toml` (spec CFG-1).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -18,6 +20,7 @@ pub struct Settings {
     pub editor: Editor,
     pub files: Files,
     pub limits: Limits,
+    pub theme: Themes,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -174,6 +177,27 @@ mod tests {
         assert_eq!(settings.limits.large_file_threshold, ByteSize(16_000_000));
         assert_eq!(settings.limits.block_cache, Limits::default().block_cache);
         assert_eq!(Settings::parse("").unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn reads_theme_overrides() {
+        let settings = Settings::parse(
+            r##"
+            [theme.dark]
+            background = "#101014"
+
+            [theme.dark.syntax]
+            type = "#ffa657"
+            "##,
+        )
+        .unwrap();
+        assert_eq!(settings.theme.dark.background, Some(Color(0x101014)));
+        assert_eq!(settings.theme.dark.syntax.r#type, Some(Color(0xffa657)));
+        assert_eq!(settings.theme.light, ThemeOverrides::default());
+        assert!(
+            Settings::parse("[theme.dark]\nbackgroud = \"#000\"").is_err(),
+            "typos are reported"
+        );
     }
 
     #[test]

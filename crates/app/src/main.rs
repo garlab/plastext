@@ -99,6 +99,8 @@ fn main() -> ExitCode {
                 ),
             };
             let opened = cx.update(|cx| {
+                let themes = &settings.theme;
+                cx.set_global(plastext_editor::Themes::new(&themes.light, &themes.dark));
                 cx.set_global(AppSettings(Arc::new(settings)));
                 open(request, notice, cx);
             });

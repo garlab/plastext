@@ -226,7 +226,7 @@ impl HexView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> HexLayout {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let text_system = window.text_system().clone();
         let shaper = Shaper {
             text_system: &text_system,

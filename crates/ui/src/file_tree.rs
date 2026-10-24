@@ -90,7 +90,7 @@ impl Render for FileTreeView {
             "file-tree",
             self.tree.rows().len(),
             cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
-                let theme = Theme::for_appearance(window.appearance());
+                let theme = Theme::get(window, cx);
                 range
                     .filter_map(|index| {
                         let row = this.tree.rows().get(index)?;

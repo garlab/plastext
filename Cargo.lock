@@ -4052,6 +4052,7 @@ dependencies = [
  "futures",
  "gpui",
  "plastext-cli",
+ "plastext-editor",
  "plastext-platform",
  "plastext-settings",
  "plastext-ui",
@@ -4105,6 +4106,7 @@ dependencies = [
  "gpui",
  "plastext-buffer",
  "plastext-search",
+ "plastext-settings",
  "plastext-syntax",
 ]
 

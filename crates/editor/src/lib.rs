@@ -13,7 +13,7 @@ use gpui::App;
 pub use hex_view::{HexView, HexViewStatus};
 pub use text_input::{TextInput, TextInputEvent};
 pub use text_view::{TextStyle, TextView, TextViewStatus};
-pub use theme::Theme;
+pub use theme::{Theme, Themes};
 
 /// Registers the editor's key bindings.
 pub fn init(cx: &mut App) {

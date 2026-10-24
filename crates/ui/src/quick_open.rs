@@ -234,7 +234,7 @@ impl Focusable for QuickOpen {
 
 impl Render for QuickOpen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let snapshot = self.matcher.snapshot();
         let matched = snapshot.matched_item_count() as usize;
         let total = snapshot.item_count();

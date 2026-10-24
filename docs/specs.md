@@ -330,6 +330,11 @@ snapshot_cache = "128MB"
 gutter_base = "index"         # "index" | "HEAD"
 diff_algorithm = "histogram"  # "histogram" | "myers"
 
+[theme.dark]                  # also [theme.light]; any color left out keeps the built-in one
+background = "#1c1d21"        # surface, border, text, text_muted, selection, find_match, scrollbar_thumb
+[theme.dark.syntax]           # keyword, function, type, string, escape, number, constant, comment,
+keyword = "#ff7b72"           # property, tag, attribute, label, operator, punctuation, heading, link
+
 [follow]
 enabled = false
 debounce_ms = 300

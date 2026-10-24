@@ -165,7 +165,7 @@ impl Focusable for Picker {
 
 impl Render for Picker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let count = self.shown.len();
         let results = if count == 0 {
             div()

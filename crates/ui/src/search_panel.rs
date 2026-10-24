@@ -200,7 +200,7 @@ fn plural(count: usize, noun: &str) -> String {
 
 impl Render for SearchPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let toggle = |id: &'static str, label: &'static str, on: bool| {
             div()
                 .id(id)

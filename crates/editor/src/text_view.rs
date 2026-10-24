@@ -945,7 +945,7 @@ impl TextView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> TextLayout {
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         let text_system = window.text_system().clone();
         let font = font(self.style.font_family.clone());
         let font_size = self.style.font_size;
@@ -1282,7 +1282,7 @@ fn spans_within(
 impl Render for TextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let theme = Theme::for_appearance(window.appearance());
+        let theme = Theme::get(window, cx);
         // The find bar sits outside the view's key context, so typing in it
         // doesn't trigger single-key bindings such as `n` or `/`.
         let find_bar = self
