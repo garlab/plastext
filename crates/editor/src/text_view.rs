@@ -9,15 +9,18 @@ use std::{
 
 use bytes::Bytes;
 use gpui::{
-    App, Bounds, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Focusable, Font,
-    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Rgba,
-    ScrollWheelEvent, ShapedLine, SharedString, Task, TextRun, Window, WindowTextSystem, actions,
-    canvas, div, fill, font, point, prelude::*, px, size,
+    App, Bounds, ClipboardItem, ContentMask, Context, DispatchPhase, Entity, FocusHandle,
+    Focusable, Font, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Rgba, ScrollWheelEvent, ShapedLine, SharedString, Task, TextRun, Window, WindowTextSystem,
+    actions, canvas, div, fill, font, point, prelude::*, px, size,
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
 use plastext_syntax::{Highlight, Language, SyntaxTree};
 
-use crate::{Theme, row_text::visible_text};
+use crate::{
+    Theme,
+    row_text::{column_at, offset_at, visible_text, word_at},
+};
 
 actions!(
     text_view,
@@ -29,7 +32,10 @@ actions!(
         ScrollLeft,
         ScrollRight,
         Top,
-        Bottom
+        Bottom,
+        Copy,
+        SelectAll,
+        ClearSelection
     ]
 );
 
@@ -42,6 +48,8 @@ const MIN_THUMB_HEIGHT: f32 = 24.;
 const INDEX_REFRESH: Duration = Duration::from_millis(200);
 /// Only this many bytes at the start of each line are highlighted (spec TXT-6).
 const HIGHLIGHT_LINE_LIMIT: u64 = 10_000;
+/// Larger selections aren't copied to the clipboard.
+const MAX_COPY: u64 = 64_000_000;
 
 /// Registers the read-mode key bindings (spec §4.2).
 pub fn init(cx: &mut App) {
@@ -63,6 +71,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-g", Bottom, context),
         KeyBinding::new("end", Bottom, context),
         KeyBinding::new("cmd-down", Bottom, context),
+        KeyBinding::new("cmd-c", Copy, context),
+        KeyBinding::new("cmd-a", SelectAll, context),
+        KeyBinding::new("escape", ClearSelection, context),
     ]);
 }
 
@@ -87,7 +98,11 @@ pub struct TextViewStatus {
     pub indexing: Option<f32>,
     pub len: u64,
     pub language: Option<&'static str>,
+    /// The number of bytes selected.
+    pub selected: Option<u64>,
     pub error: Option<SharedString>,
+    /// A passing message about the last action.
+    pub notice: Option<SharedString>,
 }
 
 /// A read-only view of a text file of any size (spec TXT-1).
@@ -122,7 +137,11 @@ pub struct TextView {
     pending_jump: Option<Jump>,
     loading: Option<Task<()>>,
     error: Option<SharedString>,
+    notice: Option<SharedString>,
     drag: Option<ScrollbarDrag>,
+    selection: Option<Selection>,
+    /// Whether a mouse drag is extending the selection.
+    selecting: bool,
     _index_refresh: Option<Task<()>>,
     _parse: Option<Task<()>>,
 }
@@ -133,6 +152,19 @@ enum Jump {
     Offset(u64),
     /// Show the last page.
     End,
+}
+
+/// Selected bytes, from where the selection started to where it ends now.
+#[derive(Clone, Copy, Debug)]
+struct Selection {
+    anchor: u64,
+    head: u64,
+}
+
+impl Selection {
+    fn range(&self) -> Range<u64> {
+        self.anchor.min(self.head)..self.anchor.max(self.head)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -204,7 +236,10 @@ impl TextView {
             pending_jump: None,
             loading: None,
             error: None,
+            notice: None,
             drag: None,
+            selection: None,
+            selecting: false,
             _index_refresh: index_refresh,
             _parse: parse,
         }
@@ -241,7 +276,13 @@ impl TextView {
                 .then(|| progress.indexed as f32 / progress.len.max(1) as f32),
             len: self.source.len(),
             language: self.language.map(|language| language.name),
+            selected: self
+                .selection
+                .map(|selection| selection.range())
+                .filter(|range| !range.is_empty())
+                .map(|range| range.end - range.start),
             error: self.error.clone(),
+            notice: self.notice.clone(),
         }
     }
 
@@ -304,6 +345,134 @@ impl TextView {
 
     fn bottom(&mut self, _: &Bottom, _: &mut Window, cx: &mut Context<Self>) {
         self.jump(Jump::End, cx);
+    }
+
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(range) = self
+            .selection
+            .map(|selection| selection.range())
+            .filter(|range| !range.is_empty())
+        else {
+            return;
+        };
+        if range.end - range.start > MAX_COPY {
+            self.notice = Some("The selection is too large to copy (over 64 MB).".into());
+            cx.notify();
+            return;
+        }
+        match self.source.bytes(range.clone()) {
+            Ok(bytes) => {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            Err(ReadError::Missing(_)) => {
+                // Copy once the selection is loaded, without moving the view.
+                let source = self.source.clone();
+                let text = cx.background_executor().spawn(async move {
+                    source.load(range.clone())?;
+                    let bytes = source
+                        .bytes(range)
+                        .map_err(|_| std::io::Error::other("the file changed"))?;
+                    std::io::Result::Ok(String::from_utf8_lossy(&bytes).into_owned())
+                });
+                cx.spawn(async move |this, cx| {
+                    let text = text.await;
+                    this.update(cx, |this, cx| match text {
+                        Ok(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+                        Err(err) => {
+                            this.notice = Some(format!("Couldn't copy: {err}").into());
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            Err(err) => self.handle_read_error(err, cx),
+        }
+    }
+
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.selection = Some(Selection {
+            anchor: 0,
+            head: self.source.len(),
+        });
+        cx.notify();
+    }
+
+    fn clear_selection(&mut self, _: &ClearSelection, _: &mut Window, cx: &mut Context<Self>) {
+        self.selection = None;
+        cx.notify();
+    }
+
+    fn mouse_down(&mut self, hit: Hit, click_count: usize, extend: bool, cx: &mut Context<Self>) {
+        self.notice = None;
+        let row = hit.row.start..hit.row.end;
+        let (selection, selecting) = match (hit.in_gutter, click_count) {
+            (_, 1) if extend && self.selection.is_some() => {
+                let anchor = self
+                    .selection
+                    .map_or(hit.offset, |selection| selection.anchor);
+                (
+                    Selection {
+                        anchor,
+                        head: hit.offset,
+                    },
+                    true,
+                )
+            }
+            (true, _) | (false, 3..) => (
+                Selection {
+                    anchor: row.start,
+                    head: row.end,
+                },
+                false,
+            ),
+            (false, 2) => {
+                let word = word_at(&hit.row.content, (hit.offset - row.start) as usize);
+                let word = row.start + word.start as u64..row.start + word.end as u64;
+                (
+                    Selection {
+                        anchor: word.start,
+                        head: word.end,
+                    },
+                    false,
+                )
+            }
+            _ => (
+                Selection {
+                    anchor: hit.offset,
+                    head: hit.offset,
+                },
+                true,
+            ),
+        };
+        self.selection = Some(selection);
+        self.selecting = selecting;
+        cx.notify();
+    }
+
+    fn select_to(&mut self, offset: u64, cx: &mut Context<Self>) {
+        if let Some(selection) = &mut self.selection
+            && self.selecting
+        {
+            selection.head = offset;
+            cx.notify();
+        }
+    }
+
+    fn mouse_up(&mut self, cx: &mut Context<Self>) {
+        self.drag = None;
+        if self.selecting {
+            self.selecting = false;
+            if self
+                .selection
+                .is_some_and(|selection| selection.range().is_empty())
+            {
+                self.selection = None;
+            }
+            cx.notify();
+        }
     }
 
     fn on_scroll_wheel(
@@ -524,8 +693,13 @@ impl TextView {
         }
         let spans = self.highlights(&visible_rows);
 
+        let selection = self
+            .selection
+            .map(|selection| selection.range())
+            .filter(|range| !range.is_empty());
         let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
         let mut rows = Vec::with_capacity(visible_rows.len());
+        let mut hit_rows = Vec::with_capacity(visible_rows.len());
         let mut max_columns = 0;
         for (i, (start, bytes, starts_line)) in visible_rows.iter().enumerate() {
             if i > 0 && *starts_line {
@@ -544,6 +718,30 @@ impl TextView {
                 &row_spans,
             );
             max_columns = max_columns.max(visible.width);
+            let end = start + bytes.len() as u64;
+            let selected = selection
+                .clone()
+                .filter(|selection| selection.start < end && selection.end > *start)
+                .map(|selection| {
+                    let tab_size = self.style.tab_size;
+                    let column = |offset: u64| {
+                        let offset = (offset - start) as usize;
+                        if offset > content.len() {
+                            // The selection includes the line break.
+                            visible.width + 1
+                        } else {
+                            column_at(content, tab_size, offset)
+                        }
+                    };
+                    let x =
+                        |column: usize| char_width * (column as f32 - first_column as f32) + shift;
+                    x(column(selection.start.max(*start)))..x(column(selection.end.min(end)))
+                });
+            hit_rows.push(HitRow {
+                start: *start,
+                end,
+                content: bytes.slice(0..content.len()),
+            });
             let runs: Vec<(usize, Rgba)> = visible
                 .runs
                 .iter()
@@ -552,6 +750,7 @@ impl TextView {
             rows.push(RowLayout {
                 number,
                 text: (!visible.text.is_empty()).then(|| shaper.shape(visible.text, &runs)),
+                selected,
             });
         }
 
@@ -600,6 +799,17 @@ impl TextView {
             text_left,
             shift,
             rows,
+            hits: HitMap {
+                bounds,
+                gutter_width,
+                text_left: text_left + shift,
+                first_column,
+                char_width,
+                line_height,
+                top_offset: self.top_offset,
+                tab_size: self.style.tab_size,
+                rows: hit_rows,
+            },
             scrollbar,
             message: self
                 .error
@@ -671,6 +881,9 @@ impl Render for TextView {
             .on_action(cx.listener(Self::scroll_right))
             .on_action(cx.listener(Self::top))
             .on_action(cx.listener(Self::bottom))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::clear_selection))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .on_mouse_down(
                 MouseButton::Left,
@@ -740,6 +953,7 @@ struct TextLayout {
     /// Horizontal offset of each row's text: the scrolled-off part of its first column.
     shift: Pixels,
     rows: Vec<RowLayout>,
+    hits: HitMap,
     scrollbar: Option<ScrollbarLayout>,
     message: Option<ShapedLine>,
 }
@@ -747,6 +961,64 @@ struct TextLayout {
 struct RowLayout {
     number: Option<ShapedLine>,
     text: Option<ShapedLine>,
+    /// The selected part, as x offsets from the text's left edge.
+    selected: Option<Range<Pixels>>,
+}
+
+/// Where the visible rows are, for turning mouse positions into offsets.
+#[derive(Clone)]
+struct HitMap {
+    bounds: Bounds<Pixels>,
+    gutter_width: Pixels,
+    /// Where `first_column` starts, relative to `bounds`.
+    text_left: Pixels,
+    first_column: usize,
+    char_width: Pixels,
+    line_height: Pixels,
+    top_offset: Pixels,
+    tab_size: usize,
+    rows: Vec<HitRow>,
+}
+
+#[derive(Clone)]
+struct HitRow {
+    start: u64,
+    /// Past the row's line break, if it has one.
+    end: u64,
+    /// The row without its line break.
+    content: Bytes,
+}
+
+/// A mouse position resolved to a byte offset.
+struct Hit {
+    offset: u64,
+    row: HitRow,
+    in_gutter: bool,
+}
+
+impl HitMap {
+    /// The offset nearest `position`, clamped to the visible rows.
+    fn hit(&self, position: gpui::Point<Pixels>) -> Option<Hit> {
+        let last = self.rows.len().checked_sub(1)?;
+        let y = position.y - self.bounds.top() + self.top_offset;
+        let index = ((y / self.line_height).floor().max(0.) as usize).min(last);
+        let row = self.rows[index].clone();
+        let offset = if y < px(0.) {
+            row.start
+        } else if index == last && y >= self.line_height * self.rows.len() as f32 {
+            row.end
+        } else {
+            let x = position.x - self.bounds.left() - self.text_left;
+            let column =
+                (self.first_column as f32 + (x / self.char_width).round()).max(0.) as usize;
+            row.start + offset_at(&row.content, self.tab_size, column) as u64
+        };
+        Some(Hit {
+            offset,
+            in_gutter: position.x < self.bounds.left() + self.gutter_width,
+            row,
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -785,6 +1057,14 @@ impl TextLayout {
         window.with_content_mask(Some(ContentMask { bounds: text_area }), |window| {
             let x = bounds.left() + self.text_left + self.shift;
             for (i, row) in self.rows.iter().enumerate() {
+                if let Some(selected) = &row.selected {
+                    let left = bounds.left() + self.text_left + selected.start;
+                    let width = selected.end - selected.start;
+                    let quad = Bounds::new(point(left, row_top(i)), size(width, line_height));
+                    window.paint_quad(fill(quad, theme.selection));
+                }
+            }
+            for (i, row) in self.rows.iter().enumerate() {
                 if let Some(text) = &row.text {
                     text.paint(point(x, row_top(i)), line_height, window, cx)
                         .ok();
@@ -818,15 +1098,49 @@ impl TextLayout {
                 }
             });
         }
+        let text_bounds = Bounds::from_corners(
+            bounds.origin,
+            point(bounds.right() - px(SCROLLBAR_WIDTH), bounds.bottom()),
+        );
+        let hits = self.hits.clone();
+        let pressed = view.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+            if phase == DispatchPhase::Bubble
+                && event.button == MouseButton::Left
+                && text_bounds.contains(&event.position)
+                && let Some(hit) = hits.hit(event.position)
+            {
+                let extend = event.modifiers.shift;
+                pressed.update(cx, |view, cx| {
+                    view.mouse_down(hit, event.click_count, extend, cx)
+                });
+            }
+        });
+        let hits = self.hits;
         let dragged = view.clone();
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble && event.dragging() {
-                dragged.update(cx, |view, cx| view.drag_to(event.position.y, cx));
+            if phase != DispatchPhase::Bubble || !event.dragging() {
+                return;
             }
+            dragged.update(cx, |view, cx| {
+                if view.drag.is_some() {
+                    view.drag_to(event.position.y, cx);
+                } else if view.selecting {
+                    // Dragging past an edge scrolls a row at a time.
+                    if event.position.y < bounds.top() {
+                        view.scroll_by(-view.line_height, cx);
+                    } else if event.position.y > bounds.bottom() {
+                        view.scroll_by(view.line_height, cx);
+                    }
+                    if let Some(hit) = hits.hit(event.position) {
+                        view.select_to(hit.offset, cx);
+                    }
+                }
+            });
         });
         window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
             if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-                view.update(cx, |view, _| view.drag = None);
+                view.update(cx, |view, cx| view.mouse_up(cx));
             }
         });
     }

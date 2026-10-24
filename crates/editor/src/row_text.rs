@@ -78,9 +78,145 @@ pub(crate) fn visible_text(
     visible
 }
 
+/// Each character of a row with its byte offset, starting column and width
+/// in columns. Invalid UTF-8 shows as one replacement character per run.
+fn characters(
+    bytes: &[u8],
+    tab_size: usize,
+) -> impl Iterator<Item = (usize, usize, usize, usize)> + '_ {
+    let tab_size = tab_size.max(1);
+    let mut column = 0;
+    let mut offset = 0;
+    bytes.utf8_chunks().flat_map(move |chunk| {
+        let start = offset;
+        offset += chunk.valid().len() + chunk.invalid().len();
+        let invalid = (!chunk.invalid().is_empty()).then(|| {
+            (
+                start + chunk.valid().len(),
+                '\u{fffd}',
+                chunk.invalid().len(),
+            )
+        });
+        chunk
+            .valid()
+            .char_indices()
+            .map(move |(i, ch)| (start + i, ch, ch.len_utf8()))
+            .chain(invalid)
+            .map(move |(offset, ch, len)| {
+                let width = if ch == '\t' {
+                    tab_size - column % tab_size
+                } else {
+                    1
+                };
+                let character = (offset, len, column, width);
+                column += width;
+                character
+            })
+            .collect::<Vec<_>>()
+    })
+}
+
+/// The column where the character at byte `offset` of a row starts, or the
+/// row's width if `offset` is at or past its end.
+pub(crate) fn column_at(bytes: &[u8], tab_size: usize, offset: usize) -> usize {
+    let mut width = 0;
+    for (start, _, column, char_width) in characters(bytes, tab_size) {
+        if start >= offset {
+            return column;
+        }
+        width = column + char_width;
+    }
+    width
+}
+
+/// The character boundary of a row nearest to the boundary before `column`.
+pub(crate) fn offset_at(bytes: &[u8], tab_size: usize, column: usize) -> usize {
+    for (offset, len, start, width) in characters(bytes, tab_size) {
+        if column <= start {
+            return offset;
+        }
+        if column < start + width {
+            return if column - start <= width / 2 {
+                offset
+            } else {
+                offset + len
+            };
+        }
+    }
+    bytes.len()
+}
+
+/// The word, run of spaces or single symbol around byte `offset` of a row.
+pub(crate) fn word_at(bytes: &[u8], offset: usize) -> std::ops::Range<usize> {
+    #[derive(PartialEq)]
+    enum Class {
+        Word,
+        Space,
+        Other,
+    }
+    let class = |ch: char| {
+        if ch.is_alphanumeric() || ch == '_' {
+            Class::Word
+        } else if ch.is_whitespace() {
+            Class::Space
+        } else {
+            Class::Other
+        }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    if text.len() != bytes.len() || offset >= bytes.len() {
+        // Invalid UTF-8 would shift offsets; fall back to a single byte.
+        return offset.min(bytes.len())..(offset + 1).min(bytes.len());
+    }
+    let Some(ch) = text[offset..].chars().next() else {
+        return offset..offset;
+    };
+    let target = class(ch);
+    if target == Class::Other {
+        return offset..offset + ch.len_utf8();
+    }
+    let start = text[..offset]
+        .char_indices()
+        .rev()
+        .take_while(|&(_, ch)| class(ch) == target)
+        .last()
+        .map_or(offset, |(i, _)| i);
+    let end = text[offset..]
+        .char_indices()
+        .find(|&(_, ch)| class(ch) != target)
+        .map_or(text.len(), |(i, _)| offset + i);
+    start..end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_between_offsets_and_columns() {
+        let row = "a\tbé c".as_bytes();
+        // a:0, tab:1..4, b:4, é:5 (2 bytes), space:6, c:7
+        assert_eq!(column_at(row, 4, 0), 0);
+        assert_eq!(column_at(row, 4, 2), 4);
+        assert_eq!(column_at(row, 4, 3), 5);
+        assert_eq!(column_at(row, 4, 6), 7);
+        assert_eq!(column_at(row, 4, 99), 8);
+        assert_eq!(offset_at(row, 4, 0), 0);
+        assert_eq!(offset_at(row, 4, 2), 1, "nearer the tab's start");
+        assert_eq!(offset_at(row, 4, 3), 2, "nearer the tab's end");
+        assert_eq!(offset_at(row, 4, 6), 5);
+        assert_eq!(offset_at(row, 4, 50), row.len());
+    }
+
+    #[test]
+    fn finds_words_spaces_and_symbols() {
+        let row = b"let foo_bar = x;  ";
+        assert_eq!(word_at(row, 5), 4..11);
+        assert_eq!(word_at(row, 12), 12..13);
+        assert_eq!(word_at(row, 16), 16..18);
+        assert_eq!(word_at(row, 0), 0..3);
+        assert_eq!(word_at(row, 99), 18..18);
+    }
 
     fn text(bytes: &[u8], columns: Range<usize>) -> (String, usize) {
         let visible = visible_text(bytes, 4, columns, &[]);

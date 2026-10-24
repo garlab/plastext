@@ -12,6 +12,7 @@ pub struct Theme {
     pub border: Rgba,
     pub text: Rgba,
     pub text_muted: Rgba,
+    pub selection: Rgba,
     pub scrollbar_thumb: Rgba,
     dark: bool,
 }
@@ -25,6 +26,7 @@ impl Theme {
                 border: rgb(0xe1e1e4),
                 text: rgb(0x1f2328),
                 text_muted: rgb(0x6b7079),
+                selection: rgb(0xd6e4fa),
                 scrollbar_thumb: rgb(0xc9cbd1),
                 dark: false,
             },
@@ -34,6 +36,7 @@ impl Theme {
                 border: rgb(0x34363d),
                 text: rgb(0xe6e6e9),
                 text_muted: rgb(0x8d919b),
+                selection: rgb(0x2c3d58),
                 scrollbar_thumb: rgb(0x4a4d56),
                 dark: true,
             },

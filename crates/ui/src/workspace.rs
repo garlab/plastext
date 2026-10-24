@@ -468,7 +468,9 @@ impl Workspace {
                     cx.notify();
                 }))
         });
-        let view_error = status.as_ref().and_then(|status| status.error.clone());
+        let view_message = status
+            .as_ref()
+            .and_then(|status| status.error.clone().or_else(|| status.notice.clone()));
         div()
             .h(px(STATUS_BAR_HEIGHT))
             .flex_none()
@@ -483,7 +485,7 @@ impl Workspace {
             .text_color(theme.text_muted)
             .child("READ")
             .children(notice)
-            .children(view_error)
+            .children(view_message)
             .child(div().flex_1())
             .children(status.map(status_text))
     }
@@ -491,6 +493,9 @@ impl Workspace {
 
 fn status_text(status: TextViewStatus) -> String {
     let mut parts = Vec::new();
+    if let Some(selected) = status.selected {
+        parts.push(format!("{} selected", format_size(selected)));
+    }
     if let Some(indexing) = status.indexing {
         parts.push(format!("Indexing lines {:.0}%", indexing * 100.));
     }
