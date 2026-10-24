@@ -1,5 +1,6 @@
 //! Text view element: layout, wrapping, selection, input, gutter and folding (spec §5.3).
 
+mod folding;
 mod hex_view;
 mod row_text;
 mod scroll;

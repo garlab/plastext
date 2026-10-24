@@ -4104,6 +4104,7 @@ dependencies = [
  "bytes",
  "futures",
  "gpui",
+ "memchr",
  "plastext-buffer",
  "plastext-search",
  "plastext-settings",

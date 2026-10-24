@@ -22,6 +22,7 @@ use plastext_syntax::{Highlight, Language, Symbol, SyntaxTree};
 
 use crate::{
     Theme,
+    folding::{self, FoldMark, Folds},
     row_text::{VisibleText, column_at, offset_at, visible_text, word_at},
     scroll::{ScrollPosition, scroll},
     sticky::sticky_rows,
@@ -42,6 +43,8 @@ actions!(
         Copy,
         SelectAll,
         ClearSelection,
+        FoldAll,
+        UnfoldAll,
         Find,
         FindNext,
         FindPrevious,
@@ -61,6 +64,8 @@ const MIN_THUMB_HEIGHT: f32 = 24.;
 const INDEX_REFRESH: Duration = Duration::from_millis(200);
 /// Only this many bytes at the start of each line are highlighted (spec TXT-6).
 const HIGHLIGHT_LINE_LIMIT: u64 = 10_000;
+/// The part of the gutter, on its left, where fold chevrons are.
+const FOLD_ZONE: f32 = 16.;
 /// At most this many sticky lines are pinned above the text.
 const MAX_STICKY: usize = 4;
 /// Larger selections aren't copied to the clipboard.
@@ -89,6 +94,8 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, context),
         KeyBinding::new("cmd-a", SelectAll, context),
         KeyBinding::new("escape", ClearSelection, context),
+        KeyBinding::new("cmd-k cmd-0", FoldAll, context),
+        KeyBinding::new("cmd-k cmd-j", UnfoldAll, context),
         KeyBinding::new("cmd-f", Find, context),
         KeyBinding::new("/", Find, context),
         KeyBinding::new("n", FindNext, context),
@@ -178,6 +185,9 @@ pub struct TextView {
     selection: Option<Selection>,
     /// Whether a mouse drag is extending the selection.
     selecting: bool,
+    folds: Folds,
+    /// Whether the mouse is over the gutter, which shows fold chevrons.
+    gutter_hovered: bool,
     find: Option<FindState>,
     _index_refresh: Option<Task<()>>,
     _parse: Option<Task<()>>,
@@ -299,6 +309,8 @@ impl TextView {
             drag: None,
             selection: None,
             selecting: false,
+            folds: Folds::default(),
+            gutter_hovered: false,
             find: None,
             _index_refresh: index_refresh,
             _parse: parse,
@@ -708,8 +720,66 @@ impl TextView {
             .into_any_element()
     }
 
+    /// Folds or unfolds the line ending at `line_end`, which starts at `line_start`.
+    fn toggle_fold(&mut self, line_start: u64, line_end: u64, cx: &mut Context<Self>) {
+        if self.folds.is_folded(line_end) {
+            self.folds.unfold(line_end);
+        } else {
+            match folding::fold_range(&*self.source, line_start, self.style.tab_size) {
+                Ok(Some(range)) => {
+                    self.folds.fold(range);
+                    if self.folds.hidden_at(self.top).is_some() {
+                        self.top = line_start;
+                        self.top_offset = px(0.);
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => self.handle_read_error(err, cx),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Folds every top-level block: each unindented line followed by deeper ones.
+    fn fold_all(&mut self, _: &FoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.source.in_memory().cloned() else {
+            self.notice = Some("Fold All needs the whole file in memory; it's too large.".into());
+            cx.notify();
+            return;
+        };
+        let tab_size = self.style.tab_size;
+        let mut line_start = 0;
+        while line_start < text.len() {
+            let rest = &text[line_start..];
+            let line_end = line_start + memchr::memchr(b'\n', rest).map_or(rest.len(), |i| i + 1);
+            let mut next = line_end;
+            if folding::indentation(&text[line_start..line_end], tab_size) == Some(0)
+                && let Ok(Some(range)) =
+                    folding::fold_range(&*self.source, line_start as u64, tab_size)
+            {
+                next = range.end as usize;
+                self.folds.fold(range);
+            }
+            line_start = next;
+        }
+        if let Some(hidden) = self.folds.hidden_at(self.top) {
+            self.top = rows::row_start_at(&*self.source, hidden.start - 1).unwrap_or(0);
+            self.top_offset = px(0.);
+        }
+        cx.notify();
+    }
+
+    fn unfold_all(&mut self, _: &UnfoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        self.folds.unfold_all();
+        cx.notify();
+    }
+
     fn mouse_down(&mut self, hit: Hit, click_count: usize, extend: bool, cx: &mut Context<Self>) {
         self.notice = None;
+        if hit.on_fold_toggle {
+            self.toggle_fold(hit.row.start, hit.row.end, cx);
+            return;
+        }
         let row = hit.row.start..hit.row.end;
         let (selection, selecting) = match (hit.in_gutter, click_count) {
             (_, 1) if extend && self.selection.is_some() => {
@@ -802,12 +872,9 @@ impl TextView {
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
         self.pending_line = None;
         self.pending_jump = None;
-        let source = &*self.source;
-        let next = |row| {
-            let end = rows::row_end(source, row)?;
-            Ok((end < source.len()).then_some(end))
-        };
-        let previous = |row| rows::previous_row_start(source, row);
+        let (source, folds) = (&*self.source, &self.folds);
+        let next = |row| folding::next_visible_row(source, folds, row);
+        let previous = |row| folding::previous_visible_row(source, folds, row);
         let position = ScrollPosition {
             top: self.top,
             offset: self.top_offset,
@@ -832,6 +899,9 @@ impl TextView {
         let Some(jump) = self.pending_jump else {
             return;
         };
+        if let Jump::Offset(offset) | Jump::Reveal(offset) = jump {
+            self.folds.reveal(offset);
+        }
         match self.jump_target(jump) {
             Ok(top) => {
                 self.top = top;
@@ -856,7 +926,7 @@ impl TextView {
                 }
                 let mut top = rows::row_start_at(&*self.source, offset)?;
                 for _ in 0..self.page_rows / 3 {
-                    match rows::previous_row_start(&*self.source, top)? {
+                    match folding::previous_visible_row(&*self.source, &self.folds, top)? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -866,8 +936,11 @@ impl TextView {
             Jump::End => {
                 let last = self.source.len().saturating_sub(1);
                 let mut top = rows::row_start_at(&*self.source, last)?;
+                if let Some(hidden) = self.folds.hidden_at(top) {
+                    top = rows::row_start_at(&*self.source, hidden.start - 1)?;
+                }
                 for _ in 1..self.page_rows {
-                    match rows::previous_row_start(&*self.source, top)? {
+                    match folding::previous_visible_row(&*self.source, &self.folds, top)? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -976,7 +1049,7 @@ impl TextView {
         };
 
         let row_count = (bounds.size.height / line_height).ceil() as usize + 1;
-        let (ranges, err) = rows::rows(&*self.source, self.top, row_count);
+        let (ranges, err) = folding::visible_rows(&*self.source, &self.folds, self.top, row_count);
         if let Some(err) = err {
             self.handle_read_error(err, cx);
         }
@@ -1001,14 +1074,20 @@ impl TextView {
             .selection
             .map(|selection| selection.range())
             .filter(|range| !range.is_empty());
+        let fold_marks = folding::fold_marks(&visible_rows, &self.folds, self.style.tab_size);
         let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
         let mut rows = Vec::with_capacity(visible_rows.len());
         let mut hit_rows = Vec::with_capacity(visible_rows.len());
         let mut max_columns = 0;
+        let mut previous_end = self.top;
         for (i, (start, bytes, starts_line)) in visible_rows.iter().enumerate() {
-            if i > 0 && *starts_line {
+            if *start != previous_end {
+                // A fold was skipped: count lines again from here.
+                line = self.index.line_at(*start, &*self.source).ok().flatten();
+            } else if i > 0 && *starts_line {
                 line = line.map(|line| line + 1);
             }
+            previous_end = start + bytes.len() as u64;
             let number = line
                 .filter(|_| *starts_line)
                 .map(|line| shaper.shape((line + 1).to_string(), &[(0, theme.text_muted)]));
@@ -1071,12 +1150,14 @@ impl TextView {
                 start: *start,
                 end,
                 content: bytes.slice(0..content.len()),
+                fold: fold_marks[i],
             });
             rows.push(RowLayout {
                 number,
                 text: shape_visible(visible, &theme, &shaper),
                 selected,
                 matches,
+                fold: fold_marks[i],
             });
         }
         let sticky: Vec<StickyRow> = self
@@ -1142,6 +1223,12 @@ impl TextView {
             text_left,
             shift,
             rows,
+            chevrons: [
+                shaper.shape("▸".into(), &[(0, theme.text_muted)]),
+                shaper.shape("▾".into(), &[(0, theme.text_muted)]),
+                shaper.shape("⋯".into(), &[(0, theme.text_muted)]),
+            ],
+            gutter_hovered: self.gutter_hovered,
             sticky: sticky
                 .iter()
                 .map(|row| (row.number.clone(), row.text.clone()))
@@ -1305,6 +1392,8 @@ impl Render for TextView {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear_selection))
+            .on_action(cx.listener(Self::fold_all))
+            .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::find_next))
             .on_action(cx.listener(Self::find_previous))
@@ -1383,6 +1472,9 @@ struct TextLayout {
     /// Horizontal offset of each row's text: the scrolled-off part of its first column.
     shift: Pixels,
     rows: Vec<RowLayout>,
+    /// Shaped "folded" and "foldable" chevrons, and the folded-text marker.
+    chevrons: [ShapedLine; 3],
+    gutter_hovered: bool,
     /// Pinned rows: their line numbers and text.
     sticky: Vec<(Option<ShapedLine>, Option<ShapedLine>)>,
     hits: HitMap,
@@ -1397,6 +1489,7 @@ struct RowLayout {
     selected: Option<Range<Pixels>>,
     /// Find matches, likewise.
     matches: Vec<Range<Pixels>>,
+    fold: Option<FoldMark>,
 }
 
 /// Where the visible rows are, for turning mouse positions into offsets.
@@ -1423,6 +1516,7 @@ struct HitRow {
     end: u64,
     /// The row without its line break.
     content: Bytes,
+    fold: Option<FoldMark>,
 }
 
 /// A mouse position resolved to a byte offset.
@@ -1430,6 +1524,8 @@ struct Hit {
     offset: u64,
     row: HitRow,
     in_gutter: bool,
+    /// On the fold chevron of a row that folds or is folded.
+    on_fold_toggle: bool,
 }
 
 impl HitMap {
@@ -1458,9 +1554,11 @@ impl HitMap {
                 (self.first_column as f32 + (x / self.char_width).round()).max(0.) as usize;
             row.start + offset_at(&row.content, self.tab_size, column) as u64
         };
+        let x = position.x - self.bounds.left();
         Some(Hit {
             offset,
-            in_gutter: position.x < self.bounds.left() + self.gutter_width,
+            in_gutter: x < self.gutter_width,
+            on_fold_toggle: x < px(FOLD_ZONE) && row.fold.is_some(),
             row,
         })
     }
@@ -1487,11 +1585,23 @@ impl TextLayout {
         window.paint_quad(fill(gutter, theme.surface));
 
         let row_top = |i: usize| bounds.top() - self.top_offset + line_height * i as f32;
+        let [folded, foldable, ellipsis] = &self.chevrons;
         window.with_content_mask(Some(ContentMask { bounds: gutter }), |window| {
             for (i, row) in self.rows.iter().enumerate() {
                 if let Some(number) = &row.number {
                     let x = gutter.right() - number.width - line_height / 2.;
                     number
+                        .paint(point(x, row_top(i)), line_height, window, cx)
+                        .ok();
+                }
+                let chevron = match row.fold {
+                    Some(FoldMark::Folded) => Some(folded),
+                    Some(FoldMark::Foldable) if self.gutter_hovered => Some(foldable),
+                    _ => None,
+                };
+                if let Some(chevron) = chevron {
+                    let x = gutter.left() + (px(FOLD_ZONE) - chevron.width) / 2.;
+                    chevron
                         .paint(point(x, row_top(i)), line_height, window, cx)
                         .ok();
                 }
@@ -1518,6 +1628,17 @@ impl TextLayout {
                 if let Some(text) = &row.text {
                     text.paint(point(x, row_top(i)), line_height, window, cx)
                         .ok();
+                }
+                if row.fold == Some(FoldMark::Folded) {
+                    // Mark the hidden lines after the folded line's text.
+                    let width = row.text.as_ref().map_or(px(0.), |text| text.width);
+                    let marker = Bounds::new(
+                        point(x + width + line_height / 3., row_top(i) + line_height / 6.),
+                        size(ellipsis.width + line_height / 2., line_height * 2. / 3.),
+                    );
+                    window.paint_quad(fill(marker, theme.border).corner_radii(px(3.)));
+                    let origin = point(marker.left() + line_height / 4., row_top(i));
+                    ellipsis.paint(origin, line_height, window, cx).ok();
                 }
             }
             if let Some(message) = &self.message {
@@ -1607,6 +1728,17 @@ impl TextLayout {
                 let extend = event.modifiers.shift;
                 pressed.update(cx, |view, cx| {
                     view.mouse_down(hit, event.click_count, extend, cx)
+                });
+            }
+        });
+        let hovered = view.clone();
+        let gutter_hovered = self.gutter_hovered;
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+            let over_gutter = gutter.contains(&event.position);
+            if phase == DispatchPhase::Bubble && over_gutter != gutter_hovered {
+                hovered.update(cx, |view, cx| {
+                    view.gutter_hovered = over_gutter;
+                    cx.notify();
                 });
             }
         });

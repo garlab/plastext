@@ -11,6 +11,7 @@ publish.workspace = true
 bytes.workspace = true
 futures.workspace = true
 gpui.workspace = true
+memchr.workspace = true
 plastext-buffer.workspace = true
 plastext-search.workspace = true
 plastext-settings.workspace = true
