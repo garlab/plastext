@@ -511,7 +511,7 @@ Each milestone ends with a usable build and explicit exit criteria.
 4. **Mermaid and diagrams.** Write a native renderer, or keep them permanently out of scope?
 5. **Accessibility.** VoiceOver quality under GPUI must be evaluated in M0. If it's inadequate, that's a risk to the framework choice.
 6. **Name and CLI.** Keep `plastext`, and should it also ship a short alias (e.g. `px`)?
-7. **License.** MIT/Apache-2.0 dual license is proposed.
+7. **License (decided).** Dual-licensed MIT OR Apache-2.0 (`LICENSE-MIT`, `LICENSE-APACHE`).
 
 ---
 
