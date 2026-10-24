@@ -174,6 +174,15 @@ impl FileSource {
         Ok(())
     }
 
+    /// The first `len` bytes, or all of them if the file is shorter. Blocks:
+    /// call it off the main thread.
+    pub fn head(&self, len: u64) -> io::Result<Bytes> {
+        let range = 0..len.min(self.len);
+        self.load(range.clone())?;
+        self.bytes(range)
+            .map_err(|_| io::Error::other("the file changed while it was read"))
+    }
+
     /// Reads `range` front to back, passing consecutive chunks to `f`, without
     /// filling the cache. Blocks: call it off the main thread.
     pub fn scan(

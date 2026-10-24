@@ -62,6 +62,16 @@ impl LineIndex {
         }
     }
 
+    /// Indexes `source`: right away if it's in memory, otherwise on a
+    /// background thread (see [`Self::spawn`]).
+    pub fn for_source(source: Arc<FileSource>) -> io::Result<Arc<Self>> {
+        if source.is_in_memory() {
+            Ok(Arc::new(Self::build(&source)?))
+        } else {
+            Ok(Self::spawn(source))
+        }
+    }
+
     /// Indexes `source` on the calling thread.
     pub fn build(source: &FileSource) -> io::Result<Self> {
         let index = Self::new(source.len());

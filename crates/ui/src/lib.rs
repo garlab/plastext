@@ -3,6 +3,7 @@
 mod file_tree;
 mod layout;
 mod quick_open;
+mod tab_view;
 mod workspace;
 
 pub use workspace::{Workspace, init};

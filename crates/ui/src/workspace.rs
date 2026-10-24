@@ -8,8 +8,8 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
     SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
-use plastext_buffer::OpenOptions;
-use plastext_editor::{TextStyle, TextView, TextViewStatus, Theme};
+use plastext_buffer::{ByteSource as _, FileSource, LineIndex, OpenOptions};
+use plastext_editor::{HexView, TextStyle, TextView, Theme};
 use plastext_project::{ShowIgnored, TreeOptions};
 use plastext_settings::{self as settings, Settings};
 
@@ -17,6 +17,7 @@ use crate::{
     file_tree::{FileTreeEvent, FileTreeView},
     layout::{Axis, Layout},
     quick_open::{QuickOpen, QuickOpenEvent},
+    tab_view::TabView,
 };
 
 actions!(
@@ -72,7 +73,7 @@ struct Pane {
 struct Tab {
     path: PathBuf,
     title: SharedString,
-    view: Entity<TextView>,
+    view: TabView,
     _status: Subscription,
 }
 
@@ -177,9 +178,7 @@ impl Workspace {
         {
             self.activate(pane, index, window, cx);
             if let Some(line) = line {
-                self.panes[&pane].tabs[index]
-                    .view
-                    .update(cx, |view, cx| view.scroll_to_line(line, cx));
+                self.panes[&pane].tabs[index].view.scroll_to_line(line, cx);
             }
             return;
         }
@@ -189,21 +188,33 @@ impl Workspace {
         let opening = cx.background_executor().spawn({
             let path = path.clone();
             async move {
-                let (source, index) = plastext_buffer::open(&path, options)?;
-                let language = source
-                    .in_memory()
-                    .filter(|text| text.len() as u64 <= syntax_max_file_size)
-                    .and_then(|text| plastext_syntax::detect(&path, &text[..text.len().min(256)]));
-                std::io::Result::Ok((source, index, language))
+                let source = Arc::new(FileSource::open(&path, options)?);
+                let head = source.head(plastext_buffer::SNIFF_LEN)?;
+                if plastext_buffer::looks_binary(&head) {
+                    return Ok(Opened::Binary(source));
+                }
+                let index = LineIndex::for_source(source.clone())?;
+                let language = (source.in_memory().is_some()
+                    && source.len() <= syntax_max_file_size)
+                    .then(|| plastext_syntax::detect(&path, &head[..head.len().min(256)]))
+                    .flatten();
+                std::io::Result::Ok(Opened::Text(source, index, language))
             }
         });
         cx.spawn_in(window, async move |this, cx| {
             let opened = opening.await;
             this.update_in(cx, |this, window, cx| match opened {
-                Ok((source, index, language)) => {
-                    let view = cx.new(|cx| TextView::new(source, index, style, language, cx));
+                Ok(opened) => {
+                    let view = match opened {
+                        Opened::Text(source, index, language) => TabView::Text(
+                            cx.new(|cx| TextView::new(source, index, style, language, cx)),
+                        ),
+                        Opened::Binary(source) => {
+                            TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
+                        }
+                    };
                     if let Some(line) = line {
-                        view.update(cx, |view, cx| view.scroll_to_line(line, cx));
+                        view.scroll_to_line(line, cx);
                     }
                     this.add_tab(path, view, window, cx);
                 }
@@ -221,7 +232,7 @@ impl Workspace {
     fn add_tab(
         &mut self,
         path: PathBuf,
-        view: Entity<TextView>,
+        view: TabView,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -232,7 +243,7 @@ impl Workspace {
                 |name| name.to_string_lossy().into_owned(),
             )
             .into();
-        let status = cx.observe(&view, |_, _, cx| cx.notify());
+        let status = view.observe(cx);
         let pane_id = self.active_pane;
         let pane = self.panes.entry(pane_id).or_default();
         pane.tabs.push(Tab {
@@ -337,8 +348,7 @@ impl Workspace {
                 }
                 QuickOpenEvent::GoToLine(line) => {
                     if let Some(tab) = this.panes[&this.active_pane].active_tab() {
-                        tab.view
-                            .update(cx, |view, cx| view.scroll_to_line(*line, cx));
+                        tab.view.clone().scroll_to_line(*line, cx);
                     }
                 }
                 QuickOpenEvent::Dismissed => {}
@@ -385,12 +395,10 @@ impl Workspace {
         if !self.layout.split(self.active_pane, axis, new_pane) {
             return;
         }
-        let duplicate = self.panes[&self.active_pane].active_tab().map(|tab| {
-            (
-                tab.path.clone(),
-                tab.view.update(cx, |view, cx| view.duplicate(cx)),
-            )
-        });
+        let duplicate = self.panes[&self.active_pane]
+            .active_tab()
+            .map(|tab| (tab.path.clone(), tab.view.clone()))
+            .map(|(path, view)| (path, view.duplicate(cx)));
         self.panes.insert(new_pane, Pane::default());
         self.active_pane = new_pane;
         match duplicate {
@@ -425,7 +433,7 @@ impl Workspace {
     fn render_pane(&self, id: usize, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let pane = &self.panes[&id];
         let content = match pane.active_tab() {
-            Some(tab) => div().flex_1().min_h_0().child(tab.view.clone()),
+            Some(tab) => div().flex_1().min_h_0().child(tab.view.to_any()),
             None => div()
                 .flex_1()
                 .flex()
@@ -513,7 +521,7 @@ impl Workspace {
     fn render_status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let status = self.panes[&self.active_pane]
             .active_tab()
-            .map(|tab| tab.view.read(cx).status());
+            .map(|tab| tab.view.status(cx));
         let notice = self.notice.clone().map(|notice| {
             div()
                 .id("notice")
@@ -525,9 +533,7 @@ impl Workspace {
                     cx.notify();
                 }))
         });
-        let view_message = status
-            .as_ref()
-            .and_then(|status| status.error.clone().or_else(|| status.notice.clone()));
+        let view_message = status.as_ref().and_then(|status| status.message());
         div()
             .h(px(STATUS_BAR_HEIGHT))
             .flex_none()
@@ -544,45 +550,18 @@ impl Workspace {
             .children(notice)
             .children(view_message)
             .child(div().flex_1())
-            .children(status.map(status_text))
+            .children(status.map(|status| status.summary()))
     }
 }
 
-fn status_text(status: TextViewStatus) -> String {
-    let mut parts = Vec::new();
-    if let Some(selected) = status.selected {
-        parts.push(format!("{} selected", format_size(selected)));
-    }
-    if let Some(indexing) = status.indexing {
-        parts.push(format!("Indexing lines {:.0}%", indexing * 100.));
-    }
-    let lines = if status.indexing.is_some() {
-        format!("~{} lines", status.lines)
-    } else {
-        format!("{} lines", status.lines)
-    };
-    match status.line {
-        Some(line) => parts.push(format!("Ln {line} of {lines}")),
-        None => parts.push(lines),
-    }
-    parts.push(format_size(status.len));
-    parts.push(status.language.unwrap_or("Plain text").to_owned());
-    parts.join("    ")
-}
-
-fn format_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut size = bytes as f64;
-    let mut unit = 0;
-    while size >= 1000. && unit < UNITS.len() - 1 {
-        size /= 1000.;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{size:.1} {}", UNITS[unit])
-    }
+/// A file opened in the background, ready for a view.
+enum Opened {
+    Text(
+        Arc<FileSource>,
+        Arc<LineIndex>,
+        Option<&'static plastext_syntax::Language>,
+    ),
+    Binary(Arc<FileSource>),
 }
 
 impl Focusable for Workspace {
@@ -648,18 +627,5 @@ impl Render for Workspace {
                     .justify_center()
                     .child(quick_open.clone())
             }))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_size;
-
-    #[test]
-    fn formats_sizes_in_decimal_units() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(999), "999 B");
-        assert_eq!(format_size(1_500), "1.5 KB");
-        assert_eq!(format_size(10_000_000_000), "10.0 GB");
     }
 }

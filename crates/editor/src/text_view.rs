@@ -1233,15 +1233,15 @@ impl Focusable for TextView {
     }
 }
 
-struct Shaper<'a> {
-    text_system: &'a WindowTextSystem,
-    font: Font,
-    font_size: Pixels,
+pub(crate) struct Shaper<'a> {
+    pub text_system: &'a WindowTextSystem,
+    pub font: Font,
+    pub font_size: Pixels,
 }
 
 impl Shaper<'_> {
     /// Shapes `text` colored by `runs` of byte lengths; a zero length means the rest.
-    fn shape(&self, text: String, runs: &[(usize, Rgba)]) -> ShapedLine {
+    pub fn shape(&self, text: String, runs: &[(usize, Rgba)]) -> ShapedLine {
         let mut remaining = text.len();
         let runs: Vec<TextRun> = runs
             .iter()
