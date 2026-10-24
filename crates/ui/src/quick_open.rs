@@ -14,12 +14,9 @@ use gpui::{
     SharedString, Subscription, UniformListScrollHandle, Window, actions, div, prelude::*, px,
     uniform_list,
 };
-use nucleo::{
-    Config, Nucleo,
-    pattern::{CaseMatching, Normalization},
-};
 use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::{TreeOptions, walk_files};
+use plastext_search::FileMatcher;
 
 actions!(quick_open, [SelectNext, SelectPrevious, Confirm, Dismiss]);
 
@@ -57,7 +54,7 @@ pub enum QuickOpenEvent {
 pub struct QuickOpen {
     root: PathBuf,
     input: Entity<TextInput>,
-    matcher: Nucleo<String>,
+    matcher: FileMatcher,
     /// Set while the background walk is still finding files.
     walking: Arc<AtomicBool>,
     cancel_walk: Arc<AtomicBool>,
@@ -75,7 +72,7 @@ impl EventEmitter<QuickOpenEvent> for QuickOpen {}
 
 impl QuickOpen {
     /// A palette over the files under `root`, listing `recent` files (most
-    /// recent first) until something is typed.
+    /// recent first), also boosting them when they match a typed query.
     pub fn new(
         root: PathBuf,
         options: TreeOptions,
@@ -83,7 +80,7 @@ impl QuickOpen {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let recent = recent
+        let recent: Vec<String> = recent
             .iter()
             .filter_map(|path| path.strip_prefix(&root).ok())
             .map(|path| path.to_string_lossy().into_owned())
@@ -94,7 +91,7 @@ impl QuickOpen {
         });
         input.focus_handle(cx).focus(window);
 
-        let matcher = Nucleo::new(Config::DEFAULT.match_paths(), Arc::new(|| {}), None, 1);
+        let matcher = FileMatcher::new(&recent);
         let injector = matcher.injector();
         let walking = Arc::new(AtomicBool::new(true));
         let cancel_walk = Arc::new(AtomicBool::new(false));
@@ -106,7 +103,7 @@ impl QuickOpen {
                 async move {
                     walk_files(&root, &options, &cancel, |path| {
                         let path = path.to_string_lossy().into_owned();
-                        injector.push(path, |path, columns| columns[0] = path.as_str().into());
+                        injector.push(path);
                     });
                     walking.store(false, Ordering::Relaxed);
                 }
@@ -145,7 +142,7 @@ impl QuickOpen {
         if self.showing_recent() {
             self.recent.len()
         } else {
-            self.matcher.snapshot().matched_item_count() as usize
+            self.matcher.matched_count()
         }
     }
 
@@ -154,8 +151,7 @@ impl QuickOpen {
         if self.showing_recent() {
             self.recent.get(index).map(String::as_str)
         } else {
-            let item = self.matcher.snapshot().get_matched_item(index as u32)?;
-            Some(item.data.as_str())
+            self.matcher.item(index)
         }
     }
 
@@ -174,7 +170,7 @@ impl QuickOpen {
             loop {
                 cx.background_executor().timer(TICK).await;
                 let busy = this.update(cx, |this, cx| {
-                    let status = this.matcher.tick(0);
+                    let status = this.matcher.tick();
                     if status.changed {
                         this.selected = this.selected.min(this.count().saturating_sub(1));
                         cx.notify();
@@ -194,13 +190,7 @@ impl QuickOpen {
     fn query_changed(&mut self, cx: &mut Context<Self>) {
         let (pattern, line) = split_line(self.input.read(cx).text());
         let append = pattern.starts_with(&self.pattern);
-        self.matcher.pattern.reparse(
-            0,
-            pattern,
-            CaseMatching::Smart,
-            Normalization::Smart,
-            append,
-        );
+        self.matcher.reparse(pattern, append);
         self.pattern = pattern.to_owned();
         self.line = line;
         self.selected = 0;
@@ -268,9 +258,8 @@ impl Focusable for QuickOpen {
 impl Render for QuickOpen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
-        let snapshot = self.matcher.snapshot();
         let matched = self.count();
-        let total = snapshot.item_count();
+        let total = self.matcher.item_count();
         let footer = if self.showing_recent() {
             format!("Recently opened · {total} files")
         } else if self.walking.load(Ordering::Relaxed) {

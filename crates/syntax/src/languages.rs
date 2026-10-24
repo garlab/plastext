@@ -25,6 +25,7 @@ pub struct Language {
     interpreters: &'static [&'static str],
     query: OnceLock<Option<HighlightQuery>>,
     tags_query: OnceLock<Option<Query>>,
+    fold_query: OnceLock<Option<Query>>,
 }
 
 pub(crate) struct HighlightQuery {
@@ -34,6 +35,22 @@ pub(crate) struct HighlightQuery {
 }
 
 impl Language {
+    pub(crate) fn fold_query(&self) -> Option<&Query> {
+        self.fold_query
+            .get_or_init(|| {
+                let source = crate::folds::query(self.name)?;
+                Query::new(&self.grammar()?, source)
+                    .inspect_err(|err| {
+                        eprintln!(
+                            "plastext: the {} fold query doesn't compile: {err}",
+                            self.name
+                        )
+                    })
+                    .ok()
+            })
+            .as_ref()
+    }
+
     pub(crate) fn grammar(&self) -> Option<tree_sitter::Language> {
         self.grammar.map(|grammar| grammar())
     }
@@ -97,6 +114,7 @@ macro_rules! language {
             interpreters: &[$($interpreter),*],
             query: OnceLock::new(),
             tags_query: OnceLock::new(),
+            fold_query: OnceLock::new(),
         }
     };
 }
@@ -262,6 +280,7 @@ static LANGUAGES: [Language; 16] = [
         interpreters: &[],
         query: OnceLock::new(),
         tags_query: OnceLock::new(),
+        fold_query: OnceLock::new(),
     },
 ];
 
@@ -339,6 +358,12 @@ mod tests {
     #[test]
     fn every_query_compiles() {
         for language in languages() {
+            assert_eq!(
+                language.fold_query().is_some(),
+                language.grammar.is_some(),
+                "{} folds",
+                language.name
+            );
             assert_eq!(
                 language.highlight_query().is_some(),
                 language.grammar.is_some(),

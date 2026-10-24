@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Instant,
 };
 
 use gpui::{
@@ -271,6 +272,7 @@ impl Workspace {
             return;
         }
         let options = self.open_options;
+        let opening_started = Instant::now();
         let style = self.text_style.clone();
         let opening = cx.background_executor().spawn({
             let path = path.clone();
@@ -290,9 +292,16 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| match opened {
                 Ok(opened) => {
                     let view = match opened {
-                        Opened::Text(source, index, language) => TabView::Text(
-                            cx.new(|cx| TextView::new(source, index, style, language, cx)),
-                        ),
+                        Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {
+                            let mut view = TextView::new(source, index, style, language, cx);
+                            if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
+                                .ok()
+                                .and_then(|value| value.parse::<usize>().ok())
+                            {
+                                view.profile_reading(opening_started, frames.max(1));
+                            }
+                            view
+                        })),
                         Opened::Binary(source) => {
                             TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
                         }

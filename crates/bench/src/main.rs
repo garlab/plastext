@@ -13,6 +13,8 @@ use std::{
 use clap::{Parser, Subcommand};
 use plastext_settings::ByteSize;
 
+mod m1;
+
 #[derive(Parser)]
 #[command(
     name = "plastext-bench",
@@ -25,6 +27,29 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Check M1's core budgets on a Linux source tree. Reports failures with a
+    /// nonzero exit code; use `read` and `launch` for native rendering timings.
+    M1 {
+        dir: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        runs: usize,
+        /// Also match one million synthetic paths derived from this tree.
+        #[arg(long)]
+        million: bool,
+        /// Save machine-readable measurements, including failed budgets.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Profile native file opening and scrolling. Build the release app first.
+    Read {
+        file: PathBuf,
+        #[arg(long)]
+        root: Option<PathBuf>,
+        #[arg(long, default_value_t = 10_000)]
+        frames: usize,
+        #[arg(long)]
+        app: Option<PathBuf>,
+    },
     /// Write server-log lines up to SIZE (e.g. "10GB").
     Log { size: ByteSize, path: PathBuf },
     /// Write one line of minified JSON of SIZE, without a newline.
@@ -52,6 +77,18 @@ enum Commands {
 
 fn main() -> ExitCode {
     let result = match Args::parse().command {
+        Commands::M1 {
+            dir,
+            runs,
+            million,
+            output,
+        } => m1::run(&dir, runs, million, output.as_deref()),
+        Commands::Read {
+            file,
+            root,
+            frames,
+            app,
+        } => m1::read(&file, root.as_deref(), frames, app),
         Commands::Log { size, path } => {
             write_file(&path, |out| plastext_bench::write_log(out, size.0))
         }

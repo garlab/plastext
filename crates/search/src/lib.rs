@@ -3,6 +3,7 @@
 //! So far: [`find_all`], which finds every occurrence of a query in a file
 //! of any size, and [`search_project`], which searches a whole project.
 
+mod files;
 mod project;
 
 use std::{
@@ -14,6 +15,7 @@ use std::{
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use plastext_buffer::{ByteSource as _, FileSource};
 
+pub use files::{FileInjector, FileMatcher};
 pub use project::{FileMatches, LineMatch, ProjectQuery, SearchOptions, search_project};
 
 /// Reads this much at a time, so matches reach the caller as the scan goes.

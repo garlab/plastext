@@ -5,13 +5,18 @@
 
 mod byte_size;
 mod theme;
+mod vscode;
 
-use std::{fmt, fs, io, path::PathBuf};
+use std::{
+    fmt, fs, io,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
 pub use byte_size::ByteSize;
 pub use theme::{Color, SyntaxOverrides, ThemeOverrides, Themes};
+pub use vscode::{ThemeImportError, import_vscode_theme};
 
 /// Everything configurable, as read from `config.toml` (spec CFG-1).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -102,6 +107,7 @@ impl Default for Limits {
 pub enum LoadError {
     Read(PathBuf, io::Error),
     Parse(PathBuf, Box<toml::de::Error>),
+    Theme(ThemeImportError),
 }
 
 impl fmt::Display for LoadError {
@@ -109,6 +115,7 @@ impl fmt::Display for LoadError {
         match self {
             Self::Read(path, err) => write!(f, "Couldn't read {}: {err}", path.display()),
             Self::Parse(path, err) => write!(f, "{} is invalid: {}", path.display(), err.message()),
+            Self::Theme(err) => write!(f, "{err}"),
         }
     }
 }
@@ -136,10 +143,28 @@ impl Settings {
         let Some(path) = Self::path() else {
             return Ok(Self::default());
         };
-        match fs::read_to_string(&path) {
-            Ok(text) => Self::parse(&text).map_err(|err| LoadError::Parse(path, Box::new(err))),
+        Self::load_from(&path)
+    }
+
+    /// Loads settings and local theme imports off the main thread.
+    pub fn load_from(path: &Path) -> Result<Self, LoadError> {
+        match fs::read_to_string(path) {
+            Ok(text) => {
+                let mut settings = Self::parse(&text)
+                    .map_err(|err| LoadError::Parse(path.to_owned(), Box::new(err)))?;
+                let base = path.parent().unwrap_or(Path::new("."));
+                for theme in [&mut settings.theme.light, &mut settings.theme.dark] {
+                    if let Some(import) = &theme.import {
+                        let mut imported =
+                            import_vscode_theme(&base.join(import)).map_err(LoadError::Theme)?;
+                        imported.overlay(theme);
+                        *theme = imported;
+                    }
+                }
+                Ok(settings)
+            }
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(err) => Err(LoadError::Read(path, err)),
+            Err(err) => Err(LoadError::Read(path.to_owned(), err)),
         }
     }
 
@@ -191,8 +216,8 @@ mod tests {
             "##,
         )
         .unwrap();
-        assert_eq!(settings.theme.dark.background, Some(Color(0x101014)));
-        assert_eq!(settings.theme.dark.syntax.r#type, Some(Color(0xffa657)));
+        assert_eq!(settings.theme.dark.background, Some(Color(0x101014ff)));
+        assert_eq!(settings.theme.dark.syntax.r#type, Some(Color(0xffa657ff)));
         assert_eq!(settings.theme.light, ThemeOverrides::default());
         assert!(
             Settings::parse("[theme.dark]\nbackgroud = \"#000\"").is_err(),

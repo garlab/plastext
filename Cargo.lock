@@ -4074,6 +4074,7 @@ dependencies = [
  "plastext-search",
  "plastext-settings",
  "plastext-syntax",
+ "serde_json",
 ]
 
 [[package]]
@@ -4147,6 +4148,7 @@ dependencies = [
  "grep-matcher",
  "grep-regex",
  "grep-searcher",
+ "nucleo",
  "plastext-buffer",
  "plastext-project",
  "tempfile",
@@ -4157,6 +4159,8 @@ name = "plastext-settings"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "tempfile",
  "toml 1.1.8+spec-1.1.0",
 ]
 

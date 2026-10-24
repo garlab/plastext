@@ -148,7 +148,11 @@ fn open(request: OpenRequest, notice: Option<SharedString>, cx: &mut App) {
             for request in requests {
                 open_window(request, notice.clone(), cx);
             }
-            cx.activate(true);
+            // Automated scrolling must not take keyboard focus from the
+            // user's active application while it runs for several minutes.
+            if env::var_os("PLASTEXT_PROFILE_READING").is_none() {
+                cx.activate(true);
+            }
         })
         .ok();
     })
@@ -181,6 +185,7 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
     }
 
     let options = WindowOptions {
+        focus: env::var_os("PLASTEXT_PROFILE_READING").is_none(),
         titlebar: Some(TitlebarOptions {
             title: Some(Workspace::title(request.root.as_deref())),
             ..Default::default()
@@ -195,9 +200,16 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
     let settings = cx.global::<AppSettings>().0.clone();
     let opening = Instant::now();
     let opened = cx.open_window(options, |window, cx| {
+        let profile_reading = env::var_os("PLASTEXT_PROFILE_READING").is_some();
+        let mut files = request.files;
+        let deferred_files = if profile_reading {
+            std::mem::take(&mut files)
+        } else {
+            Vec::new()
+        };
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(request.root, settings, window, cx);
-            for file in request.files {
+            for file in files {
                 workspace.open_file(file.path, file.line.map(u64::from), window, cx);
             }
             if let Some(notice) = notice {
@@ -206,6 +218,28 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
             workspace
         });
         workspace.focus_handle(cx).focus(window);
+        if profile_reading {
+            let workspace = workspace.downgrade();
+            // Measure opening into an interactive window, independently of
+            // cold shader compilation and the first window's construction.
+            window.on_next_frame(move |window, _| {
+                window.refresh();
+                window.on_next_frame(move |window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            for file in deferred_files {
+                                workspace.open_file(
+                                    file.path,
+                                    file.line.map(u64::from),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .ok();
+                });
+            });
+        }
         workspace
     });
     match opened {

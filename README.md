@@ -23,7 +23,8 @@ cargo build --release            # builds target/release/plastext and plastext-a
 | `⌘P` / `⌃G` | Quick Open (`path:line` works) / go to line |
 | `⇧⌘P` | Command palette: every command and its shortcut |
 | `⇧⌘O` / `o` | Go to symbol / toggle the outline panel |
-| Gutter chevrons, `⌘K ⌘0` / `⌘K ⌘J` | Fold a block / fold all top-level blocks / unfold all |
+| Gutter chevrons or `⌘⌥[` | Toggle the fold on the selected line, or the top visible line without a selection |
+| `⌘K ⌘0` / `⌘K ⌘J` | Fold all top-level blocks / unfold all |
 | `⌘F` or `/`, then `n` / `N` | Find in file, next / previous match |
 | `⇧⌘F` / `⇧⌘E` | Search the project / show files |
 | `j` `k`, `space` `⇧space`, `g` `G` | Scroll by line, by page, to top / bottom |
@@ -38,7 +39,27 @@ cargo bench -p plastext-bench --bench text              # text engine micro-benc
 cargo build --release -p plastext-app -p plastext-bench
 target/release/plastext-bench launch -- .               # time to first frame, 10 launches
 target/release/plastext-bench log 10GB /path/big.log    # spec §6.2 fixtures; also long-line, wide-dir
+target/release/plastext-bench m1 /path/linux-6.12 --million --output /tmp/m1.json
+target/release/plastext-bench read /path/linux-6.12/kernel/sched/core.c --root /path/linux-6.12
 ```
+
+`m1` measures streamed Quick Open results, completed query updates (including backspacing), and warm project search. `--million` also tests one million synthetic paths derived from the real tree. `read` drives 10,000 native scroll frames and measures first paint, tree-based highlighting and GPUI frame drawing/submission. Both return a nonzero exit code when a measured budget fails. These checks do not substitute for the reference M1 Air run or measure GPU completion, idle memory, or features from later milestones. See [the M1 performance report](docs/m1-performance.md) for results and remaining gaps.
+
+## Themes and folding
+
+Folding uses bundled tree-sitter queries when a parse is available, including unindented blocks and multiline comments/literals. Before parsing finishes, and for files without syntax support, it falls back to indentation. Quick Open boosts matching recent files in most-recent-first order, followed by other files in fuzzy relevance order.
+
+To import a local VS Code JSON or JSONC color theme, add its path to `config.toml` and restart plastext:
+
+```toml
+[theme.dark]
+import = "themes/my-dark-theme.json" # relative to config.toml; absolute paths also work
+
+[theme.dark.syntax]
+comment = "#8b949e"                 # explicit TOML colors override imported ones
+```
+
+The same setting works under `[theme.light]`. Imports support comments, trailing commas, relative `include` files, RGB/RGBA colors and common TextMate token scopes. Unsupported workbench colors, contextual token selectors, semantic token styles and font styles are ignored. Standalone `.tmTheme` files and extension packages are not imported.
 
 ## Layout
 

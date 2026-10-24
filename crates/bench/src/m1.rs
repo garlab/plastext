@@ -1,0 +1,366 @@
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant},
+};
+
+use plastext_buffer::{FileSource, OpenOptions, rows};
+use plastext_project::{TreeOptions, walk_files};
+use plastext_search::{FileMatcher, ProjectQuery, SearchOptions, search_project};
+use plastext_syntax::SyntaxTree;
+use serde_json::{Value, json};
+
+fn ms(time: Duration) -> f64 {
+    time.as_secs_f64() * 1000.
+}
+
+fn settle(matcher: &mut FileMatcher) -> io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while matcher.tick().running {
+        if Instant::now() > deadline {
+            return Err(io::Error::other("matching timed out"));
+        }
+        thread::sleep(Duration::from_micros(100));
+    }
+    Ok(())
+}
+
+fn metric(report: &mut Vec<Value>, name: &str, samples: &mut [f64], budget: Option<f64>) -> bool {
+    samples.sort_by(f64::total_cmp);
+    let p99 = samples[(samples.len() * 99).div_ceil(100).saturating_sub(1)];
+    let p50 = samples[samples.len() / 2];
+    let max = samples[samples.len() - 1];
+    let pass = budget.is_none_or(|budget| p99 <= budget);
+    println!(
+        "{} {name}: p50 {p50:.2} ms, p99 {p99:.2} ms, max {max:.2} ms (n={}){}",
+        if budget.is_none() {
+            "INFO"
+        } else if pass {
+            "PASS"
+        } else {
+            "FAIL"
+        },
+        samples.len(),
+        budget.map_or(String::new(), |value| format!(", budget {value:.0} ms"))
+    );
+    report.push(json!({"name": name, "unit": "ms", "p50": p50, "p99": p99, "max": max, "samples": samples, "budget": budget, "pass": pass}));
+    pass
+}
+
+/// Each query is typed, then erased, so broad prefixes and backspacing are
+/// measured too. Timing ends at a fresh completed matcher snapshot, including
+/// ranking, rather than at the call that merely enqueues the new pattern.
+fn queries(matcher: &mut FileMatcher, runs: usize) -> io::Result<Vec<f64>> {
+    let mut times = Vec::new();
+    for _ in 0..runs {
+        let mut previous = String::new();
+        for query in ["sched", "net", "drivers", "include", "core.c"] {
+            for len in (1..=query.len()).chain((0..query.len()).rev()) {
+                let pattern = &query[..len];
+                let start = Instant::now();
+                matcher.reparse(pattern, pattern.starts_with(&previous));
+                settle(matcher)?;
+                std::hint::black_box(matcher.item(0));
+                times.push(ms(start.elapsed()));
+                previous = pattern.to_owned();
+            }
+        }
+    }
+    Ok(times)
+}
+
+pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io::Result<()> {
+    if !root.is_dir() {
+        return Err(io::Error::other("M1 requires an existing source directory"));
+    }
+    let runs = runs.max(1);
+    let options = TreeOptions::default();
+    let mut report = Vec::new();
+    let mut pass = true;
+    let mut first_results = Vec::new();
+    let mut walk_times = Vec::new();
+    let mut paths = Vec::new();
+    let mut matcher = FileMatcher::new(&[]);
+    for _ in 0..runs {
+        let start = Instant::now();
+        matcher = FileMatcher::new(&["kernel/sched/core.c".into(), "net/core/dev.c".into()]);
+        let injector = matcher.injector();
+        let done = Arc::new(AtomicBool::new(false));
+        let collected = Mutex::new(Vec::new());
+        let mut first = None;
+        thread::scope(|scope| {
+            let walk_done = done.clone();
+            let collected = &collected;
+            let options = &options;
+            scope.spawn(move || {
+                walk_files(root, options, &AtomicBool::new(false), |path| {
+                    let path = path.to_string_lossy().into_owned();
+                    injector.push(path.clone());
+                    collected.lock().unwrap().push(path);
+                });
+                walk_done.store(true, Ordering::Release);
+            });
+            loop {
+                let status = matcher.tick();
+                if matcher.matched_count() > 0 {
+                    first.get_or_insert(ms(start.elapsed()));
+                }
+                if done.load(Ordering::Acquire) && !status.running {
+                    break;
+                }
+                thread::sleep(Duration::from_micros(100));
+            }
+        });
+        // The final injection might race the last tick; settle once more.
+        settle(&mut matcher)?;
+        first_results
+            .push(first.ok_or_else(|| io::Error::other("source tree had no searchable files"))?);
+        walk_times.push(ms(start.elapsed()));
+        paths = collected.into_inner().unwrap();
+    }
+    println!(
+        "Source: {} ({} visible files); {runs} runs",
+        root.display(),
+        paths.len()
+    );
+    pass &= metric(
+        &mut report,
+        "Quick Open first snapshot from walk start",
+        &mut first_results,
+        Some(100.),
+    );
+    metric(
+        &mut report,
+        "complete file walk and matching",
+        &mut walk_times,
+        None,
+    );
+    pass &= metric(
+        &mut report,
+        "Quick Open per keystroke (core)",
+        &mut queries(&mut matcher, runs)?,
+        Some(16.),
+    );
+    if million {
+        let mut large = FileMatcher::new(&[]);
+        let injector = large.injector();
+        for i in 0..1_000_000 {
+            injector.push(format!(
+                "copy-{}/{path}",
+                i / paths.len(),
+                path = paths[i % paths.len()]
+            ));
+        }
+        settle(&mut large)?;
+        pass &= metric(
+            &mut report,
+            "Quick Open 1M synthetic paths per keystroke (core)",
+            &mut queries(&mut large, runs)?,
+            Some(16.),
+        );
+    }
+    let mut search_times = Vec::new();
+    let query = ProjectQuery::new("printk", SearchOptions::default()).map_err(io::Error::other)?;
+    // Warm the filesystem/search path once; this budget explicitly uses a warm cache.
+    for run in 0..=runs {
+        let start = Instant::now();
+        let first = Mutex::new(None);
+        let cancel = AtomicBool::new(false);
+        search_project(root, &options, &query, 100, &cancel, |_| {
+            first.lock().unwrap().get_or_insert(ms(start.elapsed()));
+            cancel.store(true, Ordering::Relaxed);
+        });
+        let elapsed = first
+            .into_inner()
+            .unwrap()
+            .ok_or_else(|| io::Error::other("search probe 'printk' found no results"))?;
+        if run > 0 {
+            search_times.push(elapsed);
+        }
+    }
+    pass &= metric(
+        &mut report,
+        "project search first result (warm)",
+        &mut search_times,
+        Some(50.),
+    );
+    let file = root.join("kernel/sched/core.c");
+    let mut open_times = Vec::new();
+    let mut syntax_times = Vec::new();
+    let mut fold_times = Vec::new();
+    for _ in 0..runs {
+        let start = Instant::now();
+        let source = FileSource::open(&file, OpenOptions::default())?;
+        let head = source.head(8192)?;
+        let (page, error) = rows::rows(&source, 0, 60);
+        if error.is_some() || page.is_empty() {
+            return Err(io::Error::other("viewport could not be read"));
+        }
+        open_times.push(ms(start.elapsed()));
+        let text = source
+            .in_memory()
+            .ok_or_else(|| io::Error::other("source probe too large"))?;
+        let language =
+            plastext_syntax::detect(&file, &head).ok_or_else(|| io::Error::other("no language"))?;
+        let tree = SyntaxTree::parse(language, text, || false)
+            .ok_or_else(|| io::Error::other("parse failed"))?;
+        std::hint::black_box(tree.highlights(text, 0..page.last().unwrap().end as usize));
+        syntax_times.push(ms(start.elapsed()));
+        let fold_start = Instant::now();
+        std::hint::black_box(tree.folds(text));
+        fold_times.push(ms(fold_start.elapsed()));
+    }
+    metric(
+        &mut report,
+        "kernel/sched/core.c bytes ready (excludes paint)",
+        &mut open_times,
+        None,
+    );
+    metric(
+        &mut report,
+        "kernel/sched/core.c open + tree + viewport highlights",
+        &mut syntax_times,
+        None,
+    );
+    metric(
+        &mut report,
+        "kernel/sched/core.c syntax folds (background)",
+        &mut fold_times,
+        None,
+    );
+    if let Some(output) = output {
+        let result = json!({"schema": 1, "source": root, "files": paths.len(), "runs": runs, "million_synthetic_paths": million,
+            "scope": "core only; native rendering via read/launch; hardware is not normalized", "passed": pass, "metrics": report});
+        fs::write(output, serde_json::to_vec_pretty(&result)?)?;
+    }
+    if pass {
+        Ok(())
+    } else {
+        Err(io::Error::other("one or more measured M1 budgets failed"))
+    }
+}
+
+pub fn read(
+    file: &Path,
+    root: Option<&Path>,
+    frames: usize,
+    app: Option<PathBuf>,
+) -> io::Result<()> {
+    if !file.is_file() {
+        return Err(io::Error::other(
+            "native reading profile requires an existing source file",
+        ));
+    }
+    let app = app.unwrap_or(
+        std::env::current_exe()?
+            .with_file_name(format!("plastext-app{}", std::env::consts::EXE_SUFFIX)),
+    );
+    let mut command = Command::new(&app);
+    if let Some(root) = root {
+        command.arg(root);
+    }
+    let log = std::env::temp_dir().join(format!("plastext-read-{}.log", std::process::id()));
+    println!("Native profile log: {}", log.display());
+    let mut child = command
+        .arg(file)
+        .env("PLASTEXT_PROFILE_READING", frames.max(1).to_string())
+        .env_remove("PLASTEXT_PROFILE_STARTUP")
+        .env("ZED_MEASUREMENTS", "1")
+        .env(
+            "XDG_CONFIG_HOME",
+            std::env::temp_dir().join(format!("plastext-bench-config-{}", std::process::id())),
+        )
+        .env(
+            "PLASTEXT_SOCKET",
+            std::env::temp_dir().join(format!("plastext-read-{}.sock", std::process::id())),
+        )
+        .stdout(Stdio::null())
+        .stderr(fs::File::create(&log)?)
+        .spawn()?;
+    // A file without parser support must fail, not leave the app running
+    // indefinitely. Allow for a slow display plus a minute of setup.
+    let deadline = Instant::now() + Duration::from_secs(60 + frames as u64 / 20);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(io::Error::other(format!(
+                "native profile timed out; see {}",
+                log.display()
+            )));
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    let stderr = fs::read_to_string(&log)?;
+    let mut times = Vec::new();
+    let mut scrolling = false;
+    let mut finished = false;
+    let mut report = Vec::new();
+    let mut passed = true;
+    for line in stderr.lines() {
+        if line == "reading: scrolling" {
+            scrolling = true;
+        }
+        if line == "reading: done" {
+            finished = true;
+            scrolling = false;
+        }
+        for (prefix, budget) in [
+            ("reading: first paint ", 50.),
+            ("reading: syntax paint ", 100.),
+        ] {
+            if let Some(value) = line
+                .strip_prefix(prefix)
+                .and_then(|value| value.strip_suffix(" ms"))
+                .and_then(|value| value.parse::<f64>().ok())
+            {
+                passed &= metric(&mut report, prefix.trim(), &mut [value], Some(budget));
+            }
+        }
+        if scrolling
+            && let Some(time) = line
+                .strip_prefix("frame duration: ")
+                .and_then(parse_duration)
+        {
+            times.push(time);
+        }
+    }
+    if !status.success() || !finished || times.len() < frames.max(1) {
+        return Err(io::Error::other(format!(
+            "incomplete native profile ({} frames, status {}, finished {}):\n{}",
+            times.len(),
+            status,
+            finished,
+            stderr.lines().rev().take(30).collect::<Vec<_>>().join("\n")
+        )));
+    }
+    passed &= metric(
+        &mut report,
+        "native scrolling frame CPU time (draw + submit)",
+        &mut times,
+        Some(8.),
+    );
+    if passed {
+        Ok(())
+    } else {
+        Err(io::Error::other("native reading budget failed"))
+    }
+}
+
+fn parse_duration(value: &str) -> Option<f64> {
+    for (suffix, multiplier) in [("ms", 1.), ("µs", 0.001), ("ns", 0.000001), ("s", 1000.)] {
+        if let Some(number) = value.strip_suffix(suffix) {
+            return number.parse::<f64>().ok().map(|n| n * multiplier);
+        }
+    }
+    None
+}

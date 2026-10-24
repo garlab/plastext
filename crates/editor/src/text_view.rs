@@ -4,7 +4,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -18,7 +18,7 @@ use gpui::{
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
 use plastext_search::Query;
-use plastext_syntax::{Highlight, Language, Symbol, SyntaxTree};
+use plastext_syntax::{Fold, Highlight, Language, Symbol, SyntaxTree};
 
 use crate::{
     Theme,
@@ -43,6 +43,7 @@ actions!(
         Copy,
         SelectAll,
         ClearSelection,
+        ToggleFold,
         FoldAll,
         UnfoldAll,
         Find,
@@ -94,6 +95,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, context),
         KeyBinding::new("cmd-a", SelectAll, context),
         KeyBinding::new("escape", ClearSelection, context),
+        KeyBinding::new("cmd-alt-[", ToggleFold, context),
         KeyBinding::new("cmd-k cmd-0", FoldAll, context),
         KeyBinding::new("cmd-k cmd-j", UnfoldAll, context),
         KeyBinding::new("cmd-f", Find, context),
@@ -159,6 +161,7 @@ pub struct TextView {
     language: Option<&'static Language>,
     /// Set once the background parse finishes.
     syntax: Option<Arc<SyntaxTree>>,
+    syntax_folds: Option<Arc<Vec<Fold>>>,
     /// The file's definitions, found after parsing.
     symbols: Option<Arc<Vec<Symbol>>>,
     /// Stops the background parse when the view goes away.
@@ -191,6 +194,17 @@ pub struct TextView {
     find: Option<FindState>,
     _index_refresh: Option<Task<()>>,
     _parse: Option<Task<()>>,
+    profile: Option<ReadingProfile>,
+}
+
+/// Opt-in only, driven by plastext-bench. Normal windows schedule no work
+/// for this. GPUI's ZED_MEASUREMENTS reports whole-frame CPU durations.
+struct ReadingProfile {
+    opened: Instant,
+    painted: bool,
+    syntax_painted: bool,
+    frames_left: usize,
+    frame_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -271,12 +285,14 @@ impl TextView {
             let parsing = cx.background_executor().spawn(async move {
                 let tree = SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))?;
                 let symbols = tree.symbols(&text);
-                Some((tree, symbols))
+                let folds = tree.folds(&text);
+                Some((tree, symbols, folds))
             });
             cx.spawn(async move |this, cx| {
-                if let Some((tree, symbols)) = parsing.await {
+                if let Some((tree, symbols, folds)) = parsing.await {
                     this.update(cx, |this, cx| {
                         this.syntax = Some(Arc::new(tree));
+                        this.syntax_folds = folds.map(Arc::new);
                         this.symbols = Some(Arc::new(symbols));
                         cx.notify();
                     })
@@ -290,6 +306,7 @@ impl TextView {
             style,
             language,
             syntax: None,
+            syntax_folds: None,
             symbols: None,
             cancel_parse,
             focus_handle: cx.focus_handle(),
@@ -314,7 +331,84 @@ impl TextView {
             find: None,
             _index_refresh: index_refresh,
             _parse: parse,
+            profile: None,
         }
+    }
+
+    /// Enables the native M1 benchmark for a parsed source file. It scrolls
+    /// `frames` times after syntax arrives, reports paint times, then exits.
+    pub fn profile_reading(&mut self, opened: Instant, frames: usize) {
+        self.profile = Some(ReadingProfile {
+            opened,
+            painted: false,
+            syntax_painted: false,
+            frames_left: frames,
+            frame_pending: false,
+        });
+    }
+
+    fn profile_painted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(profile) = &mut self.profile else {
+            return;
+        };
+        if profile.frame_pending {
+            return;
+        }
+        let first = !profile.painted;
+        profile.painted = true;
+        let syntax = self.syntax.is_some();
+        let first_syntax = syntax && !profile.syntax_painted;
+        if syntax && !first_syntax {
+            profile.frames_left = profile.frames_left.saturating_sub(1);
+        }
+        profile.syntax_painted |= syntax;
+        if !first && !syntax {
+            return;
+        }
+        let done = syntax && profile.frames_left == 0;
+        let opened = profile.opened;
+        profile.frame_pending = true;
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            view.update(cx, |view, cx| {
+                if let Some(profile) = &mut view.profile {
+                    profile.frame_pending = false;
+                    if view.syntax.is_some() && !profile.syntax_painted {
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+            // The previous frame has been submitted. These paint latencies
+            // are upper bounds within one display refresh, like startup.
+            if first {
+                eprintln!(
+                    "reading: first paint {:.3} ms",
+                    opened.elapsed().as_secs_f64() * 1000.
+                );
+            }
+            if first_syntax {
+                eprintln!(
+                    "reading: syntax paint {:.3} ms",
+                    opened.elapsed().as_secs_f64() * 1000.
+                );
+                eprintln!("reading: scrolling");
+            }
+            if done {
+                eprintln!("reading: done");
+                cx.quit();
+            } else if syntax {
+                view.update(cx, |view, cx| {
+                    let before = view.top;
+                    view.scroll_by(view.line_height * 3., cx);
+                    if view.top == before {
+                        view.jump(Jump::Offset(0), cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+            }
+        });
     }
 
     /// Another view of the same file at the same position, as for a split.
@@ -323,6 +417,7 @@ impl TextView {
         let index = self.index.clone();
         let style = self.style.clone();
         let syntax = self.syntax.clone();
+        let syntax_folds = self.syntax_folds.clone();
         let symbols = self.symbols.clone();
         let language = self.language;
         let top = self.top;
@@ -332,6 +427,7 @@ impl TextView {
             let mut view = Self::new(source, index, style, parse, cx);
             view.language = language;
             view.syntax = syntax;
+            view.syntax_folds = syntax_folds;
             view.symbols = symbols;
             view.top = top;
             view
@@ -725,7 +821,14 @@ impl TextView {
         if self.folds.is_folded(line_end) {
             self.folds.unfold(line_end);
         } else {
-            match folding::fold_range(&*self.source, line_start, self.style.tab_size) {
+            let range = match &self.syntax_folds {
+                Some(folds) => Ok(folds
+                    .binary_search_by_key(&line_start, |fold| fold.header)
+                    .ok()
+                    .map(|index| folds[index].hidden.clone())),
+                None => folding::fold_range(&*self.source, line_start, self.style.tab_size),
+            };
+            match range {
                 Ok(Some(range)) => {
                     self.folds.fold(range);
                     if self.folds.hidden_at(self.top).is_some() {
@@ -740,8 +843,31 @@ impl TextView {
         cx.notify();
     }
 
-    /// Folds every top-level block: each unindented line followed by deeper ones.
+    /// Read mode has no caret: use the selection head (including a click),
+    /// or the first visible line when nothing is selected.
+    fn toggle_current_fold(&mut self, _: &ToggleFold, _: &mut Window, cx: &mut Context<Self>) {
+        let offset = self.selection.map_or(self.top, |selection| selection.head);
+        let line = rows::row_start_at(&*self.source, offset.min(self.source.len()));
+        match line.and_then(|start| rows::row_end(&*self.source, start).map(|end| (start, end))) {
+            Ok((start, end)) => self.toggle_fold(start, end, cx),
+            Err(err) => self.handle_read_error(err, cx),
+        }
+    }
+
+    /// Folds every outermost syntax block, with indentation as a fallback.
     fn fold_all(&mut self, _: &FoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(folds) = &self.syntax_folds {
+            let mut end = 0;
+            self.folds.fold_many(folds.iter().filter_map(|fold| {
+                if fold.header < end {
+                    return None;
+                }
+                end = fold.hidden.end;
+                Some(fold.hidden.clone())
+            }));
+            self.reveal_fold_header(cx);
+            return;
+        }
         let Some(text) = self.source.in_memory().cloned() else {
             self.notice = Some("Fold All needs the whole file in memory; it's too large.".into());
             cx.notify();
@@ -749,6 +875,7 @@ impl TextView {
         };
         let tab_size = self.style.tab_size;
         let mut line_start = 0;
+        let mut ranges = Vec::new();
         while line_start < text.len() {
             let rest = &text[line_start..];
             let line_end = line_start + memchr::memchr(b'\n', rest).map_or(rest.len(), |i| i + 1);
@@ -758,10 +885,15 @@ impl TextView {
                     folding::fold_range(&*self.source, line_start as u64, tab_size)
             {
                 next = range.end as usize;
-                self.folds.fold(range);
+                ranges.push(range);
             }
             line_start = next;
         }
+        self.folds.fold_many(ranges);
+        self.reveal_fold_header(cx);
+    }
+
+    fn reveal_fold_header(&mut self, cx: &mut Context<Self>) {
         if let Some(hidden) = self.folds.hidden_at(self.top) {
             self.top = rows::row_start_at(&*self.source, hidden.start - 1).unwrap_or(0);
             self.top_offset = px(0.);
@@ -838,12 +970,6 @@ impl TextView {
         self.drag = None;
         if self.selecting {
             self.selecting = false;
-            if self
-                .selection
-                .is_some_and(|selection| selection.range().is_empty())
-            {
-                self.selection = None;
-            }
             cx.notify();
         }
     }
@@ -1074,7 +1200,12 @@ impl TextView {
             .selection
             .map(|selection| selection.range())
             .filter(|range| !range.is_empty());
-        let fold_marks = folding::fold_marks(&visible_rows, &self.folds, self.style.tab_size);
+        let fold_marks = folding::fold_marks(
+            &visible_rows,
+            &self.folds,
+            self.style.tab_size,
+            self.syntax_folds.as_deref().map(Vec::as_slice),
+        );
         let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
         let mut rows = Vec::with_capacity(visible_rows.len());
         let mut hit_rows = Vec::with_capacity(visible_rows.len());
@@ -1392,6 +1523,7 @@ impl Render for TextView {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear_selection))
+            .on_action(cx.listener(Self::toggle_current_fold))
             .on_action(cx.listener(Self::fold_all))
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::find))
@@ -1410,7 +1542,10 @@ impl Render for TextView {
                             view.update(cx, |view, cx| view.layout(bounds, window, cx))
                         }
                     },
-                    move |bounds, layout, window, cx| layout.paint(bounds, view, window, cx),
+                    move |bounds, layout, window, cx| {
+                        layout.paint(bounds, view.clone(), window, cx);
+                        view.update(cx, |view, cx| view.profile_painted(window, cx));
+                    },
                 )
                 .size_full(),
             );

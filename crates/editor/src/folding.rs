@@ -1,10 +1,10 @@
-//! Indentation-based folding (spec CODE-5): a line can fold when the next
-//! non-blank line is indented deeper, hiding the deeper block below it.
+//! Fold visibility and the indentation fallback for files without a syntax tree.
 
 use std::{collections::BTreeMap, ops::Range};
 
 use memchr::memchr_iter;
 use plastext_buffer::{ByteSource, ReadError, rows};
+use plastext_syntax::Fold;
 
 /// How far below its first line a fold's end is looked for.
 const MAX_FOLD_SCAN: u64 = 16 * 1024 * 1024;
@@ -80,6 +80,12 @@ impl Folds {
         self.merge();
     }
 
+    pub fn fold_many(&mut self, ranges: impl IntoIterator<Item = Range<u64>>) {
+        self.folds
+            .extend(ranges.into_iter().map(|range| (range.start, range.end)));
+        self.merge();
+    }
+
     pub fn unfold(&mut self, line_end: u64) {
         self.folds.remove(&line_end);
         self.merge();
@@ -135,6 +141,7 @@ pub(crate) fn fold_marks(
     rows: &[(u64, bytes::Bytes, bool)],
     folds: &Folds,
     tab_size: usize,
+    syntax: Option<&[Fold]>,
 ) -> Vec<Option<FoldMark>> {
     let indents: Vec<Option<usize>> = rows
         .iter()
@@ -155,6 +162,13 @@ pub(crate) fn fold_marks(
             }
             if folds.is_folded(end) {
                 return Some(FoldMark::Folded);
+            }
+            if let Some(syntax) = syntax {
+                return (*starts_line
+                    && syntax
+                        .binary_search_by_key(start, |fold| fold.header)
+                        .is_ok())
+                .then_some(FoldMark::Foldable);
             }
             let indent = indents[i].filter(|_| *starts_line)?;
             // The next non-blank line, if it directly follows.
@@ -293,14 +307,14 @@ mod tests {
                 .collect()
         };
         let mut folds = Folds::default();
-        let marks = fold_marks(&rows(&folds), &folds, 4);
+        let marks = fold_marks(&rows(&folds), &folds, 4, None);
         assert_eq!(marks[0], Some(FoldMark::Foldable));
         assert_eq!(marks[1], None);
         assert_eq!(marks[3], Some(FoldMark::Foldable));
         assert_eq!(marks[8], None, "the last line has nothing below it");
 
         folds.fold(fold_range(&source, 0, 4).unwrap().unwrap());
-        let marks = fold_marks(&rows(&folds), &folds, 4);
+        let marks = fold_marks(&rows(&folds), &folds, 4, None);
         assert_eq!(marks[0], Some(FoldMark::Folded));
         assert_eq!(marks.len(), 4);
     }
@@ -327,5 +341,42 @@ mod tests {
         let closing = line_start(CODE, 6);
         assert_eq!(previous_visible_row(&source, &folds, closing), Ok(Some(0)));
         assert_eq!(next_visible_row(&source, &folds, 0), Ok(Some(closing)));
+    }
+
+    #[test]
+    fn syntax_marks_and_visibility_do_not_depend_on_indentation_or_visible_children() {
+        let text = "fn main() {\nwork();\n}\nnext();\n";
+        let source = FileSource::from_bytes(text);
+        let language = plastext_syntax::detect(std::path::Path::new("main.rs"), b"").unwrap();
+        let tree = plastext_syntax::SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+        let syntax = tree.folds(text.as_bytes()).unwrap();
+        let first_row = vec![(0, source.bytes(0..12).unwrap(), true)];
+        let mut folds = Folds::default();
+        assert_eq!(
+            fold_marks(&first_row, &folds, 4, Some(&syntax)),
+            [Some(FoldMark::Foldable)]
+        );
+        folds.fold(syntax[0].hidden.clone());
+        assert_eq!(
+            fold_marks(&first_row, &folds, 4, Some(&syntax)),
+            [Some(FoldMark::Folded)]
+        );
+        assert_eq!(next_visible_row(&source, &folds, 0), Ok(Some(22)));
+        assert_eq!(previous_visible_row(&source, &folds, 22), Ok(Some(0)));
+
+        let rows = vec![
+            (0, bytes::Bytes::from_static(b"int n =\n"), true),
+            (8, bytes::Bytes::from_static(b"    1;\n"), true),
+        ];
+        assert_eq!(
+            fold_marks(&rows, &Folds::default(), 4, Some(&[])),
+            [None, None],
+            "a parsed continuation is not a fold"
+        );
+        assert_eq!(
+            fold_marks(&rows, &Folds::default(), 4, None)[0],
+            Some(FoldMark::Foldable),
+            "indentation remains the fallback"
+        );
     }
 }

@@ -1,4 +1,4 @@
-use gpui::{App, Global, Rgba, Window, WindowAppearance, rgb};
+use gpui::{App, Global, Rgba, Window, WindowAppearance, rgb, rgba};
 use plastext_settings::{Color, ThemeOverrides};
 use plastext_syntax::Highlight;
 
@@ -107,7 +107,7 @@ impl Theme {
     fn with(mut self, overrides: &ThemeOverrides) -> Self {
         let set = |color: &mut Rgba, value: Option<Color>| {
             if let Some(Color(value)) = value {
-                *color = rgb(value);
+                *color = rgba(value);
             }
         };
         set(&mut self.background, overrides.background);
@@ -176,9 +176,9 @@ mod tests {
     #[test]
     fn overrides_replace_only_their_colors() {
         let overrides = ThemeOverrides {
-            background: Some(Color(0x101014)),
+            background: Some(Color(0x101014ff)),
             syntax: SyntaxOverrides {
-                comment: Some(Color(0x00ff00)),
+                comment: Some(Color(0x00ff00ff)),
                 ..Default::default()
             },
             ..Default::default()

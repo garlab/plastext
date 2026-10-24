@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{fmt, path::PathBuf, str::FromStr};
 
 use serde::{Deserialize, Deserializer, de};
 
@@ -14,6 +14,9 @@ pub struct Themes {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct ThemeOverrides {
+    /// A VS Code JSON/JSONC theme, relative to config.toml. Explicit TOML
+    /// colors override imported colors.
+    pub import: Option<PathBuf>,
     pub background: Option<Color>,
     /// Sidebars, the gutter and bars.
     pub surface: Option<Color>,
@@ -48,7 +51,7 @@ pub struct SyntaxOverrides {
     pub link: Option<Color>,
 }
 
-/// An RGB color written `"#rrggbb"` or `"#rgb"`.
+/// An RGBA color (`0xRRGGBBAA`), written as #RGB, #RGBA, #RRGGBB or #RRGGBBAA.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color(pub u32);
 
@@ -77,11 +80,19 @@ impl FromStr for Color {
             return Err(error());
         }
         let value = match hex.len() {
-            6 => u32::from_str_radix(hex, 16).map_err(|_| error())?,
-            3 => hex
-                .chars()
-                .map(|c| c.to_digit(16).unwrap_or(0))
-                .fold(0, |rgb, digit| (rgb << 8) | (digit * 0x11)),
+            6 => (u32::from_str_radix(hex, 16).map_err(|_| error())? << 8) | 0xff,
+            8 => u32::from_str_radix(hex, 16).map_err(|_| error())?,
+            3 | 4 => {
+                let value = hex
+                    .chars()
+                    .map(|c| c.to_digit(16).unwrap_or(0))
+                    .fold(0, |rgb, digit| (rgb << 8) | (digit * 0x11));
+                if hex.len() == 3 {
+                    (value << 8) | 0xff
+                } else {
+                    value
+                }
+            }
             _ => return Err(error()),
         };
         Ok(Self(value))
@@ -102,9 +113,11 @@ mod tests {
 
     #[test]
     fn parses_colors() {
-        assert_eq!("#1f2328".parse(), Ok(Color(0x1f2328)));
-        assert_eq!("#FFF".parse(), Ok(Color(0xffffff)));
-        assert_eq!("#a1b".parse(), Ok(Color(0xaa11bb)));
+        assert_eq!("#1f2328".parse(), Ok(Color(0x1f2328ff)));
+        assert_eq!("#FFF".parse(), Ok(Color(0xffffffff)));
+        assert_eq!("#a1b".parse(), Ok(Color(0xaa11bbff)));
+        assert_eq!("#a1b8".parse(), Ok(Color(0xaa11bb88)));
+        assert_eq!("#12345600".parse(), Ok(Color(0x12345600)));
         for text in ["1f2328", "#12345", "#ggg", "#+12345"] {
             assert!(text.parse::<Color>().is_err(), "{text}");
         }
