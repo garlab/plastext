@@ -9,8 +9,10 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+futures.workspace = true
 gpui.workspace = true
 plastext-cli.workspace = true
+plastext-platform.workspace = true
 plastext-ui.workspace = true
 
 [dev-dependencies]

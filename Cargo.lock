@@ -3884,8 +3884,10 @@ name = "plastext-app"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "futures",
  "gpui",
  "plastext-cli",
+ "plastext-platform",
  "plastext-ui",
  "tempfile",
 ]
@@ -3912,6 +3914,7 @@ name = "plastext-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "plastext-platform",
 ]
 
 [[package]]
@@ -3941,6 +3944,9 @@ version = "0.1.0"
 [[package]]
 name = "plastext-platform"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "plastext-project"

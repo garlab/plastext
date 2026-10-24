@@ -27,6 +27,7 @@ plastext-ui = { path = "crates/ui" }
 
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
+futures = "0.3"
 # Pinned exactly: GPUI is pre-1.0 and upgrades are deliberate (spec §7.1).
 # Only `app`, `ui` and `editor` may depend on it (spec §7.3, enforced in CI).
 # `runtime_shaders` compiles the Metal shaders at launch, so building doesn't need

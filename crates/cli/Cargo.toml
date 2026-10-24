@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+plastext-platform.workspace = true
 
 [lints]
 workspace = true

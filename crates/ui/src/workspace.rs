@@ -68,6 +68,10 @@ impl Workspace {
         }
     }
 
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
     /// The window title for a project: its folder name, or the app name without one.
     pub fn title(root: Option<&Path>) -> SharedString {
         match root {
