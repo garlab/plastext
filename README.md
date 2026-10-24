@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** milestone M0. You can browse a folder and read plain-text files of any size, in tabs and splits; there's no highlighting, Markdown rendering, editing or git yet. The full specification is in [docs/specs.md](docs/specs.md).
+> **Status:** milestone M1 (reading code). You can browse a folder and read files of any size with syntax highlighting, Quick Open, find, project search, symbols and a hex view for binaries. There's no Markdown rendering, editing or git yet. The full specification is in [docs/specs.md](docs/specs.md).
 
 ## Building
 
@@ -15,6 +15,20 @@ cargo build --release            # builds target/release/plastext and plastext-a
 ```
 
 `plastext` is the command-line launcher. It hands its arguments to the running app, or starts the `plastext-app` binary sitting next to it, so keep the two in the same directory. Settings are read from `~/.config/plastext/config.toml`; see spec §5.10.
+
+## Keys
+
+| Keys | Action |
+|---|---|
+| `⌘P` / `⌃G` | Quick Open (`path:line` works) / go to line |
+| `⇧⌘P` | Command palette: every command and its shortcut |
+| `⇧⌘O` | Go to symbol |
+| `⌘F` or `/`, then `n` / `N` | Find in file, next / previous match |
+| `⇧⌘F` / `⇧⌘E` | Search the project / show files |
+| `j` `k`, `space` `⇧space`, `g` `G` | Scroll by line, by page, to top / bottom |
+| `⌃-` / `⌃⇧-` (or `⌘[` / `⌘]`) | Go back / forward |
+| `⌘\` / `⌘⌥\` | Split right / down |
+| `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 
 ## Benchmarks
 
