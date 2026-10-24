@@ -2,13 +2,19 @@ use std::{path::Path, sync::OnceLock};
 
 use tree_sitter::Query;
 
-use crate::highlight::CaptureKind;
+use crate::{
+    highlight::CaptureKind,
+    lexical::{self, Lexical},
+};
 
 /// A language plastext can highlight (spec CODE-3). Grammars and queries are
 /// compiled in; nothing is downloaded at runtime.
 pub struct Language {
     pub name: &'static str,
-    grammar: fn() -> tree_sitter::Language,
+    /// `None` for languages only highlighted line by line.
+    grammar: Option<fn() -> tree_sitter::Language>,
+    /// Line-by-line highlighting, for files too large to parse.
+    pub lexical: &'static Lexical,
     /// Highlight queries, concatenated in order: earlier patterns win.
     highlights: &'static [&'static str],
     /// Tags queries, for symbols; empty if the language has none.
@@ -28,8 +34,8 @@ pub(crate) struct HighlightQuery {
 }
 
 impl Language {
-    pub(crate) fn grammar(&self) -> tree_sitter::Language {
-        (self.grammar)()
+    pub(crate) fn grammar(&self) -> Option<tree_sitter::Language> {
+        self.grammar.map(|grammar| grammar())
     }
 
     /// The compiled tags query, or `None` if there's none or it doesn't compile.
@@ -39,7 +45,7 @@ impl Language {
                 if self.tags.is_empty() {
                     return None;
                 }
-                Query::new(&self.grammar(), &self.tags.concat())
+                Query::new(&self.grammar()?, &self.tags.concat())
                     .inspect_err(|err| {
                         eprintln!(
                             "plastext: the {} tags query doesn't compile: {err}",
@@ -56,7 +62,7 @@ impl Language {
         self.query
             .get_or_init(|| {
                 let source = self.highlights.concat();
-                match Query::new(&self.grammar(), &source) {
+                match Query::new(&self.grammar()?, &source) {
                     Ok(query) => {
                         let kinds = query
                             .capture_names()
@@ -79,10 +85,11 @@ impl Language {
 }
 
 macro_rules! language {
-    ($name:literal, $grammar:expr, [$($highlights:expr),+ $(,)?], $(tags: [$($tags:expr),+ $(,)?],)? extensions: [$($extension:literal),* $(,)?], file_names: [$($file_name:literal),* $(,)?], interpreters: [$($interpreter:literal),* $(,)?] $(,)?) => {
+    ($name:literal, $grammar:expr, [$($highlights:expr),+ $(,)?], $(tags: [$($tags:expr),+ $(,)?],)? lexical: $lexical:expr, extensions: [$($extension:literal),* $(,)?], file_names: [$($file_name:literal),* $(,)?], interpreters: [$($interpreter:literal),* $(,)?] $(,)?) => {
         Language {
             name: $name,
-            grammar: || $grammar.into(),
+            grammar: Some(|| $grammar.into()),
+            lexical: &$lexical,
             highlights: &[$($highlights),+],
             tags: &[$($($tags),+)?],
             extensions: &[$($extension),*],
@@ -94,11 +101,12 @@ macro_rules! language {
     };
 }
 
-static LANGUAGES: [Language; 15] = [
+static LANGUAGES: [Language; 16] = [
     language!(
         "Bash",
         tree_sitter_bash::LANGUAGE,
         [tree_sitter_bash::HIGHLIGHT_QUERY],
+        lexical: lexical::BASH,
         extensions: ["sh", "bash", "zsh", "ksh"],
         file_names: [".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv", "PKGBUILD"],
         interpreters: ["sh", "bash", "zsh", "ksh", "dash"],
@@ -108,6 +116,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_c::LANGUAGE,
         [tree_sitter_c::HIGHLIGHT_QUERY],
         tags: [tree_sitter_c::TAGS_QUERY],
+        lexical: lexical::C,
         extensions: ["c", "h"],
         file_names: [],
         interpreters: [],
@@ -117,6 +126,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_cpp::LANGUAGE,
         [tree_sitter_cpp::HIGHLIGHT_QUERY, tree_sitter_c::HIGHLIGHT_QUERY],
         tags: [tree_sitter_cpp::TAGS_QUERY],
+        lexical: lexical::C,
         extensions: ["cc", "cpp", "cxx", "c++", "hh", "hpp", "hxx", "h++", "ipp", "tpp", "inl"],
         file_names: [],
         interpreters: [],
@@ -125,6 +135,7 @@ static LANGUAGES: [Language; 15] = [
         "CSS",
         tree_sitter_css::LANGUAGE,
         [tree_sitter_css::HIGHLIGHTS_QUERY],
+        lexical: Lexical::NONE,
         extensions: ["css"],
         file_names: [],
         interpreters: [],
@@ -134,6 +145,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_go::LANGUAGE,
         [tree_sitter_go::HIGHLIGHTS_QUERY],
         tags: [tree_sitter_go::TAGS_QUERY],
+        lexical: lexical::GO,
         extensions: ["go"],
         file_names: [],
         interpreters: [],
@@ -142,6 +154,7 @@ static LANGUAGES: [Language; 15] = [
         "HTML",
         tree_sitter_html::LANGUAGE,
         [tree_sitter_html::HIGHLIGHTS_QUERY],
+        lexical: Lexical::NONE,
         extensions: ["html", "htm", "xhtml"],
         file_names: [],
         interpreters: [],
@@ -151,6 +164,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_javascript::LANGUAGE,
         [tree_sitter_javascript::HIGHLIGHT_QUERY, tree_sitter_javascript::JSX_HIGHLIGHT_QUERY],
         tags: [tree_sitter_javascript::TAGS_QUERY],
+        lexical: lexical::JAVASCRIPT,
         extensions: ["js", "mjs", "cjs", "jsx"],
         file_names: [],
         interpreters: ["node", "deno", "bun"],
@@ -159,6 +173,7 @@ static LANGUAGES: [Language; 15] = [
         "JSON",
         tree_sitter_json::LANGUAGE,
         [tree_sitter_json::HIGHLIGHTS_QUERY],
+        lexical: lexical::JSON,
         extensions: ["json", "jsonc", "json5", "geojson", "webmanifest"],
         file_names: [".babelrc", ".eslintrc", ".prettierrc"],
         interpreters: [],
@@ -168,6 +183,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_md::LANGUAGE,
         [tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         tags: [crate::symbols::MARKDOWN_TAGS],
+        lexical: Lexical::NONE,
         extensions: ["md", "markdown", "mdown", "mkd", "mdx"],
         file_names: [],
         interpreters: [],
@@ -177,6 +193,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_python::LANGUAGE,
         [tree_sitter_python::HIGHLIGHTS_QUERY],
         tags: [tree_sitter_python::TAGS_QUERY],
+        lexical: lexical::PYTHON,
         extensions: ["py", "pyi", "pyw"],
         file_names: [],
         interpreters: ["python", "python2", "python3"],
@@ -186,6 +203,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_rust::LANGUAGE,
         [tree_sitter_rust::HIGHLIGHTS_QUERY],
         tags: [tree_sitter_rust::TAGS_QUERY],
+        lexical: lexical::RUST,
         extensions: ["rs"],
         file_names: [],
         interpreters: [],
@@ -194,6 +212,7 @@ static LANGUAGES: [Language; 15] = [
         "TOML",
         tree_sitter_toml_ng::LANGUAGE,
         [tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
+        lexical: lexical::DATA,
         extensions: ["toml"],
         file_names: ["Cargo.lock", "Pipfile", "poetry.lock", "uv.lock"],
         interpreters: [],
@@ -207,6 +226,7 @@ static LANGUAGES: [Language; 15] = [
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
         ],
         tags: [tree_sitter_typescript::TAGS_QUERY, tree_sitter_javascript::TAGS_QUERY],
+        lexical: lexical::JAVASCRIPT,
         extensions: ["tsx"],
         file_names: [],
         interpreters: [],
@@ -216,6 +236,7 @@ static LANGUAGES: [Language; 15] = [
         tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
         [tree_sitter_typescript::HIGHLIGHTS_QUERY, tree_sitter_javascript::HIGHLIGHT_QUERY],
         tags: [tree_sitter_typescript::TAGS_QUERY, tree_sitter_javascript::TAGS_QUERY],
+        lexical: lexical::JAVASCRIPT,
         extensions: ["ts", "mts", "cts"],
         file_names: [],
         interpreters: [],
@@ -224,10 +245,24 @@ static LANGUAGES: [Language; 15] = [
         "YAML",
         tree_sitter_yaml::LANGUAGE,
         [tree_sitter_yaml::HIGHLIGHTS_QUERY],
+        lexical: lexical::DATA,
         extensions: ["yml", "yaml"],
         file_names: [".clang-format", ".clang-tidy"],
         interpreters: [],
     ),
+    // Log files have no grammar: they're always highlighted line by line.
+    Language {
+        name: "Log",
+        grammar: None,
+        lexical: &lexical::LOG,
+        highlights: &[],
+        tags: &[],
+        extensions: &["log"],
+        file_names: &[],
+        interpreters: &[],
+        query: OnceLock::new(),
+        tags_query: OnceLock::new(),
+    },
 ];
 
 /// All built-in languages.
@@ -304,7 +339,12 @@ mod tests {
     #[test]
     fn every_query_compiles() {
         for language in languages() {
-            assert!(language.highlight_query().is_some(), "{}", language.name);
+            assert_eq!(
+                language.highlight_query().is_some(),
+                language.grammar.is_some(),
+                "{}",
+                language.name
+            );
             assert_eq!(
                 language.tags_query().is_some(),
                 !language.tags.is_empty(),

@@ -87,7 +87,7 @@ impl SyntaxTree {
         cancelled: impl Fn() -> bool,
     ) -> Option<Self> {
         let mut parser = Parser::new();
-        parser.set_language(&language.grammar()).ok()?;
+        parser.set_language(&language.grammar()?).ok()?;
         let mut progress = |_: &tree_sitter::ParseState| {
             if cancelled() {
                 ControlFlow::Break(())

@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
     NavigationDirection, SharedString, Subscription, Window, actions, div, prelude::*, px,
 };
-use plastext_buffer::{ByteSource as _, FileSource, LineIndex, OpenOptions};
+use plastext_buffer::{FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
 use plastext_project::{ShowIgnored, TreeOptions};
 use plastext_settings::{self as settings, Settings};
@@ -87,7 +87,6 @@ pub struct Workspace {
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
     open_options: OpenOptions,
-    syntax_max_file_size: u64,
     text_style: TextStyle,
     focus_handle: FocusHandle,
     /// Where jumps came from (spec NAV-5), most recent last.
@@ -183,13 +182,13 @@ impl Workspace {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
             },
-            syntax_max_file_size: settings.limits.syntax_max_file_size.0,
             text_style: TextStyle {
                 font_family: settings.editor.font.clone().into(),
                 font_size: px(settings.editor.font_size),
                 line_height: settings.editor.line_height,
                 tab_size: settings.editor.tab_size,
                 sticky_scroll: settings.editor.sticky_scroll,
+                max_parse_size: settings.limits.syntax_max_file_size.0,
             },
             focus_handle: cx.focus_handle(),
             back: Vec::new(),
@@ -253,7 +252,6 @@ impl Workspace {
             return;
         }
         let options = self.open_options;
-        let syntax_max_file_size = self.syntax_max_file_size;
         let style = self.text_style.clone();
         let opening = cx.background_executor().spawn({
             let path = path.clone();
@@ -264,10 +262,7 @@ impl Workspace {
                     return Ok(Opened::Binary(source));
                 }
                 let index = LineIndex::for_source(source.clone())?;
-                let language = (source.in_memory().is_some()
-                    && source.len() <= syntax_max_file_size)
-                    .then(|| plastext_syntax::detect(&path, &head[..head.len().min(256)]))
-                    .flatten();
+                let language = plastext_syntax::detect(&path, &head[..head.len().min(256)]);
                 std::io::Result::Ok(Opened::Text(source, index, language))
             }
         });

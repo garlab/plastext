@@ -117,6 +117,8 @@ pub struct TextStyle {
     pub tab_size: usize,
     /// Pin the first lines of the definitions enclosing the view's top (spec CODE-7).
     pub sticky_scroll: bool,
+    /// Larger files are highlighted line by line instead of parsed (spec CODE-2).
+    pub max_parse_size: u64,
 }
 
 /// What the status bar shows about a text view.
@@ -225,7 +227,8 @@ struct ScrollbarDrag {
 }
 
 impl TextView {
-    /// A view of `source`, highlighted as `language` if it's in memory.
+    /// A view of `source`, highlighted as `language`: parsed if it's in
+    /// memory and small enough, otherwise line by line.
     pub fn new(
         source: Arc<FileSource>,
         index: Arc<LineIndex>,
@@ -249,27 +252,28 @@ impl TextView {
             })
         });
         let cancel_parse = Arc::new(AtomicBool::new(false));
-        let parse = language
-            .zip(source.in_memory().cloned())
-            .map(|(language, text)| {
-                let cancel = cancel_parse.clone();
-                let parsing = cx.background_executor().spawn(async move {
-                    let tree =
-                        SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))?;
-                    let symbols = tree.symbols(&text);
-                    Some((tree, symbols))
-                });
-                cx.spawn(async move |this, cx| {
-                    if let Some((tree, symbols)) = parsing.await {
-                        this.update(cx, |this, cx| {
-                            this.syntax = Some(Arc::new(tree));
-                            this.symbols = Some(Arc::new(symbols));
-                            cx.notify();
-                        })
-                        .ok();
-                    }
-                })
+        let parsable = source
+            .in_memory()
+            .filter(|text| text.len() as u64 <= style.max_parse_size)
+            .cloned();
+        let parse = language.zip(parsable).map(|(language, text)| {
+            let cancel = cancel_parse.clone();
+            let parsing = cx.background_executor().spawn(async move {
+                let tree = SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))?;
+                let symbols = tree.symbols(&text);
+                Some((tree, symbols))
             });
+            cx.spawn(async move |this, cx| {
+                if let Some((tree, symbols)) = parsing.await {
+                    this.update(cx, |this, cx| {
+                        this.syntax = Some(Arc::new(tree));
+                        this.symbols = Some(Arc::new(symbols));
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            })
+        });
         Self {
             source,
             index,
@@ -308,12 +312,13 @@ impl TextView {
         let style = self.style.clone();
         let syntax = self.syntax.clone();
         let symbols = self.symbols.clone();
-        // Reuse the parse if it's done; otherwise parse again.
-        let language = self.language.filter(|_| syntax.is_none());
+        let language = self.language;
         let top = self.top;
         cx.new(|cx| {
-            let mut view = Self::new(source, index, style, language, cx);
-            view.language = self.language;
+            // Reuse the parse if it's done; otherwise parse again.
+            let parse = language.filter(|_| syntax.is_none());
+            let mut view = Self::new(source, index, style, parse, cx);
+            view.language = language;
             view.syntax = syntax;
             view.symbols = symbols;
             view.top = top;
@@ -1187,10 +1192,30 @@ impl TextView {
     }
 
     /// Highlighted spans for the visible rows, as absolute offsets: the start
-    /// of each line, up to [`HIGHLIGHT_LINE_LIMIT`] bytes of it.
+    /// of each line, up to [`HIGHLIGHT_LINE_LIMIT`] bytes of it. Without a
+    /// parse tree (yet), lines are highlighted one by one.
     fn highlights(&self, rows: &[(u64, Bytes, bool)]) -> Vec<(Range<u64>, Highlight)> {
         let (Some(syntax), Some(text)) = (&self.syntax, self.source.in_memory()) else {
-            return Vec::new();
+            let Some(language) = self.language else {
+                return Vec::new();
+            };
+            return rows
+                .iter()
+                .filter(|(_, _, starts_line)| *starts_line)
+                .flat_map(|(start, bytes, _)| {
+                    let line = &bytes[..bytes.len().min(HIGHLIGHT_LINE_LIMIT as usize)];
+                    language
+                        .lexical
+                        .highlights(line)
+                        .into_iter()
+                        .map(move |(span, highlight)| {
+                            (
+                                start + span.start as u64..start + span.end as u64,
+                                highlight,
+                            )
+                        })
+                })
+                .collect();
         };
         let mut ranges: Vec<Range<u64>> = Vec::new();
         for (start, bytes, starts_line) in rows {
