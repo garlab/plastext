@@ -1,14 +1,23 @@
-use std::{borrow::Cow, ops::Range, sync::Arc, time::Duration};
+use std::{
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
+use bytes::Bytes;
 use gpui::{
     App, Bounds, ContentMask, Context, DispatchPhase, Entity, FocusHandle, Focusable, Font,
-    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Rgba,
     ScrollWheelEvent, ShapedLine, SharedString, Task, TextRun, Window, WindowTextSystem, actions,
     canvas, div, fill, font, point, prelude::*, px, size,
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
+use plastext_syntax::{Highlight, Language, SyntaxTree};
 
-use crate::Theme;
+use crate::{Theme, row_text::visible_text};
 
 actions!(
     text_view,
@@ -31,6 +40,8 @@ const SCROLLBAR_WIDTH: f32 = 12.;
 const MIN_THUMB_HEIGHT: f32 = 24.;
 /// How often the view refreshes while its line index is being built.
 const INDEX_REFRESH: Duration = Duration::from_millis(200);
+/// Only this many bytes at the start of each line are highlighted (spec TXT-6).
+const HIGHLIGHT_LINE_LIMIT: u64 = 10_000;
 
 /// Registers the read-mode key bindings (spec §4.2).
 pub fn init(cx: &mut App) {
@@ -75,6 +86,7 @@ pub struct TextViewStatus {
     /// How much has been indexed, while the line index is being built.
     pub indexing: Option<f32>,
     pub len: u64,
+    pub language: Option<&'static str>,
     pub error: Option<SharedString>,
 }
 
@@ -88,6 +100,11 @@ pub struct TextView {
     source: Arc<FileSource>,
     index: Arc<LineIndex>,
     style: TextStyle,
+    language: Option<&'static Language>,
+    /// Set once the background parse finishes.
+    syntax: Option<Arc<SyntaxTree>>,
+    /// Stops the background parse when the view goes away.
+    cancel_parse: Arc<AtomicBool>,
     focus_handle: FocusHandle,
     /// The row at the top of the viewport, as a byte offset. Always a row start.
     top: u64,
@@ -107,6 +124,7 @@ pub struct TextView {
     error: Option<SharedString>,
     drag: Option<ScrollbarDrag>,
     _index_refresh: Option<Task<()>>,
+    _parse: Option<Task<()>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -125,10 +143,12 @@ struct ScrollbarDrag {
 }
 
 impl TextView {
+    /// A view of `source`, highlighted as `language` if it's in memory.
     pub fn new(
         source: Arc<FileSource>,
         index: Arc<LineIndex>,
         style: TextStyle,
+        language: Option<&'static Language>,
         cx: &mut Context<Self>,
     ) -> Self {
         let index_refresh = (!index.is_complete()).then(|| {
@@ -146,10 +166,31 @@ impl TextView {
                 }
             })
         });
+        let cancel_parse = Arc::new(AtomicBool::new(false));
+        let parse = language
+            .zip(source.in_memory().cloned())
+            .map(|(language, text)| {
+                let cancel = cancel_parse.clone();
+                let parsing = cx.background_executor().spawn(async move {
+                    SyntaxTree::parse(language, &text, || cancel.load(Ordering::Relaxed))
+                });
+                cx.spawn(async move |this, cx| {
+                    if let Some(tree) = parsing.await {
+                        this.update(cx, |this, cx| {
+                            this.syntax = Some(Arc::new(tree));
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                })
+            });
         Self {
             source,
             index,
             style,
+            language,
+            syntax: None,
+            cancel_parse,
             focus_handle: cx.focus_handle(),
             top: 0,
             top_offset: px(0.),
@@ -165,6 +206,7 @@ impl TextView {
             error: None,
             drag: None,
             _index_refresh: index_refresh,
+            _parse: parse,
         }
     }
 
@@ -173,9 +215,14 @@ impl TextView {
         let source = self.source.clone();
         let index = self.index.clone();
         let style = self.style.clone();
+        let syntax = self.syntax.clone();
+        // Reuse the parse if it's done; otherwise parse again.
+        let language = self.language.filter(|_| syntax.is_none());
         let top = self.top;
         cx.new(|cx| {
-            let mut view = Self::new(source, index, style, cx);
+            let mut view = Self::new(source, index, style, language, cx);
+            view.language = self.language;
+            view.syntax = syntax;
             view.top = top;
             view
         })
@@ -193,6 +240,7 @@ impl TextView {
             indexing: (!progress.is_complete())
                 .then(|| progress.indexed as f32 / progress.len.max(1) as f32),
             len: self.source.len(),
+            language: self.language.map(|language| language.name),
             error: self.error.clone(),
         }
     }
@@ -459,32 +507,51 @@ impl TextView {
         if let Some(err) = err {
             self.handle_read_error(err, cx);
         }
-        let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
+        let mut visible_rows = Vec::with_capacity(ranges.len());
         let mut starts_line = rows::starts_line(&*self.source, self.top).unwrap_or(false);
-        let mut rows = Vec::with_capacity(ranges.len());
-        let mut max_columns = 0;
-        for (i, range) in ranges.iter().enumerate() {
-            let bytes = match self.source.bytes(range.clone()) {
-                Ok(bytes) => bytes,
+        for range in &ranges {
+            match self.source.bytes(range.clone()) {
+                Ok(bytes) => {
+                    let ends_line = bytes.last() == Some(&b'\n');
+                    visible_rows.push((range.start, bytes, starts_line));
+                    starts_line = ends_line;
+                }
                 Err(err) => {
                     self.handle_read_error(err, cx);
                     break;
                 }
-            };
-            if i > 0 && starts_line {
+            }
+        }
+        let spans = self.highlights(&visible_rows);
+
+        let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
+        let mut rows = Vec::with_capacity(visible_rows.len());
+        let mut max_columns = 0;
+        for (i, (start, bytes, starts_line)) in visible_rows.iter().enumerate() {
+            if i > 0 && *starts_line {
                 line = line.map(|line| line + 1);
             }
             let number = line
-                .filter(|_| starts_line)
-                .map(|line| shaper.shape((line + 1).to_string(), theme.text_muted));
-            let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-            starts_line = content.len() < bytes.len();
+                .filter(|_| *starts_line)
+                .map(|line| shaper.shape((line + 1).to_string(), &[(0, theme.text_muted)]));
+            let content = bytes.strip_suffix(b"\n").unwrap_or(bytes);
             let content = content.strip_suffix(b"\r").unwrap_or(content);
-            let (text, width) = visible_text(content, self.style.tab_size, first_column, columns);
-            max_columns = max_columns.max(width);
+            let row_spans = spans_within(&spans, *start..start + content.len() as u64);
+            let visible = visible_text(
+                content,
+                self.style.tab_size,
+                first_column..first_column + columns,
+                &row_spans,
+            );
+            max_columns = max_columns.max(visible.width);
+            let runs: Vec<(usize, Rgba)> = visible
+                .runs
+                .iter()
+                .map(|&(len, highlight)| (len, highlight.map_or(theme.text, |h| theme.syntax(h))))
+                .collect();
             rows.push(RowLayout {
                 number,
-                text: (!text.is_empty()).then(|| shaper.shape(text, theme.text)),
+                text: (!visible.text.is_empty()).then(|| shaper.shape(visible.text, &runs)),
             });
         }
 
@@ -537,9 +604,56 @@ impl TextView {
             message: self
                 .error
                 .clone()
-                .map(|error| shaper.shape(error.to_string(), theme.text_muted)),
+                .map(|error| shaper.shape(error.to_string(), &[(0, theme.text_muted)])),
         }
     }
+
+    /// Highlighted spans for the visible rows, as absolute offsets: the start
+    /// of each line, up to [`HIGHLIGHT_LINE_LIMIT`] bytes of it.
+    fn highlights(&self, rows: &[(u64, Bytes, bool)]) -> Vec<(Range<u64>, Highlight)> {
+        let (Some(syntax), Some(text)) = (&self.syntax, self.source.in_memory()) else {
+            return Vec::new();
+        };
+        let mut ranges: Vec<Range<u64>> = Vec::new();
+        for (start, bytes, starts_line) in rows {
+            if !starts_line {
+                continue;
+            }
+            let end = start + (bytes.len() as u64).min(HIGHLIGHT_LINE_LIMIT);
+            match ranges.last_mut() {
+                Some(last) if last.end == *start => last.end = end,
+                _ => ranges.push(*start..end),
+            }
+        }
+        ranges
+            .into_iter()
+            .flat_map(|range| syntax.highlights(text, range.start as usize..range.end as usize))
+            .map(|(span, highlight)| (span.start as u64..span.end as u64, highlight))
+            .collect()
+    }
+}
+
+impl Drop for TextView {
+    fn drop(&mut self) {
+        self.cancel_parse.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The spans overlapping `row`, relative to its start.
+fn spans_within(
+    spans: &[(Range<u64>, Highlight)],
+    row: Range<u64>,
+) -> Vec<(Range<usize>, Highlight)> {
+    let first = spans.partition_point(|(span, _)| span.end <= row.start);
+    spans[first..]
+        .iter()
+        .take_while(|(span, _)| span.start < row.end)
+        .map(|(span, highlight)| {
+            let start = span.start.max(row.start) - row.start;
+            let end = span.end.min(row.end) - row.start;
+            (start as usize..end as usize, *highlight)
+        })
+        .collect()
 }
 
 impl Render for TextView {
@@ -590,17 +704,30 @@ struct Shaper<'a> {
 }
 
 impl Shaper<'_> {
-    fn shape(&self, text: String, color: impl Into<gpui::Hsla>) -> ShapedLine {
-        let run = TextRun {
-            len: text.len(),
-            font: self.font.clone(),
-            color: color.into(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
+    /// Shapes `text` colored by `runs` of byte lengths; a zero length means the rest.
+    fn shape(&self, text: String, runs: &[(usize, Rgba)]) -> ShapedLine {
+        let mut remaining = text.len();
+        let runs: Vec<TextRun> = runs
+            .iter()
+            .map(|&(len, color)| {
+                let len = if len == 0 {
+                    remaining
+                } else {
+                    len.min(remaining)
+                };
+                remaining -= len;
+                TextRun {
+                    len,
+                    font: self.font.clone(),
+                    color: color.into(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }
+            })
+            .collect();
         self.text_system
-            .shape_line(text.into(), self.font_size, &[run], None)
+            .shape_line(text.into(), self.font_size, &runs, None)
     }
 }
 
@@ -702,64 +829,5 @@ impl TextLayout {
                 view.update(cx, |view, _| view.drag = None);
             }
         });
-    }
-}
-
-/// Columns `first..first + count` of a row's text, with tabs expanded and
-/// control characters made visible, plus the row's full width in columns.
-///
-/// Each character counts as one column, which is exact for the monospace
-/// text this view targets except for wide (e.g. CJK) characters.
-fn visible_text(bytes: &[u8], tab_size: usize, first: usize, count: usize) -> (String, usize) {
-    let text: Cow<str> = String::from_utf8_lossy(bytes);
-    let end = first + count;
-    let mut visible = String::new();
-    let mut column = 0;
-    for ch in text.chars() {
-        let (shown, width) = match ch {
-            '\t' => (' ', tab_size.max(1) - column % tab_size.max(1)),
-            '\u{7f}' => ('\u{2421}', 1),
-            ch if (ch as u32) < 0x20 => {
-                (char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'), 1)
-            }
-            ch if ch.is_control() => ('\u{fffd}', 1),
-            ch => (ch, 1),
-        };
-        for col in column..column + width {
-            if (first..end).contains(&col) {
-                visible.push(shown);
-            }
-        }
-        column += width;
-    }
-    (visible, column)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::visible_text;
-
-    #[test]
-    fn expands_tabs_and_shows_control_characters() {
-        assert_eq!(visible_text(b"a\tb", 4, 0, 80), ("a   b".to_owned(), 5));
-        assert_eq!(
-            visible_text(b"\x00x\x7f", 4, 0, 80),
-            ("\u{2400}x\u{2421}".to_owned(), 3)
-        );
-        assert_eq!(visible_text("é\u{fffd}".as_bytes(), 4, 0, 80).1, 2);
-        assert_eq!(
-            visible_text(b"\xffz", 4, 0, 80),
-            ("\u{fffd}z".to_owned(), 2)
-        );
-    }
-
-    #[test]
-    fn keeps_only_the_visible_columns() {
-        assert_eq!(
-            visible_text(b"0123456789", 4, 3, 4),
-            ("3456".to_owned(), 10)
-        );
-        assert_eq!(visible_text(b"\tab", 4, 2, 3), ("  a".to_owned(), 6));
-        assert_eq!(visible_text(b"short", 4, 10, 5), (String::new(), 5));
     }
 }

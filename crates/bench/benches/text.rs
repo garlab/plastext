@@ -1,9 +1,10 @@
 //! Text engine micro-benchmarks: `cargo bench -p plastext-bench`.
 
-use std::hint::black_box;
+use std::{hint::black_box, path::Path};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use plastext_buffer::{ByteSource, FileSource, LineIndex, rows};
+use plastext_syntax::SyntaxTree;
 
 const SIZE: u64 = 64_000_000;
 
@@ -45,5 +46,26 @@ fn display_rows(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, line_index, display_rows);
+fn syntax(c: &mut Criterion) {
+    // This crate's own source, repeated to about 2 MB.
+    let source = include_str!("../../editor/src/text_view.rs");
+    let text = source.repeat(2_000_000 / source.len() + 1);
+    let language = plastext_syntax::detect(Path::new("big.rs"), b"").unwrap();
+    let mut group = c.benchmark_group("syntax");
+    group.sample_size(10);
+    group.throughput(Throughput::Bytes(text.len() as u64));
+    group.bench_function("parse 2 MB of Rust", |b| {
+        b.iter(|| SyntaxTree::parse(language, black_box(text.as_bytes()), || false).unwrap())
+    });
+    group.finish();
+
+    let tree = SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+    let start = text.len() / 2;
+    let page = start..start + 60 * 50;
+    c.bench_function("syntax/highlight a 60-row page", |b| {
+        b.iter(|| tree.highlights(text.as_bytes(), black_box(page.clone())))
+    });
+}
+
+criterion_group!(benches, line_index, display_rows, syntax);
 criterion_main!(benches);

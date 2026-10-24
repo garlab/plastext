@@ -77,6 +77,8 @@ pub struct Limits {
     pub large_file_threshold: ByteSize,
     /// Memory for the cached blocks of each large file.
     pub block_cache: ByteSize,
+    /// Larger files aren't parsed for syntax highlighting.
+    pub syntax_max_file_size: ByteSize,
 }
 
 impl Default for Limits {
@@ -84,6 +86,7 @@ impl Default for Limits {
         Self {
             large_file_threshold: ByteSize(64_000_000),
             block_cache: ByteSize(256_000_000),
+            syntax_max_file_size: ByteSize(32_000_000),
         }
     }
 }

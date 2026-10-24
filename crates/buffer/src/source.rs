@@ -124,6 +124,14 @@ impl FileSource {
         matches!(self.storage, Storage::Memory(_))
     }
 
+    /// The whole contents, if the file was read into memory.
+    pub fn in_memory(&self) -> Option<&Bytes> {
+        match &self.storage {
+            Storage::Memory(bytes) => Some(bytes),
+            Storage::Blocks(_) => None,
+        }
+    }
+
     /// The part of `range` that isn't cached yet, if any. Never blocks.
     pub fn missing(&self, range: Range<u64>) -> Option<Range<u64>> {
         let Storage::Blocks(file) = &self.storage else {

@@ -14,6 +14,7 @@ plastext-settings.workspace = true
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 plastext-buffer.workspace = true
+plastext-syntax.workspace = true
 
 [[bench]]
 name = "text"

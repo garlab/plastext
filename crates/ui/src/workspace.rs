@@ -48,6 +48,7 @@ pub struct Workspace {
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
     open_options: OpenOptions,
+    syntax_max_file_size: u64,
     text_style: TextStyle,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -113,6 +114,7 @@ impl Workspace {
                 large_file_threshold: settings.limits.large_file_threshold.0,
                 block_cache: settings.limits.block_cache.0,
             },
+            syntax_max_file_size: settings.limits.syntax_max_file_size.0,
             text_style: TextStyle {
                 font_family: settings.editor.font.clone().into(),
                 font_size: px(settings.editor.font_size),
@@ -171,16 +173,24 @@ impl Workspace {
             return;
         }
         let options = self.open_options;
+        let syntax_max_file_size = self.syntax_max_file_size;
         let style = self.text_style.clone();
         let opening = cx.background_executor().spawn({
             let path = path.clone();
-            async move { plastext_buffer::open(&path, options) }
+            async move {
+                let (source, index) = plastext_buffer::open(&path, options)?;
+                let language = source
+                    .in_memory()
+                    .filter(|text| text.len() as u64 <= syntax_max_file_size)
+                    .and_then(|text| plastext_syntax::detect(&path, &text[..text.len().min(256)]));
+                std::io::Result::Ok((source, index, language))
+            }
         });
         cx.spawn_in(window, async move |this, cx| {
             let opened = opening.await;
             this.update_in(cx, |this, window, cx| match opened {
-                Ok((source, index)) => {
-                    let view = cx.new(|cx| TextView::new(source, index, style, cx));
+                Ok((source, index, language)) => {
+                    let view = cx.new(|cx| TextView::new(source, index, style, language, cx));
                     if let Some(line) = line {
                         view.update(cx, |view, cx| view.scroll_to_line(line, cx));
                     }
@@ -494,6 +504,7 @@ fn status_text(status: TextViewStatus) -> String {
         None => parts.push(lines),
     }
     parts.push(format_size(status.len));
+    parts.push(status.language.unwrap_or("Plain text").to_owned());
     parts.join("    ")
 }
 
