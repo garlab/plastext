@@ -2,7 +2,7 @@ use plastext_buffer::{ByteSource as _, FileSource, OpenOptions};
 use plastext_markdown::{parse, parse_stream};
 use serde_json::json;
 use std::{
-    fs, io,
+    io,
     ops::ControlFlow,
     path::Path,
     sync::{Arc, atomic::AtomicBool},
@@ -42,10 +42,8 @@ pub fn run(file: &Path, output: Option<&Path>) -> io::Result<()> {
     );
     let full_ms = full.elapsed().as_secs_f64() * 1000.;
     let result = json!({"schema":1,"file":file,"bytes":source.len(),"scope":"core parse only; excludes native layout/paint and reference-machine certification","initial_64k_blocks":preview.blocks.len(),"initial_read_and_parse_ms":first_ms,"full_parse_ms":full_ms,"blocks":blocks,"headings":summary.headings.len(),"max_block_text_bytes":max_block,"max_batch_blocks":max_batch,"warnings":summary.warnings});
-    println!("{}", serde_json::to_string_pretty(&result)?);
-    if let Some(output) = output {
-        fs::write(output, serde_json::to_vec_pretty(&result)?)?;
-    }
+    let summary = crate::report::LocalRun::new("m2")?.save(&result, output)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
     if max_block > plastext_markdown::BLOCK_TEXT_LIMIT || max_batch > 256 {
         return Err(io::Error::other("Markdown layout/batch bound exceeded"));
     }
@@ -79,14 +77,13 @@ pub fn csv(file: &Path) -> io::Result<()> {
     let page = Instant::now();
     let rows = index.page(&source, delimiter, count.saturating_sub(60), 60)?;
     let page_ms = page.elapsed().as_secs_f64() * 1000.;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "schema": 1, "file": file, "bytes": source.len(), "rows": count,
-            "index_ms": indexed, "final_page_ms": page_ms, "page_rows": rows.len(),
-            "scope": "core indexing and page decode only; excludes native layout/paint",
-        }))?
-    );
+    let result = json!({
+        "schema": 1, "file": file, "bytes": source.len(), "rows": count,
+        "index_ms": indexed, "final_page_ms": page_ms, "page_rows": rows.len(),
+        "scope": "core indexing and page decode only; excludes native layout/paint",
+    });
+    let summary = crate::report::LocalRun::new("csv")?.save(&result, None)?;
+    println!("{}", serde_json::to_string_pretty(&summary)?);
     if let Some(error) = index.error() {
         return Err(io::Error::other(error));
     }

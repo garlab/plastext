@@ -270,11 +270,9 @@ pub fn run(root: &Path, runs: usize, million: bool, output: Option<&Path>) -> io
         &mut fold_times,
         None,
     );
-    if let Some(output) = output {
-        let result = json!({"schema": 1, "source": root, "files": paths.len(), "runs": runs, "million_synthetic_paths": million,
-            "scope": "core only; native rendering via read/launch; hardware is not normalized", "passed": pass, "metrics": report});
-        fs::write(output, serde_json::to_vec_pretty(&result)?)?;
-    }
+    let result = json!({"schema": 1, "source": root, "files": paths.len(), "runs": runs, "million_synthetic_paths": million,
+        "scope": "core only; native rendering via read/launch; hardware is not normalized", "passed": pass, "metrics": report});
+    crate::report::LocalRun::new("m1")?.save(&result, output)?;
     if pass {
         Ok(())
     } else {
@@ -312,7 +310,8 @@ pub fn read(
     if keep_visible {
         command.env("PLASTEXT_PROFILE_KEEP_VISIBLE", "1");
     }
-    let log = std::env::temp_dir().join(format!("plastext-read-{}.log", std::process::id()));
+    let local = crate::report::LocalRun::new("read")?;
+    let log = local.log();
     println!("Native profile log: {}", log.display());
     let mut child = command
         .arg(file)
@@ -383,19 +382,15 @@ pub fn read(
         );
     }
     passed &= complete;
-    if let Some(output) = output {
-        fs::write(
-            output,
-            serde_json::to_vec_pretty(&json!({
-                "schema": 1, "file": file, "view": if markdown { "markdown" } else { "code" },
-                "requested_frames": frames.max(1), "observed_frames": times.len(), "foreground": foreground,
-                "complete": complete, "timed_out": timed_out, "stalled": stalled,
-                "keep_visible": keep_visible, "passed": passed, "log": log,
-                "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
-                "metrics": report,
-            }))?,
-        )?;
-    }
+    let result = json!({
+        "schema": 1, "file": file, "view": if markdown { "markdown" } else { "code" },
+        "requested_frames": frames.max(1), "observed_frames": times.len(), "foreground": foreground,
+        "complete": complete, "timed_out": timed_out, "stalled": stalled,
+        "keep_visible": keep_visible, "passed": passed, "log": log,
+        "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
+        "metrics": report,
+    });
+    local.save(&result, output)?;
     if !complete {
         return Err(io::Error::other(format!(
             "incomplete native profile ({} frames, status {}, timed out {}):\n{}",

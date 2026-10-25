@@ -1,0 +1,67 @@
+{
+  "schema": 2,
+  "file": "large.md",
+  "view": "markdown",
+  "requested_frames": 1500,
+  "observed_frames": 1500,
+  "foreground": true,
+  "complete": true,
+  "timed_out": false,
+  "stalled": false,
+  "keep_visible": true,
+  "passed": false,
+  "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
+  "metrics": [
+    {
+      "name": "reading: first paint",
+      "unit": "ms",
+      "p50": 16.537,
+      "p99": 16.537,
+      "max": 16.537,
+      "sample_count": 1,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "reading: preview paint",
+      "unit": "ms",
+      "p50": 20.675,
+      "p99": 20.675,
+      "max": 20.675,
+      "sample_count": 1,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "reading: full preview paint",
+      "unit": "ms",
+      "p50": 7934.138,
+      "p99": 7934.138,
+      "max": 7934.138,
+      "sample_count": 1,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "native frame intervals (includes display pacing)",
+      "unit": "ms",
+      "p50": 8.332125,
+      "p99": 9.468125,
+      "max": 22.993709,
+      "sample_count": 1500,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "native scrolling frame wall time (draw + submit)",
+      "unit": "ms",
+      "p50": 5.034208,
+      "p99": 8.435916,
+      "max": 18.1525,
+      "sample_count": 1500,
+      "budget": 8.0,
+      "pass": false
+    }
+  ],
+  "artifact": "summary"
+}

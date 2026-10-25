@@ -1,0 +1,104 @@
+{
+  "schema": 2,
+  "source": "linux-6.12",
+  "files": 86280,
+  "runs": 5,
+  "million_synthetic_paths": true,
+  "scope": "core only; native rendering via read/launch; hardware is not normalized",
+  "passed": false,
+  "metrics": [
+    {
+      "name": "Quick Open first snapshot from walk start",
+      "unit": "ms",
+      "p50": 3.9672910000000003,
+      "p99": 4.406417,
+      "max": 4.406417,
+      "sample_count": 5,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "complete file walk and matching",
+      "unit": "ms",
+      "p50": 81.836334,
+      "p99": 141.03887500000002,
+      "max": 141.03887500000002,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "Quick Open per keystroke (core)",
+      "unit": "ms",
+      "p50": 2.997417,
+      "p99": 6.5061670000000005,
+      "max": 9.234708,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open 1M synthetic paths per keystroke (core)",
+      "unit": "ms",
+      "p50": 42.530708,
+      "p99": 85.63033300000001,
+      "max": 89.133834,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": false
+    },
+    {
+      "name": "project search first result (warm)",
+      "unit": "ms",
+      "p50": 0.8523750000000001,
+      "p99": 1.337333,
+      "max": 1.337333,
+      "sample_count": 5,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c bytes ready (excludes paint)",
+      "unit": "ms",
+      "p50": 0.069208,
+      "p99": 0.7182080000000001,
+      "max": 0.7182080000000001,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c open + tree + viewport highlights",
+      "unit": "ms",
+      "p50": 20.247417,
+      "p99": 24.96825,
+      "max": 24.96825,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c syntax folds (background)",
+      "unit": "ms",
+      "p50": 4.5755,
+      "p99": 5.202875,
+      "max": 5.202875,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    }
+  ],
+  "measured_on": "2026-10-24",
+  "hardware": {
+    "cpu": "Apple M2 Pro",
+    "ram_gib": 16,
+    "os": "macOS 26.4.1 (25E253)",
+    "reference_machine": false
+  },
+  "fixture": {
+    "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.tar.xz",
+    "sha256": "b1a2562be56e42afb3f8489d4c2a7ac472ac23098f1ef1c1e40da601f54625eb",
+    "kind": "source archive; no git history"
+  },
+  "artifact": "summary"
+}

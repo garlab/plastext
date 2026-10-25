@@ -1,6 +1,6 @@
 {
-  "schema": 1,
-  "file": "/tmp/plastext-m2/large.md",
+  "schema": 2,
+  "file": "large.md",
   "bytes": 100000000,
   "scope": "core parse only; excludes native layout/paint and reference-machine certification",
   "initial_64k_blocks": 3360,
@@ -10,5 +10,6 @@
   "headings": 45391,
   "max_block_text_bytes": 1359,
   "max_batch_blocks": 256,
-  "warnings": []
+  "warning_count": 0,
+  "artifact": "summary"
 }

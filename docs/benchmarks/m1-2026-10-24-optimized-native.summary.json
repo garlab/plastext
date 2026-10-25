@@ -1,0 +1,62 @@
+{
+  "schema": 2,
+  "scope": "GPUI frame draw and submit wall time; includes driver waits, not GPU completion; same M2 Pro as report",
+  "runs": [
+    {
+      "fixture": "10,016,064-byte C file",
+      "mode": "background",
+      "requested_frames": 300,
+      "measured_frames": 300,
+      "completed": true,
+      "paint_ms": {
+        "first_paint": 24.988,
+        "syntax_paint": 32.466,
+        "full_syntax_paint": 838.967
+      },
+      "frame_wall_time_ms": {
+        "p50": 8.219875,
+        "p99": 16.279083,
+        "max": 18.111209,
+        "sample_count": 300
+      }
+    },
+    {
+      "fixture": "10,016,064-byte C file",
+      "mode": "foreground",
+      "requested_frames": 300,
+      "measured_frames": 300,
+      "completed": true,
+      "paint_ms": {
+        "first_paint": 16.975,
+        "syntax_paint": 25.313,
+        "full_syntax_paint": 800.31
+      },
+      "frame_wall_time_ms": {
+        "p50": 1.448959,
+        "p99": 2.254166,
+        "max": 2.369375,
+        "sample_count": 300
+      }
+    },
+    {
+      "fixture": "Linux 6.12 kernel/sched/core.c",
+      "mode": "foreground",
+      "requested_frames": 10000,
+      "measured_frames": 7487,
+      "completed": false,
+      "paint_ms": {
+        "first_paint": 16.54,
+        "syntax_paint": 33.522,
+        "full_syntax_paint": 49.281
+      },
+      "stop_reason": "window_closed",
+      "frame_wall_time_ms": {
+        "p50": 4.634125,
+        "p99": 7.445458,
+        "max": 9.322583,
+        "sample_count": 7487
+      }
+    }
+  ],
+  "artifact": "summary"
+}

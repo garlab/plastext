@@ -1,0 +1,21 @@
+{
+  "schema": 2,
+  "artifact": "summary",
+  "scope": "20 representative expressions: native compilation only, not KaTeX corpus or visual parity",
+  "compiled": 18,
+  "total": 20,
+  "failed": 2,
+  "failed_cases": [
+    "ams",
+    "def"
+  ],
+  "first_formula_ms": 62.44,
+  "subsequent_successful_ms": {
+    "sample_count": 17,
+    "p50": 8.87,
+    "p99": 10.64,
+    "min": 8.57,
+    "max": 10.64
+  },
+  "total_process_ms": 224.88
+}

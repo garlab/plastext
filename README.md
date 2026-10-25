@@ -63,6 +63,8 @@ The `m2` and `csv` commands measure core parsing/indexing, not native scrolling 
 
 `read` also profiles Markdown, including initial preview paint, completion of the full model, and scrolling through distant sections. `--keep-visible` uses a temporary popup window above other apps to prevent occlusion; it requires `--foreground` and changes only benchmark windows. The runner saves failed and incomplete results with `--output`, and aborts after 30 seconds without frame progress.
 
+Benchmark `--output` files contain summaries only. Full sample arrays and native logs stay in ignored `target/benchmarks/`; the math corpus runner has a separate `--summary` option. Only `*.summary.json` reports go into [docs/benchmarks](docs/benchmarks/README.md), with a CI check against raw data and machine-specific paths.
+
 Markdown typography can be configured in `config.toml` (restart to apply):
 
 ```toml

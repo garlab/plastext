@@ -1,6 +1,6 @@
 # M2 progress — 2026-10-24
 
-M2 is in progress. The accepted M1 performance baseline is commit `01fcbb3`; its [report and original measurements](m1-performance.md) remain unchanged apart from the acceptance note. This increment adds native Markdown and asset views without changing the M1 matcher or text renderer.
+M2 is in progress. The accepted M1 performance baseline is commit `01fcbb3`; the statistics in its [report and original measurements](m1-performance.md) are unchanged. The [benchmark artifact policy](benchmarks/README.md) keeps summaries in Git and raw samples locally. This increment adds native Markdown and asset views without changing the M1 matcher or text renderer.
 
 ## Available now
 
@@ -49,9 +49,9 @@ Apple M2 Pro, 16 GiB RAM, macOS 26.4.1, Rust 1.99 release build with thin LTO. C
 | 546,670,014-byte CSV: 20,000,001 records including header | 489.51 ms to index |
 | CSV: decode final 60 records | 0.96 ms |
 
-Raw results: [Markdown](benchmarks/m2-2026-10-24-markdown.json), [CSV](benchmarks/m2-2026-10-24-csv.json). The Markdown runner consumes and drops batches, so it does not measure retained UI-model memory. Fixtures come from [m2-fixtures.py](../scripts/m2-fixtures.py): Markdown includes a 100k-row table, a 100k-line code fence and repeated rich paragraphs; CSV contains 20M quoted records. SHA-256: Markdown `e9bfb6bde242a6b19e94c9198ffca19cc07b6f9c8f88cee014818c01a443018f`; CSV `5883e92f379ed796b2282f2123f487da89d2d0f38ee47c8c83f59195efad71ca`.
+Summary results: [Markdown](benchmarks/m2-2026-10-24-markdown.summary.json), [CSV](benchmarks/m2-2026-10-24-csv.summary.json). The Markdown runner consumes and drops batches, so it does not measure retained UI-model memory. Fixtures come from [m2-fixtures.py](../scripts/m2-fixtures.py): Markdown includes a 100k-row table, a 100k-line code fence and repeated rich paragraphs; CSV contains 20M quoted records. SHA-256: Markdown `e9bfb6bde242a6b19e94c9198ffca19cc07b6f9c8f88cee014818c01a443018f`; CSV `5883e92f379ed796b2282f2123f487da89d2d0f38ee47c8c83f59195efad71ca`.
 
-The [M1 core comparison](benchmarks/m2-2026-10-24-m1-regression.json) measured million-path first-result p99 at 2.95 ms and completed-ranking p99 at 27.09 ms, versus the accepted baseline's 2.28 / 28.68 ms. Kernel-path completed-ranking p99 was 3.02 ms versus 2.64 ms. These samples do not establish a statistical improvement or regression. The runner correctly still exits nonzero for the known 16 ms completed-ranking miss. M1 native timings were not replaced or recertified.
+The [M1 core comparison](benchmarks/m2-2026-10-24-m1-regression.summary.json) measured million-path first-result p99 at 2.95 ms and completed-ranking p99 at 27.09 ms, versus the accepted baseline's 2.28 / 28.68 ms. Kernel-path completed-ranking p99 was 3.02 ms versus 2.64 ms. These samples do not establish a statistical improvement or regression. The runner correctly still exits nonzero for the known 16 ms completed-ranking miss. M1 native timings were not replaced or recertified.
 
 ```sh
 cargo build --release -p plastext-app -p plastext-bench
@@ -72,11 +72,11 @@ target/release/plastext-bench m1 /tmp/linux-6.12 --million --output /tmp/m2-m1-c
 | Draw + submit wall time | 4.11 ms median; **8.44 ms p99**; 61.60 ms max | **8 ms p99 — fails** |
 | Interval between native paint callbacks | 8.33 ms median; 9.35 ms p99; 68.69 ms max | Informational |
 
-Only 3 of 10,000 measured frame intervals exceeded 16.67 ms. This describes pacing on this machine; it does not override the draw/submit budget, measure GPU completion or constitute visual QA. [Raw final measurements](benchmarks/m2-2026-10-24-native-markdown.json) include every timing sample and correctly report `complete: true`, `passed: false`.
+Only 3 of 10,000 measured frame intervals exceeded 16.67 ms. This describes pacing on this machine; it does not override the draw/submit budget, measure GPU completion or constitute visual QA. [Final summary measurements](benchmarks/m2-2026-10-24-native-markdown.summary.json) retain sample counts and statistics and correctly report `complete: true`, `passed: false`.
 
 The final run used `--foreground --keep-visible`. Keep-visible mode uses a temporary GPUI popup window above other apps because macOS can suspend drawing in covered windows. This differs from the normal-window configuration of the M1 baseline, which is retained unchanged. The runner now saves incomplete and failed runs, rejects missing/invalid paint and completion markers, and stops after 30 seconds without log progress. It also aborts if Markdown is switched to Source or the full preview cannot be produced.
 
-Earlier runs are retained: a [1,000-frame normal-window probe](benchmarks/m2-2026-10-24-native-probe.json) measured 5.64 ms p99; a [normal-window attempt](benchmarks/m2-2026-10-24-native-interrupted.json) stopped making frame progress after 4,593 measured frames and recorded 8.71 ms p99. The idle benchmark process was terminated and its incomplete result retained. An [initial keep-visible run](benchmarks/m2-2026-10-24-native-quarter-jumps.json) completed 10,000 frames at 8.52 ms p99 but jumped by document quarters, which missed the fixture's short code-fence region. The final run fixes that coverage and adds frame-interval timing. None of these failed or incomplete runs is treated as a pass.
+Earlier runs are retained: a [1,000-frame normal-window probe](benchmarks/m2-2026-10-24-native-probe.summary.json) measured 5.64 ms p99; a [normal-window attempt](benchmarks/m2-2026-10-24-native-interrupted.summary.json) stopped making frame progress after 4,593 measured frames and recorded 8.71 ms p99. The idle benchmark process was terminated and its incomplete result retained. An [initial keep-visible run](benchmarks/m2-2026-10-24-native-quarter-jumps.summary.json) completed 10,000 frames at 8.52 ms p99 but jumped by document quarters, which missed the fixture's short code-fence region. The final run fixes that coverage and adds frame-interval timing. None of these failed or incomplete runs is treated as a pass.
 
 ```sh
 cargo build --release -p plastext-app -p plastext-bench
@@ -85,11 +85,11 @@ target/release/plastext-bench read /tmp/plastext-m2/large.md --frames 10000 --fo
 
 ### Front-matter increment comparison
 
-The accepted M1 artifacts and the preceding 10,000-frame M2 recording are unchanged. After the front-matter and code-find changes, the same 100 MB fixture produced [5.32 ms initial core read/parse and 1,170.98 ms full parse](benchmarks/m2-2026-10-24-front-matter-core.json). There are now 330,080 blocks because the fixture's metadata header and field are separate items; maximum block text and batch sizes remain 1,359 bytes and 256 blocks. This is a single sample, not evidence of a speed improvement.
+The statistics from the accepted M1 baseline and the preceding 10,000-frame M2 recording are unchanged. After the front-matter and code-find changes, the same 100 MB fixture produced [5.32 ms initial core read/parse and 1,170.98 ms full parse](benchmarks/m2-2026-10-24-front-matter-core.summary.json). There are now 330,080 blocks because the fixture's metadata header and field are separate items; maximum block text and batch sizes remain 1,359 bytes and 256 blocks. This is a single sample, not evidence of a speed improvement.
 
-The attempted [10,000-frame comparison](benchmarks/m2-2026-10-24-front-matter-interrupted.json) ended when its window closed after 4,168 frames. It correctly records `complete: false` and `passed: false`; its partial 5.03 ms draw p99 is not accepted as a completed result. The draw maximum was 746.34 ms; the cause of the interruption and that outlier has not been established.
+The attempted [10,000-frame comparison](benchmarks/m2-2026-10-24-front-matter-interrupted.summary.json) ended when its window closed after 4,168 frames. It correctly records `complete: false` and `passed: false`; its partial 5.03 ms draw p99 is not accepted as a completed result. The draw maximum was 746.34 ms; the cause of the interruption and that outlier has not been established.
 
-A separate [1,500-frame smoke run](benchmarks/m2-2026-10-24-front-matter-native.json) completed, with first preview at 20.68 ms, full preview at 7,934.14 ms, draw/submit median 5.03 ms, p99 **8.44 ms**, and maximum 18.15 ms. Frame intervals were 8.33 ms median / 9.47 ms p99. The runner correctly reports `complete: true`, `passed: false` for the existing 8 ms budget miss. Both runs used the same keep-visible benchmark mode. The short run does not replace the original 10,000-frame baseline, certify the M2 exit test, or provide visual QA of expanded tables.
+A separate [1,500-frame smoke run](benchmarks/m2-2026-10-24-front-matter-native.summary.json) completed, with first preview at 20.68 ms, full preview at 7,934.14 ms, draw/submit median 5.03 ms, p99 **8.44 ms**, and maximum 18.15 ms. Frame intervals were 8.33 ms median / 9.47 ms p99. The runner correctly reports `complete: true`, `passed: false` for the existing 8 ms budget miss. Both runs used the same keep-visible benchmark mode. The short run does not replace the original 10,000-frame baseline, certify the M2 exit test, or provide visual QA of expanded tables.
 
 ## Math spike
 
@@ -99,7 +99,7 @@ An opt-in example evaluates [MiTeX 0.2.4](https://github.com/mitex-rs/mitex) con
 cargo run --release -p plastext-math --features spike --example spike -- /tmp/plastext-math-spike
 ```
 
-[The recorded run](benchmarks/m2-2026-10-24-math-spike.txt) compiled 18/20 representative expressions. An AMS-symbol expression failed on `sect` compatibility and a `\def` macro failed conversion; `\newcommand` passed. The first formula took 62.44 ms and subsequent successful formulas took 8.57–10.64 ms in that run, constructing an engine each time. The standalone release example was 44,703,584 bytes (42.6 MiB), including its fonts and linked code; this is not an app-size delta. Both cold latency and binary cost need attention before choosing the engine. The helper provenance, license and adaptations are [recorded separately](../crates/math/spike/mitex/README.md).
+[The recorded run](benchmarks/m2-2026-10-24-math-spike.summary.json) compiled 18/20 representative expressions. An AMS-symbol expression failed on `sect` compatibility and a `\def` macro failed conversion; `\newcommand` passed. The first formula took 62.44 ms and subsequent successful formulas took 8.57–10.64 ms in that run, constructing an engine each time. The standalone release example was 44,703,584 bytes (42.6 MiB), including its fonts and linked code; this is not an app-size delta. Both cold latency and binary cost need attention before choosing the engine. The helper provenance, license and adaptations are [recorded separately](../crates/math/spike/mitex/README.md).
 
 This is a compilation probe on 20 chosen examples, not the KaTeX corpus or visual-equivalence validation. The engine decision and the required ≥95% corpus result remain open.
 
@@ -107,13 +107,13 @@ This is a compilation probe on 20 chosen examples, not the KaTeX corpus or visua
 
 The [pinned KaTeX screenshot fixtures](../crates/math/spike/katex/README.md) now supply all 128 cases from upstream commit `8000fbd4e29cca2c0cb1e88b745af3ed2f436b66`, with their license and options retained. The [runner](../scripts/math-corpus.py) executes each expression in a fresh native process with a five-second timeout, preserves errors, and returns nonzero below 95% compilation.
 
-The [recorded run](benchmarks/m2-2026-10-24-katex-corpus.json) compiled **86/128 (67.19%)**, with no timeouts. Unsupported commands include generalized fractions, rules, script fonts, verbatim text and several accents/arrows; there are also Typst symbol compatibility failures. HTML wrappers, CSS and error-display options are recorded but not implemented. No cases were removed from the denominator, including the deliberately invalid `UnsupportedCmds` case. This is the screenshot suite, not all KaTeX unit tests, and successful compilation does not establish correct visual output.
+The [recorded run](benchmarks/m2-2026-10-24-katex-corpus.summary.json) compiled **86/128 (67.19%)**, with no timeouts. Unsupported commands include generalized fractions, rules, script fonts, verbatim text and several accents/arrows; there are also Typst symbol compatibility failures. HTML wrappers, CSS and error-display options are recorded but not implemented. No cases were removed from the denominator, including the deliberately invalid `UnsupportedCmds` case. This is the screenshot suite, not all KaTeX unit tests, and successful compilation does not establish correct visual output.
 
 Decision: **do not integrate the current MiTeX/Typst adapter into the app yet**. Its coverage and the earlier size/cold-latency measurements do not justify selecting it. The same pinned fixtures can evaluate compatibility work or another engine. Native vector output, macro scoping, error fallbacks and visual comparisons remain required before an engine is accepted.
 
 ```sh
 cargo build --release -p plastext-math --features spike --example spike
-python3 scripts/math-corpus.py --output /tmp/plastext-math-corpus
+python3 scripts/math-corpus.py --summary /tmp/plastext-math-corpus.summary.json
 ```
 
 Build the app separately without the spike feature for native performance runs, so optional math dependencies do not alter Cargo feature unification in that build.

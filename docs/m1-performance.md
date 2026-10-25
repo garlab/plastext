@@ -14,7 +14,7 @@
 
 ## Baseline at `98fc598`
 
-Original core measurements and their individual samples are saved in [m1-2026-10-24-core.json](benchmarks/m1-2026-10-24-core.json). These are retained for comparison with the optimization pass below.
+Original core statistics and sample counts are saved in [m1-2026-10-24-core.summary.json](benchmarks/m1-2026-10-24-core.summary.json) for comparison with the optimization pass below. See the [benchmark artifact policy](benchmarks/README.md) for report storage.
 
 | Measurement | Result | Spec budget | Outcome |
 |---|---:|---:|---|
@@ -41,7 +41,7 @@ The matcher now retains the best 256 rows using parallel bounded heaps instead o
 
 The editor parses a prefix of at most 64 KiB first, compiles its highlight query in the background, and publishes that tree before parsing the rest. The full tree is then published before symbol/fold extraction. Scrolling outside the prefix uses lexical highlighting until the full tree arrives. Initial colors are provisional where syntax crosses the prefix boundary; structural features always use the full tree.
 
-Measurements and samples are saved in [optimized core results](benchmarks/m1-2026-10-24-optimized-core.json) and [optimized native results](benchmarks/m1-2026-10-24-optimized-native.json).
+Statistics and sample counts are saved in [optimized core results](benchmarks/m1-2026-10-24-optimized-core.summary.json) and [optimized native results](benchmarks/m1-2026-10-24-optimized-native.summary.json).
 
 | Measurement | Optimized result | Spec budget | Outcome |
 |---|---:|---:|---|
@@ -62,7 +62,7 @@ The whole kernel walk plus matching took 99.04 ms median / 141.79 ms maximum; th
 
 The native table uses `read --foreground`. An earlier completed background-window 300-frame run had a 32.47 ms initial syntax paint but 16.28 ms p99 draw/submit time; that failed run is also retained in the native results. GPUI's timer measures wall time inside drawing and submission, including any driver waits, rather than isolated CPU work or GPU completion. Foreground versus background presentation affects these timings. A covered window can also stop GPUI's frame callbacks entirely on macOS.
 
-The latest 10,000-frame run stopped after 7,487 frames with the explicit `reading: last window closed` marker. It exited with status 0, but the benchmark rejected it because the completion marker was absent. The partial samples are retained, not accepted as a successful long run. This replaces the earlier unexplained 826-frame attempt as the latest evidence; a completed 10,000-frame check is still required.
+The latest 10,000-frame run stopped after 7,487 frames with the explicit `reading: last window closed` marker. It exited with status 0, but the benchmark rejected it because the completion marker was absent. The partial-run statistics are retained in Git and its samples remain local; it is not accepted as a successful long run. This replaces the earlier unexplained 826-frame attempt as the latest evidence; a completed 10,000-frame check is still required.
 
 Shader precompilation is now selectable with `cargo build --release -p plastext-app --no-default-features`. The default remains compatible with Command Line Tools through the `runtime-shaders` feature. The no-default-feature dependency graph was checked, but the precompiled build and its cold-launch effect could not be tested here: `xcrun --find metal` reports that the Metal compiler is unavailable. The baseline launch failure therefore remains unresolved; no startup improvement is claimed.
 

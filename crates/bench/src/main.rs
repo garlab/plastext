@@ -16,6 +16,7 @@ use plastext_settings::ByteSize;
 mod m1;
 mod m2;
 mod native_log;
+mod report;
 
 #[derive(Parser)]
 #[command(
@@ -32,6 +33,7 @@ enum Commands {
     /// Measure bounded Markdown parsing; does not measure native painting.
     M2 {
         file: PathBuf,
+        /// Save a shareable summary; raw diagnostics stay in target/benchmarks.
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -46,7 +48,7 @@ enum Commands {
         /// Also match one million synthetic paths derived from this tree.
         #[arg(long)]
         million: bool,
-        /// Save machine-readable measurements, including failed budgets.
+        /// Save a shareable summary, including failed budgets. Raw samples stay local.
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -65,7 +67,7 @@ enum Commands {
         /// Keep the benchmark visible above other apps in a temporary popup window.
         #[arg(long, requires = "foreground")]
         keep_visible: bool,
-        /// Save native measurements, including incomplete or failed runs.
+        /// Save a shareable summary, including incomplete or failed runs. Raw frames stay local.
         #[arg(long)]
         output: Option<PathBuf>,
     },

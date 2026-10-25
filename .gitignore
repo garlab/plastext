@@ -1,3 +1,8 @@
 /target
 .obsidian/
 
+# Local benchmark artifacts; only compact summaries belong in Git.
+*.bench-raw.json
+*.bench-raw.log
+__pycache__/
+

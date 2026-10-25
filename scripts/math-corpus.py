@@ -10,11 +10,14 @@ import json
 import subprocess
 import time
 from pathlib import Path
+from benchmark_summary import summarize
 
 root = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument("--binary", type=Path, default=root / "target/release/examples/spike")
-parser.add_argument("--output", type=Path, default=Path("/tmp/plastext-math-corpus"))
+parser.add_argument("--output", type=Path, default=root / "target/benchmarks/math-corpus",
+                    help="Local directory for detailed results, TeX and SVG files")
+parser.add_argument("--summary", type=Path, help="Write a compact shareable summary here")
 parser.add_argument("--timeout", type=float, default=5)
 args = parser.parse_args()
 args.output.mkdir(parents=True, exist_ok=True)
@@ -55,6 +58,8 @@ report = {"schema": 1, "upstream_commit": "8000fbd4e29cca2c0cb1e88b745af3ed2f436
                    "HTML wrappers, CSS and noThrow/errorColor options are not implemented",
           "compiled": passed, "total": len(cases), "compile_percent": passed / len(cases) * 100,
           "visual_pass_percent": None, "results": results}
-(args.output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
+(args.output / "report.bench-raw.json").write_text(json.dumps(report, indent=2) + "\n")
+if args.summary:
+    args.summary.write_text(json.dumps(summarize(report), indent=2) + "\n")
 print(f"{passed}/{len(cases)} compiled; visual coverage unmeasured")
 raise SystemExit(0 if passed / len(cases) >= .95 else 1)

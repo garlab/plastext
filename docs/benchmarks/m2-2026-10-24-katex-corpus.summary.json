@@ -1,0 +1,13 @@
+{
+  "schema": 2,
+  "upstream_commit": "8000fbd4e29cca2c0cb1e88b745af3ed2f436b66",
+  "fixture_sha256": "7b69e30eddfb2f80e643ac70aaab468cce161eced7bb2143638a9a67f433b5de",
+  "scope": "KaTeX screenshot fixtures: native compilation only, not visual parity; HTML wrappers, CSS and noThrow/errorColor options are not implemented",
+  "compiled": 86,
+  "total": 128,
+  "compile_percent": 67.1875,
+  "visual_pass_percent": null,
+  "failed": 42,
+  "timeouts": 0,
+  "artifact": "summary"
+}

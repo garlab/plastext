@@ -9,6 +9,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  benchmark-artifacts:
+    name: Benchmark summaries only
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 scripts/test_benchmark_summary.py
+      - run: python3 scripts/check-benchmark-artifacts.py
+
   macos:
     name: macOS (Apple Silicon)
     runs-on: macos-15

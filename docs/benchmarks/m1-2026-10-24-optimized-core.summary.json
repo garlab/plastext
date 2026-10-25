@@ -1,0 +1,112 @@
+{
+  "schema": 2,
+  "source": "linux-6.12",
+  "files": 86280,
+  "runs": 5,
+  "million_synthetic_paths": true,
+  "scope": "core only; native rendering via read/launch; hardware is not normalized",
+  "passed": false,
+  "metrics": [
+    {
+      "name": "Quick Open first snapshot from walk start",
+      "unit": "ms",
+      "p50": 3.8501659999999998,
+      "p99": 3.9302499999999996,
+      "max": 3.9302499999999996,
+      "sample_count": 5,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "complete file walk and matching",
+      "unit": "ms",
+      "p50": 99.03525,
+      "p99": 141.79091699999998,
+      "max": 141.79091699999998,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "Quick Open per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000125,
+      "p99": 0.796084,
+      "max": 1.348625,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open completed ranking per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000167,
+      "p99": 2.6436659999999996,
+      "max": 2.844166,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open 1M synthetic paths per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000125,
+      "p99": 2.276958,
+      "max": 2.510041,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open 1M completed ranking per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000166,
+      "p99": 28.6825,
+      "max": 35.2065,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": false
+    },
+    {
+      "name": "project search first result (warm)",
+      "unit": "ms",
+      "p50": 0.8851249999999999,
+      "p99": 0.93925,
+      "max": 0.93925,
+      "sample_count": 5,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c bytes ready (excludes paint)",
+      "unit": "ms",
+      "p50": 0.064541,
+      "p99": 0.622042,
+      "max": 0.622042,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c open + tree + viewport highlights",
+      "unit": "ms",
+      "p50": 20.916125,
+      "p99": 27.311208,
+      "max": 27.311208,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c syntax folds (background)",
+      "unit": "ms",
+      "p50": 4.7234169999999995,
+      "p99": 5.412,
+      "max": 5.412,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    }
+  ],
+  "artifact": "summary"
+}

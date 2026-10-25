@@ -1,0 +1,57 @@
+{
+  "schema": 2,
+  "file": "large.md",
+  "view": "markdown",
+  "requested_frames": 10000,
+  "observed_frames": 10000,
+  "foreground": true,
+  "complete": true,
+  "timed_out": false,
+  "stalled": false,
+  "keep_visible": true,
+  "passed": false,
+  "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
+  "metrics": [
+    {
+      "name": "reading: first paint",
+      "unit": "ms",
+      "p50": 16.597,
+      "p99": 16.597,
+      "max": 16.597,
+      "sample_count": 1,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "reading: preview paint",
+      "unit": "ms",
+      "p50": 16.641,
+      "p99": 16.641,
+      "max": 16.641,
+      "sample_count": 1,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "reading: full preview paint",
+      "unit": "ms",
+      "p50": 2958.306,
+      "p99": 2958.306,
+      "max": 2958.306,
+      "sample_count": 1,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "native scrolling frame wall time (draw + submit)",
+      "unit": "ms",
+      "p50": 8.258375,
+      "p99": 8.518458,
+      "max": 15.943375,
+      "sample_count": 10000,
+      "budget": 8.0,
+      "pass": false
+    }
+  ],
+  "artifact": "summary"
+}
