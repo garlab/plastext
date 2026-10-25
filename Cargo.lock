@@ -4989,6 +4989,7 @@ dependencies = [
  "gpui",
  "plastext-cli",
  "plastext-editor",
+ "plastext-math",
  "plastext-platform",
  "plastext-settings",
  "plastext-ui",
@@ -5082,6 +5083,8 @@ name = "plastext-math"
 version = "0.1.0"
 dependencies = [
  "mitex",
+ "serde_json",
+ "typst",
  "typst-as-lib",
  "typst-assets",
  "typst-layout",

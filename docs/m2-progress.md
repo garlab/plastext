@@ -125,7 +125,7 @@ The [pinned KaTeX screenshot fixtures](../crates/math/spike/katex/README.md) now
 
 The [recorded run](benchmarks/m2-2026-10-24-katex-corpus.summary.json) compiled **86/128 (67.19%)**, with no timeouts. Unsupported commands include generalized fractions, rules, script fonts, verbatim text and several accents/arrows; there are also Typst symbol compatibility failures. HTML wrappers, CSS and error-display options are recorded but not implemented. No cases were removed from the denominator, including the deliberately invalid `UnsupportedCmds` case. This is the screenshot suite, not all KaTeX unit tests, and successful compilation does not establish correct visual output.
 
-Decision: **do not integrate the current MiTeX/Typst adapter into the app yet**. Its coverage and the earlier size/cold-latency measurements do not justify selecting it. The same pinned fixtures can evaluate compatibility work or another engine. Native vector output, macro scoping, error fallbacks and visual comparisons remain required before an engine is accepted.
+Decision: **do not integrate the current MiTeX/Typst adapter into the app yet**. Its coverage and the earlier size/cold-latency measurements do not justify selecting it. A reused engine has since removed the latency concern, but not the size concern ([below](#cost-with-a-reused-engine--2026-10-25)). The same pinned fixtures can evaluate compatibility work or another engine. Native vector output, macro scoping, error fallbacks and visual comparisons remain required before an engine is accepted.
 
 ```sh
 cargo build --release -p plastext-math --features spike --example spike
@@ -133,6 +133,44 @@ python3 scripts/math-corpus.py --summary /tmp/plastext-math-corpus.summary.json
 ```
 
 Build the app separately without the spike feature for native performance runs, so optional math dependencies do not alter Cargo feature unification in that build.
+
+### Cost with a reused engine — 2026-10-25
+
+The first spike built a new Typst engine for every formula. `plastext-math`'s opt-in `typst-engine` feature now keeps one engine, implementing Typst's `World` directly, with fixed library, fonts and MiTeX helpers. Typst then memoizes the helper module and shared layout work across formulas. Three font sets were compared: Typst's bundled fonts (what the spike used), only New Computer Modern Math, and macOS's own STIX Two Math/Text with nothing embedded. [Summary](benchmarks/m2-2026-10-25-typst-cost.summary.json); Apple M2 Pro, release build, medians of 5 fresh processes.
+
+| Per formula (KaTeX cases that compile) | Bundled fonts | Math font only | macOS STIX |
+|---|---:|---:|---:|
+| Engine construction | 2.88 ms | 2.85 ms | 1.58 ms |
+| First formula after construction | 6.12 ms | 6.07 ms | 5.88 ms |
+| Each new formula: p50 / p90 / max | 0.13 / 0.58 / 1.84 ms | 0.14 / 0.57 / 1.69 ms | 0.13 / 0.53 / 1.30 ms |
+| Repeated formula (memoized): p50 | 0.02 ms | 0.02 ms | 0.02 ms |
+| TeX → Typst conversion alone: p50 | 0.008 ms | 0.008 ms | 0.008 ms |
+| All 86 one by one / one document / 4 threads | 23.2 / 14.3 / 14.1 ms | 22.7 / 14.3 / 14.4 ms | 22.6 / 14.2 / 14.4 ms |
+| Resident memory: engine / after all formulas | +6.1 / +26.1 MB | +6.0 / +24.2 MB | +5.7 / +22.8 MB |
+| Cases compiled | 86 / 128 | 86 / 128 | 85 / 128 (`DashesAndQuotes` fails) |
+
+Inside the app binary (`--features math-spike`, `PLASTEXT_MATH_PROBE`), the first formula is laid out 10.2 / 8.9 / 7.2 ms after `main` starts (median of 5; the very first run of a newly built binary took 24.8 ms). The spike's 62 ms first formula and ~10 ms per formula came from rebuilding the engine each time, not from Typst's layout. Memoized results stay in Typst's global cache until evicted, so an integration would need an eviction policy.
+
+**Binary size** is the real cost. Linking the engine with Typst's bundled fonts grows the release app as follows:
+
+| plastext-app | Raw | Stripped | gzip -9 | xz -9 |
+|---|---:|---:|---:|---:|
+| Without math | 25.98 MB | 23.94 MB | 6.81 MB | 4.41 MB |
+| With MiTeX + Typst + bundled fonts | 66.71 MB | 60.16 MB | 23.91 MB | 15.85 MB |
+| Increase | +40.73 MB | +36.22 MB | +17.09 MB | +11.44 MB |
+
+The bundled fonts are 9.68 MB (6.35 MB gzipped). Using macOS's STIX fonts instead would leave about +26.5 MB stripped / +10.7 MB gzipped. Embedding only the math font would add 1.31 MB (0.86 MB gzipped) to that. These two figures are computed from the font files' sizes, not built. The rest is mostly Typst's standard library, which registers every function, so the linker can't drop the parts math never uses:
+
+- Machine code grows 13.5 MB, plus 2.1 MB of unwind tables: Typst crates 4.8 MB; PDF images (`hayro`) 1.1 MB; plugins (`wasmi`, `wasmparser`) 1.0 MB; bibliographies (`citationberg`, `hayagriva`, `biblatex`) 1.0 MB; a second `usvg` version (0.47; the app uses 0.45) 0.3 MB; data loaders, color management and syntax highlighting about 1 MB; generic code in `core`, `serde` and `alloc` about 2.5 MB.
+- Constant data grows 18.9 MB: fonts 9.7 MB, bibliography styles and locales about 2.8 MB, code-block syntax definitions about 0.9 MB, and ICU segmentation, hyphenation and other tables.
+
+Typst 0.15 has no Cargo features for leaving these out. Launch is unaffected while no formula is laid out: first frame 153.8–162.3 ms without the engine and 157.5–158.3 ms with it (medians of two 5-run rounds each).
+
+```sh
+cargo run --release -p plastext-math --features typst-engine --example typst_cost -- system 4
+cargo build --release -p plastext-app --features math-spike
+PLASTEXT_MATH_PROBE=system target/release/plastext-app
+```
 
 ## Remaining M2 work
 

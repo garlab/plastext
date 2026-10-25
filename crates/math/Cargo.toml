@@ -8,18 +8,28 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-spike = ["dep:mitex", "dep:typst-layout", "dep:typst-as-lib", "dep:typst-svg", "dep:typst-assets"]
+# MiTeX conversion laid out by a reused Typst engine, for measuring that route.
+typst-engine = ["dep:mitex", "dep:typst", "dep:typst-layout", "dep:typst-assets"]
+spike = ["typst-engine", "dep:typst-as-lib", "dep:typst-svg"]
 
 [dependencies]
 mitex = { version = "0.2.4", optional = true }
+typst = { version = "0.15.1", optional = true }
 typst-layout = { version = "0.15.1", optional = true }
 typst-as-lib = { version = "0.17", default-features = false, optional = true }
 typst-svg = { version = "0.15.1", optional = true }
 typst-assets = { version = "0.15.1", features = ["fonts"], optional = true }
 
+[dev-dependencies]
+serde_json = "1"
+
 [[example]]
 name = "spike"
 required-features = ["spike"]
+
+[[example]]
+name = "typst_cost"
+required-features = ["typst-engine"]
 
 [lints]
 workspace = true

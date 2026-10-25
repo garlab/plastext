@@ -10,6 +10,9 @@ publish.workspace = true
 [features]
 default = ["runtime-shaders"]
 runtime-shaders = ["gpui/runtime_shaders"]
+# Links the MiTeX + Typst math route to measure its cost in the app binary;
+# PLASTEXT_MATH_PROBE=bundled|bundled-math|system lays out one formula and exits.
+math-spike = ["dep:plastext-math", "plastext-math/typst-engine"]
 
 [dependencies]
 clap.workspace = true
@@ -17,6 +20,7 @@ futures.workspace = true
 gpui.workspace = true
 plastext-cli.workspace = true
 plastext-editor.workspace = true
+plastext-math = { workspace = true, optional = true }
 plastext-platform.workspace = true
 plastext-settings.workspace = true
 plastext-ui.workspace = true

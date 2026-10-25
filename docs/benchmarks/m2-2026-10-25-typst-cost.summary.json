@@ -1,0 +1,125 @@
+{
+  "schema": 2,
+  "artifact": "summary",
+  "scope": "MiTeX 0.2.4 + Typst 0.15.1 with one reused engine; KaTeX screenshot cases; in-process timings from fresh processes (median of runs); Apple M2 Pro",
+  "fonts": {
+    "Bundled": {
+      "runs": 5,
+      "compiled": 86,
+      "cases": 128,
+      "engine_ms": 2.882,
+      "first_formula_ms": 6.122,
+      "new_formula_ms": {
+        "p50": 0.13,
+        "p90": 0.582,
+        "max": 1.838
+      },
+      "repeat_formula_ms": {
+        "p50": 0.019,
+        "p90": 0.034,
+        "max": 0.057
+      },
+      "tex_to_typst_ms": {
+        "p50": 0.008,
+        "max": 0.049
+      },
+      "all_compiled_ms": {
+        "one_by_one": 23.173,
+        "one_document": 14.265,
+        "four_threads": 14.056
+      },
+      "rss_mb": {
+        "engine": 6.141,
+        "after_all_formulas": 26.062
+      }
+    },
+    "BundledMath": {
+      "runs": 5,
+      "compiled": 86,
+      "cases": 128,
+      "engine_ms": 2.852,
+      "first_formula_ms": 6.07,
+      "new_formula_ms": {
+        "p50": 0.136,
+        "p90": 0.568,
+        "max": 1.689
+      },
+      "repeat_formula_ms": {
+        "p50": 0.02,
+        "p90": 0.036,
+        "max": 0.058
+      },
+      "tex_to_typst_ms": {
+        "p50": 0.008,
+        "max": 0.05
+      },
+      "all_compiled_ms": {
+        "one_by_one": 22.733,
+        "one_document": 14.258,
+        "four_threads": 14.356
+      },
+      "rss_mb": {
+        "engine": 6.047,
+        "after_all_formulas": 24.234
+      }
+    },
+    "System": {
+      "runs": 5,
+      "compiled": 85,
+      "cases": 128,
+      "engine_ms": 1.582,
+      "first_formula_ms": 5.876,
+      "new_formula_ms": {
+        "p50": 0.126,
+        "p90": 0.527,
+        "max": 1.298
+      },
+      "repeat_formula_ms": {
+        "p50": 0.019,
+        "p90": 0.035,
+        "max": 0.061
+      },
+      "tex_to_typst_ms": {
+        "p50": 0.008,
+        "max": 0.048
+      },
+      "all_compiled_ms": {
+        "one_by_one": 22.649,
+        "one_document": 14.245,
+        "four_threads": 14.396
+      },
+      "rss_mb": {
+        "engine": 5.656,
+        "after_all_formulas": 22.844
+      }
+    }
+  },
+  "app_binary_bytes": {
+    "base": {
+      "raw": 25978256,
+      "stripped": 23941280,
+      "gzip9": 6814490,
+      "xz9": 4408264
+    },
+    "with_typst_and_bundled_fonts": {
+      "raw": 66710544,
+      "stripped": 60160528,
+      "gzip9": 23905780,
+      "xz9": 15846060
+    },
+    "bundled_font_files": 9683068,
+    "bundled_font_files_gzip9": 6345677,
+    "math_font_file": 1306268,
+    "math_font_file_gzip9": 859061
+  },
+  "app_first_formula_ms_from_main_median_of_5": {
+    "bundled": 10.24,
+    "bundled_math": 8.88,
+    "system": 7.16,
+    "first_run_of_new_binary": 24.77
+  },
+  "launch_first_frame_ms_median": {
+    "base": "153.8-162.3",
+    "with_typst": "157.5-158.3"
+  }
+}

@@ -42,6 +42,10 @@ impl Global for StartupProfile {}
 
 fn main() -> ExitCode {
     let start = Instant::now();
+    #[cfg(feature = "math-spike")]
+    if let Some(fonts) = env::var_os("PLASTEXT_MATH_PROBE") {
+        return math_probe(&fonts.to_string_lossy(), start);
+    }
     // Handles `--help` and `--version`, and rejects bad arguments.
     Cli::parse();
     let request = match OpenRequest::from_env() {
@@ -124,6 +128,33 @@ fn main() -> ExitCode {
         .detach();
     });
     ExitCode::SUCCESS
+}
+
+/// Lays out one formula with the Typst math route from inside the app binary,
+/// so its size and cold cost can be measured (spec §7.2 math spike).
+#[cfg(feature = "math-spike")]
+fn math_probe(fonts: &str, start: Instant) -> ExitCode {
+    use plastext_math::{Fonts, TypstMath};
+    let fonts = match fonts {
+        "bundled-math" => Fonts::BundledMath,
+        "system" => Fonts::System,
+        _ => Fonts::Bundled,
+    };
+    let laid_out =
+        TypstMath::new(fonts).and_then(|math| math.layout(r"\int_0^1 x^2\,dx = \frac{1}{3}", true));
+    match laid_out {
+        Ok(layout) => {
+            eprintln!(
+                "math: {layout:?} in {:.2} ms from main",
+                start.elapsed().as_secs_f64() * 1000.
+            );
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("math: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 /// Opens what a launch asked for, reusing windows that show the same folder,
