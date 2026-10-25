@@ -18,6 +18,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use crate::tab_view::format_size;
@@ -71,6 +72,10 @@ enum Update {
     Error(String),
 }
 
+/// How long one turn of the UI thread may spend applying parse results
+/// before input and painting get to run.
+const RECEIVE_BUDGET: Duration = Duration::from_millis(4);
+
 pub struct MarkdownView {
     path: PathBuf,
     source: Arc<FileSource>,
@@ -112,7 +117,9 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
-        let (send, receive) = async_channel::bounded(4);
+        // Room for a few frames' worth of batches, so the parser keeps going
+        // while the UI thread is busy painting.
+        let (send, receive) = async_channel::bounded(32);
         cx.background_executor()
             .spawn({
                 let source = source.clone();
@@ -179,17 +186,27 @@ impl MarkdownView {
             .detach();
         let parsing = cx.spawn(async move |this, cx| {
             while let Ok(update) = receive.recv().await {
-                if this
-                    .update(cx, |this, cx| this.receive(update, cx))
-                    .is_err()
-                {
+                // Apply everything already parsed rather than one batch per
+                // wakeup, which took several times longer than parsing.
+                let started = Instant::now();
+                let Ok(out_of_time) = this.update(cx, |this, cx| {
+                    this.receive(update, cx);
+                    while let Ok(update) = receive.try_recv() {
+                        this.receive(update, cx);
+                        if started.elapsed() >= RECEIVE_BUDGET {
+                            return true;
+                        }
+                    }
+                    false
+                }) else {
                     break;
-                }
+                };
                 // A continuously ready channel must not starve input/paint.
-                // This yield exists only while parse results are arriving.
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(1))
-                    .await;
+                if out_of_time {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(1))
+                        .await;
+                }
             }
         });
         let list = ListState::new(0, ListAlignment::Top, px(300.));

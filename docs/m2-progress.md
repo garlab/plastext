@@ -20,7 +20,7 @@ cargo run -p plastext-app -- docs/fixtures/m2.md
 
 ## Work bounds
 
-The Markdown worker first parses a 64 KiB prefix, then replaces it with complete-document results in batches of at most 256 blocks through a bounded channel. The full parse resolves reference definitions. A short yield between publications prevents a continuously ready channel from occupying the UI thread. Only nearby blocks are laid out; long code fences split into short items and table rows are independent items. Text per block is at most 16 KiB, deep nesting is flattened after 128 levels, and oversized table rows fall back to bounded text blocks without dropping cell contents.
+The Markdown worker first parses a 64 KiB prefix, then replaces it with complete-document results in batches of at most 256 blocks through a bounded channel. The full parse resolves reference definitions. The channel holds up to 32 batches, so parsing continues while the UI thread paints. Each UI turn applies every ready batch, for up to 4 ms, then lets input and painting run before continuing. Rendered find searches 4,096 blocks per background job. Only nearby blocks are laid out; long code fences split into short items and table rows are independent items. Text per block is at most 16 KiB, deep nesting is flattened after 128 levels, and oversized table rows fall back to bounded text blocks without dropping cell contents.
 
 The current parser still materializes UTF-8 input and retains the parsed model. Preview is limited to the first 128 MiB; Source remains available for the entire file. These bounds do **not** establish the spec's total-memory target. Native scrolling measurements are recorded below; retained memory and stable anchoring still need validation.
 
@@ -90,6 +90,22 @@ The statistics from the accepted M1 baseline and the preceding 10,000-frame M2 r
 The attempted [10,000-frame comparison](benchmarks/m2-2026-10-24-front-matter-interrupted.summary.json) ended when its window closed after 4,168 frames. It correctly records `complete: false` and `passed: false`; its partial 5.03 ms draw p99 is not accepted as a completed result. The draw maximum was 746.34 ms; the cause of the interruption and that outlier has not been established.
 
 A separate [1,500-frame smoke run](benchmarks/m2-2026-10-24-front-matter-native.summary.json) completed, with first preview at 20.68 ms, full preview at 7,934.14 ms, draw/submit median 5.03 ms, p99 **8.44 ms**, and maximum 18.15 ms. Frame intervals were 8.33 ms median / 9.47 ms p99. The runner correctly reports `complete: true`, `passed: false` for the existing 8 ms budget miss. Both runs used the same keep-visible benchmark mode. The short run does not replace the original 10,000-frame baseline, certify the M2 exit test, or provide visual QA of expanded tables.
+
+### Batch delivery — 2026-10-25
+
+The UI used to apply one 256-block batch per wakeup, with a 1 ms timer between batches. In practice each wakeup took several milliseconds, so the 100 MB fixture's ~1,290 batches finished long after parsing did. The UI now applies every ready batch within a 4 ms budget per turn (see [Work bounds](#work-bounds)).
+
+Same fixture and machine, 1,500 frames, `--foreground --keep-visible`:
+
+| Run | Full preview | Draw/submit p99 | Frame interval p99 |
+|---|---:|---:|---:|
+| [Before](benchmarks/m2-2026-10-25-batching-before.summary.json) | 4,095.08 ms | 5.13 ms | 10.05 ms |
+| [After, run 1](benchmarks/m2-2026-10-25-batching-after-1.summary.json) | 1,449.91 ms | 5.20 ms | 10.25 ms |
+| [After, run 2](benchmarks/m2-2026-10-25-batching-after-2.summary.json) | 1,091.92 ms | 3.67 ms | 10.11 ms |
+
+The full preview now finishes close to the ~1.1–1.2 s core parse time, and scrolling did not get slower while batches arrived. The 2026-10-24 smoke run took 7,934 ms for the same step, so single runs vary widely. Rendered find uses larger background jobs for the same reason. Its timing on this fixture has not been measured natively.
+
+An earlier attempt at the baseline stalled after 273 frames with a 1.0 s frame: the display went to sleep three seconds into the run (`pmset -g log`), and the window stopped presenting frames. `plastext-bench read` now keeps the display awake with `caffeinate` until the app exits. Display sleep could account for earlier stalls and draw-time outliers; it does not explain runs that ended with `last window closed`.
 
 ## Math spike
 

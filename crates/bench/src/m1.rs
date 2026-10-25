@@ -329,6 +329,17 @@ pub fn read(
         .stdout(Stdio::null())
         .stderr(fs::File::create(&log)?)
         .spawn()?;
+    // A display that sleeps mid-run stops presenting frames, which stalls the
+    // run after a one-second frame. Keep it awake until the app exits.
+    let awake = cfg!(target_os = "macos")
+        .then(|| {
+            Command::new("caffeinate")
+                .args(["-d", "-i", "-w"])
+                .arg(child.id().to_string())
+                .spawn()
+                .ok()
+        })
+        .flatten();
     // A file without parser support must fail, not leave the app running
     // indefinitely. Allow for a slow display plus a minute of setup.
     let deadline = Instant::now() + Duration::from_secs(60 + frames as u64 / 20);
@@ -355,6 +366,9 @@ pub fn read(
         }
         thread::sleep(Duration::from_millis(20));
     };
+    if let Some(mut awake) = awake {
+        awake.wait().ok();
+    }
     let stderr = fs::read_to_string(&log)?;
     let markdown = plastext_markdown::is_markdown(file);
     let parsed = crate::native_log::NativeLog::parse(&stderr, markdown);

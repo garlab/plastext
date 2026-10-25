@@ -3,6 +3,9 @@ use plastext_editor::{TextInput, TextInputEvent};
 use plastext_markdown::{RenderedMatch, find_rendered};
 
 const LIMIT: usize = 10_000;
+/// Blocks per background search job. Each job ends with a pause for input
+/// and painting, so small jobs make a large document slow to search.
+const CHUNK: usize = 4096;
 actions!(markdown_find, [Find, Next, Previous, Close]);
 
 pub(super) fn init(cx: &mut App) {
@@ -84,7 +87,7 @@ impl MarkdownView {
                     if first >= this.document.blocks.len() || find.matches.len() == LIMIT {
                         return None;
                     }
-                    let end = (first + 256).min(this.document.blocks.len());
+                    let end = (first + CHUNK).min(this.document.blocks.len());
                     Some((
                         this.document.blocks[first..end].to_vec(),
                         LIMIT - find.matches.len(),
