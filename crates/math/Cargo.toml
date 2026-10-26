@@ -11,8 +11,13 @@ publish.workspace = true
 # MiTeX conversion laid out by a reused Typst engine, for measuring that route.
 typst-engine = ["dep:mitex", "dep:typst", "dep:typst-layout", "dep:typst-assets"]
 spike = ["typst-engine", "dep:typst-as-lib", "dep:typst-svg"]
+# Other pure-Rust engines, compared on the same KaTeX cases.
+katex-rs = ["dep:katex-rs"]
+latex-rust = ["dep:latex-rust"]
 
 [dependencies]
+katex-rs = { version = "0.3.0", optional = true }
+latex-rust = { version = "3.0.1", optional = true }
 mitex = { version = "0.2.4", optional = true }
 typst = { version = "0.15.1", optional = true }
 typst-layout = { version = "0.15.1", optional = true }
@@ -30,6 +35,14 @@ required-features = ["spike"]
 [[example]]
 name = "typst_cost"
 required-features = ["typst-engine"]
+
+[[example]]
+name = "engine_compare"
+required-features = ["katex-rs", "latex-rust"]
+
+# Built with at most one engine feature, to measure that engine's binary size.
+[[example]]
+name = "engine_size"
 
 [lints]
 workspace = true

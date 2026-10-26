@@ -1,0 +1,53 @@
+{
+  "schema": 2,
+  "artifact": "summary",
+  "scope": "Pure-Rust math engines on the pinned KaTeX screenshot cases (same preprocessing as math-corpus.py); parse/layout success only, not visual parity; release build, medians of 5 processes; Apple M2 Pro",
+  "katex_rs": {
+    "crate": "katex-rs 0.3.0",
+    "runs": 5,
+    "compiled": 125,
+    "cases": 128,
+    "setup_ms": 0.156,
+    "per_formula_ms": {
+      "p50": 0.06,
+      "p90": 0.188,
+      "max": 0.363
+    },
+    "all_compiled_ms": 10.477,
+    "output": "KaTeX HTML layout tree (DomSpan), no native drawing backend",
+    "failed_cases": [
+      "Mapsfrom",
+      "Reflectbox",
+      "UnsupportedCmds"
+    ],
+    "standalone_size_bytes": {
+      "stripped": 1233304,
+      "gzip9": 531556
+    },
+    "fonts_not_included": "KaTeX TTF fonts, about 514 kB"
+  },
+  "latex_rust": {
+    "crate": "latex-rust 3.0.1",
+    "runs": 5,
+    "compiled": 44,
+    "cases": 128,
+    "setup_ms": 0.032,
+    "per_formula_ms": {
+      "p50": 0.082,
+      "p90": 0.237,
+      "max": 0.609
+    },
+    "all_compiled_ms": 5.065,
+    "output": "positioned glyphs and rules (MathBox), STIX Two Math",
+    "failed_count": 84,
+    "standalone_size_bytes": {
+      "stripped": 1718440,
+      "gzip9": 1060371,
+      "includes_font": 838652
+    }
+  },
+  "baseline_example_bytes": {
+    "stripped": 369016,
+    "gzip9": 155836
+  }
+}

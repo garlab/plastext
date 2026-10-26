@@ -172,6 +172,32 @@ cargo build --release -p plastext-app --features math-spike
 PLASTEXT_MATH_PROBE=system target/release/plastext-app
 ```
 
+The spec's app bundle target is ≤ 25 MB (§6.1), and the stripped app is already 23.9 MB without math. Even without bundled fonts, this route would more than double the app.
+
+### Other pure-Rust engines — 2026-10-26
+
+Two pure-Rust engines that weren't among the spec's candidates were run on the same 128 cases with the same preprocessing ([summary](benchmarks/m2-2026-10-26-math-engines.summary.json); release build, medians of 5 processes):
+
+| | [katex-rs](https://github.com/katex-rs/katex-rs) 0.3.0 | MiTeX + Typst | [latex-rust](https://github.com/jscarr64/latex-rust) 3.0.1 |
+|---|---:|---:|---:|
+| Cases that parse and lay out | **125 / 128** | 86 / 128 | 44 / 128 |
+| Per formula: p50 / max | 0.06 / 0.36 ms | 0.13 / 1.84 ms | 0.08 / 0.61 ms |
+| Setup | 0.16 ms | 1.6–2.9 ms + 6 ms first formula | 0.03 ms |
+| Size added, stripped (gzip -9) | 1.23 MB (0.53 MB), plus ~0.51 MB of KaTeX fonts | 26.5–36.2 MB (10.7–17.1 MB) | 1.72 MB (1.06 MB), STIX font included |
+| Output | KaTeX's HTML layout tree | Typst frames | Positioned glyphs and rules |
+| License | MIT | Apache-2.0 | MIT OR Apache-2.0 |
+
+Sizes for katex-rs and latex-rust come from a minimal binary with and without the engine (`engine_size`); both have only small dependencies, so this should be close to what the app would add.
+
+katex-rs is a port of KaTeX, so it tracks the corpus closely. It fails only `\mapsfrom` and `\reflectbox`, which KaTeX added after the commit katex-rs tracks, and the deliberately invalid case. Its output is KaTeX's HTML span tree: vertical positions, spacing and stretchy SVG paths are already computed, but horizontal flow, font selection by class and sizing come from KaTeX's CSS and the browser. A native renderer needs a backend that applies those rules with KaTeX's font metrics and draws with KaTeX's fonts. That backend can be built on katex-rs's public tree without modifying katex-rs. Passing compilation is not visual parity; the backend would need the screenshot comparison.
+
+latex-rust already lays out to positioned glyphs, but parses about a third of the corpus. It lacks `\newcommand`, sizing commands, `\kern`, several environments and more. It is six weeks old (3.0.1 on 2026-10-15) and uses only STIX Two Math.
+
+```sh
+cargo run --release -p plastext-math --features katex-rs,latex-rust --example engine_compare
+cargo build --release -p plastext-math --example engine_size --features katex-rs
+```
+
 ## Remaining M2 work
 
 - Native math integration, document-scoped macros, delimiter coverage, formula caching/selection and KaTeX corpus validation.
