@@ -3848,6 +3848,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "katex-native"
+version = "0.1.0"
+dependencies = [
+ "katex-rs",
+ "resvg",
+]
+
+[[package]]
 name = "katex-rs"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5234,6 +5242,7 @@ dependencies = [
 name = "plastext-math"
 version = "0.1.0"
 dependencies = [
+ "katex-native",
  "katex-rs",
  "latex-rust",
  "mitex",
@@ -5320,6 +5329,7 @@ dependencies = [
  "plastext-buffer",
  "plastext-editor",
  "plastext-markdown",
+ "plastext-math",
  "plastext-project",
  "plastext-search",
  "plastext-settings",

@@ -198,6 +198,22 @@ cargo run --release -p plastext-math --features katex-rs,latex-rust --example en
 cargo build --release -p plastext-math --example engine_size --features katex-rs
 ```
 
+### Decision: katex-rs with katex-native — 2026-10-26
+
+katex-rs is the math engine. Its native backend, [katex-native](upstream.md), is developed as its own crate in a separate repository, to offer to katex-rs rather than keep inside plastext. It applies KaTeX's CSS (from KaTeX 0.18.5, which katex-rs 0.3 tracks) to katex-rs's HTML tree. Advance widths come from KaTeX's font files, as browsers measure them. The output is a display list of text runs, rectangles, filled paths and lines.
+
+Rendered at the screenshotter's scale and compared with KaTeX's own Chrome screenshots (ink within 2 px in both directions), 106 of the 120 comparable cases score ≥ 0.99, 109 ≥ 0.95 and 110 ≥ 0.90. Eight cases are not compared: three katex-rs can't parse, and five whose screenshots include text or styles around the math. Of the ten below 0.95:
+- Four depend on the page rather than the formula: automatic line breaking, `\includegraphics`, the `trust`-only HTML extensions, and CJK text in fallback fonts.
+- Four involve equation numbers or `\tag`, whose position depends on the container's width.
+- One is commutative diagrams.
+- One is `\\` line spacing outside environments.
+
+Layout, including parsing, takes 0.1 ms per formula at the median and under 1 ms at worst.
+
+KaTeX's font files all claim to be upright regular faces; only the bold ones set a heavier weight. A font system that trusts those flags draws `KaTeX_Main` Italic for Regular. katex-native therefore lists each face's real style for renderers to register it under, as KaTeX's `@font-face` rules do.
+
+Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branch. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails. The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
+
 ### Retained memory — 2026-10-28
 
 `plastext-bench m2` now keeps the parsed blocks, as the preview does, and reports resident memory. On the 100 MB fixture (330,080 blocks, 9.5 million inline spans), the parsed model holds 709 MB of live heap in 2.1 million allocations, after the parser now trims each block's buffers (the trimming saves about 225 MB of slack). The breakdown:
@@ -210,7 +226,7 @@ Resident memory, which includes allocator overhead and fragmentation, varied bet
 
 ## Remaining M2 work
 
-- Native math integration, document-scoped macros, delimiter coverage, formula caching/selection and KaTeX corpus validation.
+- Inline math, which needs room reserved inside wrapped text; equation numbers; document-scoped macros; formula selection and copy.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
 - Keep only a compact block index for large Markdown and parse visible blocks on demand (see Retained memory); certify 100 MB scrolling over 10,000 frames; run native 20M-row CSV scrolling tests; visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.

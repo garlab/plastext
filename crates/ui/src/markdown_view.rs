@@ -23,6 +23,7 @@ use std::{
 
 use crate::tab_view::format_size;
 mod find;
+mod math;
 mod metadata;
 mod profile;
 mod visibility;
@@ -72,6 +73,9 @@ enum Update {
     Error(String),
 }
 
+/// Body text size, in logical pixels.
+const BODY_SIZE: f32 = 16.;
+
 /// How long one turn of the UI thread may spend applying parse results
 /// before input and painting get to run.
 const RECEIVE_BUDGET: Duration = Duration::from_millis(4);
@@ -101,6 +105,7 @@ pub struct MarkdownView {
     images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
     image_order: VecDeque<String>,
     image_rows: HashMap<String, Vec<usize>>,
+    formulas: math::Formulas,
     code_highlights: HashMap<usize, Option<CodeHighlights>>,
     cancel: Arc<AtomicBool>,
     _parse: Task<()>,
@@ -239,6 +244,7 @@ impl MarkdownView {
             images: HashMap::new(),
             image_order: VecDeque::new(),
             image_rows: HashMap::new(),
+            formulas: math::Formulas::default(),
             code_highlights: HashMap::new(),
             cancel,
             _parse: parsing,
@@ -263,6 +269,7 @@ impl MarkdownView {
                     self.document.blocks.clear();
                     self.visible.reset(&[], &self.expanded);
                     self.image_rows.clear();
+                    self.formulas.clear_rows();
                     self.code_highlights.clear();
                     self.list.reset(0);
                 }
@@ -811,7 +818,7 @@ impl MarkdownView {
                 matches!(block.kind, BlockKind::FrontMatterRow { .. }),
                 |d| d.py_0(),
             )
-            .text_size(px(16.))
+            .text_size(px(BODY_SIZE))
             .line_height(relative(1.55))
             .text_color(theme.text);
         let content = match &block.kind {
@@ -926,11 +933,7 @@ impl MarkdownView {
             BlockKind::Image { destination, .. } => {
                 self.image(destination, &block.text, ix, theme, cx)
             }
-            BlockKind::Math => div()
-                .p_3()
-                .bg(theme.surface)
-                .child(self.rich_text(&block, 0..block.text.len(), ix, true, theme, cx))
-                .into_any_element(),
+            BlockKind::Math => self.display_math(&block, ix, theme, window, cx),
             _ => self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx),
         };
         base.child(

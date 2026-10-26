@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. Math rendering and large-image tiling are still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
+> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. Display math renders natively (KaTeX via katex-rs); inline math and large-image tiling are still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
 
 ## Building
 

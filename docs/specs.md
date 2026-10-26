@@ -410,7 +410,7 @@ See the [appendix](#appendix-ui-stack-alternatives) for the alternatives conside
 | Text buffer | in-house piece tree (sum tree) | Persistent and snapshot-able; see TXT-3/TXT-4 |
 | Syntax | `tree-sitter` + bundled grammars | highlight, injection, tags and fold queries |
 | Markdown | `pulldown-cmark` | Fast, with an offset iterator for source maps (MD-8) |
-| Math layout | **spike in M2** | Candidates: (a) `mitex` (TeX → Typst math) laid out by Typst's math engine; (b) MicroTeX (C++, pluggable graphics backend); (c) a purpose-built KaTeX-style layout engine on an OpenType MATH font. Decide on KaTeX test-corpus coverage, speed and binary size |
+| Math layout | `katex-rs` + `katex-native` | Decided in the M2 spike (2026-10-26): katex-rs ports KaTeX's parser and layout; katex-native applies KaTeX's CSS with its fonts for native drawing. Rejected: MiTeX + Typst (+26–36 MB), latex-rust (a third of the KaTeX corpus); MicroTeX (C++) was not evaluated. See [M2 progress](m2-progress.md) |
 | Fuzzy matching | `nucleo` | |
 | File walking and ignore rules | `ignore` | |
 | Content search | `grep-searcher`, `grep-regex` | ripgrep's engine |
@@ -512,7 +512,7 @@ Each milestone ends with a usable build and explicit exit criteria.
 ## 11. Open questions
 
 1. **Git writes.** Should the Changes view gain *stage hunk*, *unstage* and *discard hunk*? They'd help curate agent output, but they break the read-only, lock-free guarantee (GIT-14). Proposal: post-v1, opt-in, using the same locking semantics as git.
-2. **Math engine.** To be decided by the M2 spike (§7.2).
+2. **Math engine (decided).** katex-rs for parsing and layout, plus katex-native for native drawing (§7.2).
 3. **Inline Markdown editing.** Typora-style editing in place, or keep source/split plus double-click-to-source? Revisit after M3 based on daily use.
 4. **Mermaid and diagrams.** Write a native renderer, or keep them permanently out of scope?
 5. **Accessibility.** VoiceOver quality under GPUI must be evaluated in M0. If it's inadequate, that's a risk to the framework choice.
