@@ -16,7 +16,7 @@ impl MarkdownView {
                     .p_3()
                     .rounded_md()
                     .bg(theme.surface)
-                    .text_sm()
+                    .text_size(px(14. * self.zoom))
                     .child(
                         div()
                             .id(("md-metadata", ix))
@@ -49,7 +49,7 @@ impl MarkdownView {
                     .bg(theme.surface)
                     .border_b_1()
                     .border_color(theme.border)
-                    .text_sm()
+                    .text_size(px(14. * self.zoom))
                     .child(div().w(relative(0.3)).flex_none().min_w_0().p_2().child(
                         self.rich_text(block, key.clone(), ix.wrapping_mul(4096), true, theme, cx),
                     ))
@@ -74,7 +74,7 @@ impl MarkdownView {
             BlockKind::FrontMatterSource { .. } => div()
                 .p_3()
                 .bg(theme.surface)
-                .text_sm()
+                .text_size(px(14. * self.zoom))
                 .child(self.rich_text(block, 0..block.text.len(), ix, true, theme, cx))
                 .into_any_element(),
             _ => unreachable!("metadata renderer requires a metadata block"),

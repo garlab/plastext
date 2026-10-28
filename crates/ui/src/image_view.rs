@@ -1,6 +1,6 @@
 use gpui::{
     App, Context, FocusHandle, Focusable, RenderImage, SharedString, Window, div, img, prelude::*,
-    px,
+    px, relative,
 };
 use plastext_assets::Preview;
 use plastext_editor::Theme;
@@ -23,6 +23,7 @@ pub struct ImageView {
     image: Result<(Arc<RenderImage>, u32, u32), String>,
     focus: FocusHandle,
     zoom: Option<f32>,
+    document_zoom: f32,
 }
 impl ImageView {
     pub fn new(path: PathBuf, preview: Result<Preview, String>, cx: &mut Context<Self>) -> Self {
@@ -31,6 +32,7 @@ impl ImageView {
             image: preview.map(render_image),
             focus: cx.focus_handle(),
             zoom: None,
+            document_zoom: 1.,
         }
     }
     pub fn summary(&self) -> String {
@@ -49,15 +51,22 @@ impl ImageView {
     pub fn notice(&self) -> Option<SharedString> {
         self.image.as_ref().err().cloned().map(Into::into)
     }
+    pub fn set_zoom(&mut self, factor: f32, cx: &mut Context<Self>) {
+        self.document_zoom = factor;
+        cx.notify();
+    }
+
     pub fn duplicate(&self, cx: &mut Context<Self>) -> gpui::Entity<Self> {
         let image = self.image.clone();
         let path = self.path.clone();
         let zoom = self.zoom;
+        let document_zoom = self.document_zoom;
         cx.new(|cx| Self {
             path,
             image,
             focus: cx.focus_handle(),
             zoom,
+            document_zoom,
         })
     }
 }
@@ -71,7 +80,7 @@ impl Render for ImageView {
         let theme = Theme::get(window, cx);
         let image = match &self.image {
             Ok((image, w, h)) if self.zoom.is_some() => {
-                let zoom = self.zoom.unwrap();
+                let zoom = self.zoom.unwrap() * self.document_zoom;
                 div()
                     .w(px(*w as f32 * zoom))
                     .h(px(*h as f32 * zoom))
@@ -80,7 +89,8 @@ impl Render for ImageView {
                     .into_any_element()
             }
             Ok((image, _, _)) => div()
-                .size_full()
+                .w(relative(self.document_zoom))
+                .h(relative(self.document_zoom))
                 .child(
                     img(image.clone())
                         .size_full()
@@ -155,8 +165,7 @@ impl Render for ImageView {
                     .id("image-pan")
                     .flex_1()
                     .min_h_0()
-                    .when(self.zoom.is_some(), |d| d.overflow_scroll())
-                    .when(self.zoom.is_none(), |d| d.overflow_hidden())
+                    .overflow_scroll()
                     .p_6()
                     .child(image),
             )

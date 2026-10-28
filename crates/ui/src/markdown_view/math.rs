@@ -26,6 +26,7 @@ pub(super) struct FormulaKey {
     color: [u8; 4],
     /// Device pixels per logical pixel, in thousandths.
     scale: u32,
+    zoom: u32,
 }
 
 /// A rendered piece of a formula, in logical pixels.
@@ -58,6 +59,11 @@ pub(super) struct Formulas {
 }
 
 impl Formulas {
+    pub(super) fn zoom_changed(&mut self) {
+        self.inline = None;
+        self.rows.clear();
+    }
+
     /// Forgets what depends on the document's blocks, when they change.
     pub(super) fn clear_rows(&mut self) {
         self.rows.clear();
@@ -125,7 +131,7 @@ impl MarkdownView {
             let font = text_run(1, false, false, false, theme.text, self).font;
             let text_system = window.text_system();
             let font_id = text_system.resolve_font(&font);
-            let size = px(BODY_SIZE);
+            let size = px(BODY_SIZE * self.zoom);
             self.formulas.inline =
                 text_system
                     .advance(font_id, size, SLOT_CHAR)
@@ -135,7 +141,7 @@ impl MarkdownView {
                         ascent: f32::from(text_system.ascent(font_id, size)),
                         // Font metrics give the descent as negative.
                         descent: f32::from(text_system.descent(font_id, size)).abs(),
-                        line_height: BODY_SIZE * LINE_HEIGHT,
+                        line_height: BODY_SIZE * self.zoom * LINE_HEIGHT,
                         scale,
                     });
         }
@@ -149,6 +155,7 @@ impl MarkdownView {
                 first_number: 0,
                 color: channels(inline_color(&span.style, theme)),
                 scale: scale_key(scale),
+                zoom: scale_key(self.zoom),
             };
             self.request_formula(&key, ix, scale, cx);
         }
@@ -164,6 +171,7 @@ impl MarkdownView {
             first_number: 0,
             color: channels(color),
             scale: scale_key(metrics.scale),
+            zoom: scale_key(self.zoom),
         };
         let formula = &self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?.body;
         let count = ((formula.width / metrics.slot_char).round() as usize).max(1);
@@ -243,6 +251,7 @@ impl MarkdownView {
             first_number,
             color: channels(theme.text),
             scale: scale_key(scale),
+            zoom: scale_key(self.zoom),
         });
         if let Some(key) = &key {
             self.request_formula(key, ix, scale, cx);
@@ -297,8 +306,9 @@ impl MarkdownView {
         self.formulas.order.push_back(key.clone());
         let rendering = cx.background_executor().spawn({
             let key = key.clone();
+            let body_size = BODY_SIZE * self.zoom;
             async move {
-                let px_per_em = BODY_SIZE * plastext_math::SCALE * scale;
+                let px_per_em = body_size * plastext_math::SCALE * scale;
                 let rendered = plastext_math::render(
                     &key.tex,
                     key.display,

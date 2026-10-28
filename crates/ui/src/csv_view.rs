@@ -23,6 +23,7 @@ pub struct CsvView {
     index: Arc<CsvIndex>,
     delimiter: u8,
     style: TextStyle,
+    zoom: f32,
     pages: HashMap<u64, Vec<CsvRow>>,
     order: VecDeque<u64>,
     loading: HashSet<u64>,
@@ -87,6 +88,7 @@ impl CsvView {
             index,
             delimiter,
             style,
+            zoom: 1.,
             pages: HashMap::new(),
             order: VecDeque::new(),
             loading: HashSet::new(),
@@ -180,7 +182,8 @@ impl CsvView {
             None => vec!["Loading…".into()],
         };
         div()
-            .h(px(HEIGHT))
+            .h(px(HEIGHT * self.zoom))
+            .text_size(px(14. * self.zoom))
             .flex()
             .items_center()
             .border_b_1()
@@ -190,7 +193,7 @@ impl CsvView {
             })
             .child(
                 div()
-                    .w(px(56.))
+                    .w(px(56. * self.zoom))
                     .flex_none()
                     .pl_2()
                     .text_color(theme.text_muted)
@@ -202,7 +205,7 @@ impl CsvView {
             )
             .children(cells.into_iter().enumerate().map(|(i, cell)| {
                 div()
-                    .w(px(self.widths.get(i).copied().unwrap_or(160.)))
+                    .w(px(self.widths.get(i).copied().unwrap_or(160.) * self.zoom))
                     .flex_none()
                     .px_2()
                     .overflow_hidden()
@@ -275,6 +278,19 @@ impl CsvView {
         }));
         cx.notify();
     }
+    pub fn set_zoom(&mut self, factor: f32, font_size: gpui::Pixels, cx: &mut Context<Self>) {
+        self.style.font_size = font_size;
+        if let Some(raw) = &self.raw {
+            raw.update(cx, |view, cx| view.set_font_size(font_size, cx));
+        }
+        if self.zoom != factor {
+            self.zoom = factor;
+            self.scroll
+                .scroll_to_item(self.first_row as usize, ScrollStrategy::Top);
+            cx.notify();
+        }
+    }
+
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
         let path = self.path.clone();
         let source = self.source.clone();
@@ -350,7 +366,7 @@ impl Render for CsvView {
         self.request(0, cx);
         let count = self.index.progress().rows.saturating_sub(1) as usize;
         let header = self.row(0, true, theme, cx);
-        let width = self.widths.iter().sum::<f32>() + 56.;
+        let width = (self.widths.iter().sum::<f32>() + 56.).max(640.) * self.zoom;
         let body = if self.show_raw {
             self.raw.as_ref().unwrap().clone().into_any_element()
         } else {
@@ -361,7 +377,7 @@ impl Render for CsvView {
                 .child(
                     div()
                         .h_full()
-                        .w(px(width.max(640.)))
+                        .w(px(width))
                         .flex()
                         .flex_col()
                         .child(header)

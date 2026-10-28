@@ -25,6 +25,7 @@ use crate::{
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
     tab_view::TabView,
+    zoom::Zoom,
 };
 
 actions!(
@@ -41,7 +42,10 @@ actions!(
         GoForward,
         GoToSymbol,
         OpenCommandPalette,
-        ToggleOutline
+        ToggleOutline,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom
     ]
 );
 
@@ -78,6 +82,10 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-w", CloseTab, context),
         KeyBinding::new("cmd-\\", SplitRight, context),
         KeyBinding::new("cmd-alt-\\", SplitDown, context),
+        KeyBinding::new("cmd-+", ZoomIn, context),
+        KeyBinding::new("cmd-=", ZoomIn, context),
+        KeyBinding::new("cmd--", ZoomOut, context),
+        KeyBinding::new("cmd-0", ResetZoom, context),
     ]);
 }
 
@@ -100,6 +108,7 @@ pub struct Workspace {
     outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
+    zoom: Zoom,
     markdown_settings: Arc<settings::Markdown>,
     focus_handle: FocusHandle,
     /// Files in the order their tabs were last activated, most recent last.
@@ -218,6 +227,7 @@ impl Workspace {
                 max_parse_size: settings.limits.syntax_max_file_size.0,
             },
             markdown_settings: Arc::new(settings.markdown.clone()),
+            zoom: Zoom::default(),
             focus_handle: cx.focus_handle(),
             recent: Vec::new(),
             back: Vec::new(),
@@ -371,6 +381,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        view.set_zoom(self.zoom.factor(), self.text_style.font_size, cx);
         let title = path
             .file_name()
             .map_or_else(
@@ -1027,6 +1038,20 @@ impl Workspace {
             }))
     }
 
+    fn set_zoom(&mut self, zoom: Zoom, cx: &mut Context<Self>) {
+        if self.zoom == zoom {
+            return;
+        }
+        self.zoom = zoom;
+        for pane in self.panes.values() {
+            for tab in &pane.tabs {
+                tab.view
+                    .set_zoom(zoom.factor(), self.text_style.font_size, cx);
+            }
+        }
+        cx.notify();
+    }
+
     fn render_status_bar(&self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let status = self.panes[&self.active_pane]
             .active_tab()
@@ -1059,6 +1084,9 @@ impl Workspace {
             .children(notice)
             .children(view_message)
             .child(div().flex_1())
+            .when(self.zoom != Zoom::default(), |d| {
+                d.child(format!("{}%", self.zoom.percent()))
+            })
             .children(status.map(|status| status.summary()))
     }
 }
@@ -1144,6 +1172,15 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::go_to_symbol))
             .on_action(cx.listener(Self::open_command_palette))
             .on_action(cx.listener(Self::toggle_outline))
+            .on_action(cx.listener(|this, _: &ZoomIn, _, cx| {
+                this.set_zoom(this.zoom.step(1), cx);
+            }))
+            .on_action(cx.listener(|this, _: &ZoomOut, _, cx| {
+                this.set_zoom(this.zoom.step(-1), cx);
+            }))
+            .on_action(cx.listener(|this, _: &ResetZoom, _, cx| {
+                this.set_zoom(Zoom::default(), cx);
+            }))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|this, _, window, cx| this.go_back(&GoBack, window, cx)),

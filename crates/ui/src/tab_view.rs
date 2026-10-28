@@ -27,6 +27,19 @@ pub(crate) enum TabStatus {
 }
 
 impl TabView {
+    pub fn set_zoom(&self, factor: f32, base_font_size: gpui::Pixels, cx: &mut App) {
+        let font_size = base_font_size * factor;
+        match self {
+            Self::Text(view) => view.update(cx, |view, cx| view.set_font_size(font_size, cx)),
+            Self::Hex(view) => view.update(cx, |view, cx| view.set_font_size(font_size, cx)),
+            Self::Markdown(view) => {
+                view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx))
+            }
+            Self::Csv(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
+            Self::Image(view) => view.update(cx, |view, cx| view.set_zoom(factor, cx)),
+        }
+    }
+
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
             Self::Text(view) => view.focus_handle(cx),

@@ -78,6 +78,7 @@ pub struct MarkdownView {
     text_style: TextStyle,
     settings: Arc<plastext_settings::Markdown>,
     prose_width: Option<gpui::Pixels>,
+    zoom: f32,
     document: Arc<DocumentIndex>,
     pages: PageCache,
     pending_pages: HashSet<usize>,
@@ -193,6 +194,7 @@ impl MarkdownView {
             text_style,
             settings,
             prose_width: None,
+            zoom: 1.,
             document: Arc::default(),
             pages: PageCache::default(),
             pending_pages: HashSet::new(),
@@ -367,6 +369,24 @@ impl MarkdownView {
     pub fn notice(&self) -> Option<SharedString> {
         self.notice.clone()
     }
+    pub fn set_zoom(&mut self, factor: f32, font_size: gpui::Pixels, cx: &mut Context<Self>) {
+        self.text_style.font_size = font_size;
+        if let Some(source) = &self.source_view {
+            source.update(cx, |view, cx| view.set_font_size(font_size, cx));
+        }
+        if self.zoom == factor {
+            return;
+        }
+        let mut anchor = self.list.logical_scroll_top();
+        anchor.offset_in_item *= factor / self.zoom;
+        self.zoom = factor;
+        self.prose_width = None;
+        self.formulas.zoom_changed();
+        self.list.reset(self.visible.len());
+        self.list.scroll_to(anchor);
+        cx.notify();
+    }
+
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
         let path = self.path.clone();
         let source = self.source.clone();
@@ -669,7 +689,7 @@ impl MarkdownView {
                 let dimensions = image.size(0);
                 let width = dimensions.width.0 as f32;
                 let height = dimensions.height.0 as f32;
-                let scale = (720. / width).min(1.);
+                let scale = (720. / width).min(1.) * self.zoom;
                 gpui::img(image.clone())
                     .w(px(width * scale))
                     .h(px(height * scale))
@@ -933,7 +953,7 @@ impl MarkdownView {
                 matches!(block.kind, BlockKind::FrontMatterRow { .. }),
                 |d| d.py_0(),
             )
-            .text_size(px(BODY_SIZE))
+            .text_size(px(BODY_SIZE * self.zoom))
             .line_height(relative(LINE_HEIGHT))
             .text_color(theme.text);
         let content = match &block.kind {
@@ -952,18 +972,19 @@ impl MarkdownView {
                     .mt_3()
                     .pb_2()
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
-                    .text_size(px(match level {
-                        1 => 30.,
-                        2 => 24.,
-                        3 => 20.,
-                        _ => 17.,
-                    }))
+                    .text_size(px(self.zoom
+                        * match level {
+                            1 => 30.,
+                            2 => 24.,
+                            3 => 20.,
+                            _ => 17.,
+                        }))
                     .font_weight(FontWeight::BOLD)
                     .child(self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx))
                     .child(
                         div()
                             .id(("md-anchor", ix))
-                            .text_sm()
+                            .text_size(px(14. * self.zoom))
                             .text_color(theme.text_muted)
                             .cursor_pointer()
                             .child("#")
@@ -981,14 +1002,14 @@ impl MarkdownView {
                     .p_3()
                     .rounded_md()
                     .bg(theme.surface)
-                    .text_size(px(13.))
+                    .text_size(px(13. * self.zoom))
                     .when(*first, |d| {
                         d.child(
                             div()
                                 .flex()
                                 .justify_between()
                                 .mb_2()
-                                .text_xs()
+                                .text_size(px(12. * self.zoom))
                                 .text_color(theme.text_muted)
                                 .child(language.clone())
                                 .child(
@@ -1068,7 +1089,7 @@ impl MarkdownView {
                         })
                         .children(block.quote.as_ref().filter(|s| !s.is_empty()).map(|q| {
                             div()
-                                .text_sm()
+                                .text_size(px(14. * self.zoom))
                                 .font_weight(FontWeight::BOLD)
                                 .text_color(theme.syntax(Highlight::Link))
                                 .child(q.clone())
@@ -1154,7 +1175,7 @@ impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.prose_width.is_none() {
             let width = match self.settings.max_width {
-                plastext_settings::ProseWidth::Pixels(width) => px(width),
+                plastext_settings::ProseWidth::Pixels(width) => px(width * self.zoom),
                 plastext_settings::ProseWidth::Chars(count) => {
                     let family = if self.settings.prose_font == "system" {
                         ".SystemUIFont"
@@ -1163,7 +1184,10 @@ impl Render for MarkdownView {
                     };
                     let system = window.text_system();
                     let id = system.resolve_font(&font(family.to_owned()));
-                    system.advance(id, px(16.), '0').map_or(px(8.), |s| s.width) * count
+                    system
+                        .advance(id, px(BODY_SIZE * self.zoom), '0')
+                        .map_or(px(8. * self.zoom), |s| s.width)
+                        * count
                 }
             };
             self.prose_width = Some(width + px(48.));

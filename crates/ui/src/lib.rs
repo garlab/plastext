@@ -10,5 +10,6 @@ mod quick_open;
 mod search_panel;
 mod tab_view;
 mod workspace;
+mod zoom;
 
 pub use workspace::{Workspace, init};

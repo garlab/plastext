@@ -482,6 +482,15 @@ impl TextView {
         });
     }
 
+    /// Resizes text while keeping the same row and horizontal position visible.
+    pub fn set_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        let ratio = size / self.style.font_size;
+        self.top_offset *= ratio;
+        self.scroll_x *= ratio;
+        self.style.font_size = size;
+        cx.notify();
+    }
+
     /// Another view of the same file at the same position, as for a split.
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
         let source = self.source.clone();

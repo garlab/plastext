@@ -43,6 +43,7 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘\` / `⌘⌥\` | Split right / down |
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
+| `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
 ## Benchmarks
 

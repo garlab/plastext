@@ -94,6 +94,13 @@ impl HexView {
         }
     }
 
+    /// Resizes the dump while keeping the same row visible.
+    pub fn set_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        self.top_offset *= size / self.style.font_size;
+        self.style.font_size = size;
+        cx.notify();
+    }
+
     /// Another view of the same file at the same position, as for a split.
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
         let source = self.source.clone();
