@@ -214,38 +214,8 @@ impl MarkdownView {
     /// Works out where each display formula's equation numbers start, so
     /// they count up through the document as on a web page.
     pub(super) fn number_equations(&mut self, cx: &mut Context<Self>) {
-        let numbered: Vec<(usize, Arc<Block>)> = self
-            .document
-            .blocks
-            .iter()
-            .enumerate()
-            .filter(|(_, block)| {
-                matches!(block.kind, BlockKind::Math) && plastext_math::may_number(&block.text)
-            })
-            .map(|(ix, block)| (ix, block.clone()))
-            .collect();
-        if numbered.is_empty() {
-            self.formulas.numbering = Some(Arc::default());
-            return;
-        }
-        let counting = cx.background_executor().spawn(async move {
-            let mut next = 1;
-            let mut starts = HashMap::new();
-            for (ix, block) in numbered {
-                starts.insert(ix, next);
-                next += plastext_math::equation_numbers(&block.text);
-            }
-            starts
-        });
-        cx.spawn(async move |this, cx| {
-            let starts = counting.await;
-            this.update(cx, |this, cx| {
-                this.formulas.numbering = Some(Arc::new(starts));
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        self.formulas.numbering = Some(Arc::new(self.document.equation_starts.clone()));
+        cx.notify();
     }
 
     /// A display formula, or its TeX while it renders or when it can't.

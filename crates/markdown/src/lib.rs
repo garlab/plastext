@@ -1,4 +1,8 @@
 //! Native Markdown model. Parsing and source mapping never depend on GPUI.
+mod cache;
+mod index;
+#[cfg(test)]
+mod index_tests;
 mod links;
 mod metadata;
 mod parser;
@@ -6,6 +10,10 @@ mod search;
 
 use std::{ops::Range, path::Path, sync::Arc};
 
+pub use cache::{PARSED_CACHE_BYTES, PageCache, parsed_bytes};
+pub use index::{
+    BlockEntry, BlockType, DocumentIndex, INDEX_BUDGET, PAGE_BYTES, PARSE_WINDOW_BYTES, Page,
+};
 pub use links::{LinkTarget, resolve_link};
 pub use metadata::MetadataFormat;
 pub use parser::{ParseSummary, parse, parse_stream};

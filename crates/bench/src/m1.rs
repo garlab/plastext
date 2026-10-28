@@ -347,6 +347,9 @@ pub fn read(
     let mut stalled = false;
     let mut progress = (0, Instant::now());
     let mut last_probe = Instant::now();
+    let markdown = plastext_markdown::is_markdown(file);
+    let mut last_memory = Instant::now();
+    let mut resident = Vec::new();
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -357,6 +360,12 @@ pub fn read(
                 progress = (bytes, Instant::now());
             }
             last_probe = Instant::now();
+        }
+        if markdown && last_memory.elapsed() >= Duration::from_millis(500) {
+            if let Ok(mib) = crate::m2::rss_of(child.id()) {
+                resident.push(mib);
+            }
+            last_memory = Instant::now();
         }
         if Instant::now() >= deadline || progress.1.elapsed() >= Duration::from_secs(30) {
             timed_out = true;
@@ -370,7 +379,6 @@ pub fn read(
         awake.wait().ok();
     }
     let stderr = fs::read_to_string(&log)?;
-    let markdown = plastext_markdown::is_markdown(file);
     let parsed = crate::native_log::NativeLog::parse(&stderr, markdown);
     let complete = parsed.complete(status.success(), timed_out, frames);
     let mut report = Vec::new();
@@ -378,6 +386,7 @@ pub fn read(
     for &(name, value, budget) in &parsed.paints {
         passed &= metric(&mut report, name, &mut [value], budget);
     }
+    let cache_summary = parsed.cache_summary();
     let mut times = parsed.frames;
     if !parsed.intervals.is_empty() {
         metric(
@@ -403,6 +412,9 @@ pub fn read(
         "keep_visible": keep_visible, "passed": passed, "log": log,
         "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
         "metrics": report,
+        "markdown_cache": cache_summary,
+        "sampled_rss_mib": {"interval_ms":500, "max":resident.iter().copied().reduce(f64::max),
+            "last":resident.last(), "samples":resident},
     });
     local.save(&result, output)?;
     if !complete {

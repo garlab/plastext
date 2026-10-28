@@ -1,6 +1,7 @@
 //! Keep collapsed content out of GPUI's list entirely. Even a large metadata
 //! fallback costs one header to lay out until it is expanded.
 use super::*;
+use plastext_markdown::BlockEntry;
 
 #[derive(Default)]
 pub(super) struct VisibleBlocks {
@@ -15,17 +16,16 @@ struct VisibleSpan {
 }
 
 impl VisibleBlocks {
-    pub fn reset(&mut self, blocks: &[Arc<Block>], expanded: &HashSet<usize>) {
+    pub fn reset(&mut self, blocks: &[BlockEntry], expanded: &HashSet<usize>) {
         self.spans.clear();
         self.len = 0;
         self.scanned = 0;
         self.extend(blocks, expanded);
     }
 
-    pub fn extend(&mut self, blocks: &[Arc<Block>], expanded: &HashSet<usize>) {
+    pub fn extend(&mut self, blocks: &[BlockEntry], expanded: &HashSet<usize>) {
         for (ix, block) in blocks.iter().enumerate().skip(self.scanned) {
             if block
-                .kind
                 .metadata_section()
                 .is_none_or(|section| expanded.contains(&section))
             {
@@ -87,7 +87,8 @@ mod tests {
 
     #[test]
     fn collapse_expand_append_and_navigation_keep_document_indices() {
-        let doc = parse("---\na: one\nb: two\n---\n# Body\n\nText");
+        let parsed = parse("---\na: one\nb: two\n---\n# Body\n\nText");
+        let doc = DocumentIndex::initial(&parsed, 0);
         let mut visible = VisibleBlocks::default();
         let mut expanded = HashSet::new();
         visible.extend(&doc.blocks[..2], &expanded);
@@ -109,10 +110,11 @@ mod tests {
 
     #[test]
     fn huge_fallback_is_one_visible_item_when_collapsed() {
-        let doc = parse(&format!(
+        let parsed = parse(&format!(
             "---\nvalue: {}\n---\n# End\n",
             "x".repeat(100_000)
         ));
+        let doc = DocumentIndex::initial(&parsed, 0);
         let mut visible = VisibleBlocks::default();
         visible.reset(&doc.blocks, &HashSet::new());
         assert_eq!(visible.len(), 2);
@@ -135,6 +137,14 @@ mod tests {
                 ))
             })
             .collect();
+        let blocks = DocumentIndex::initial(
+            &Document {
+                blocks,
+                ..Document::default()
+            },
+            0,
+        )
+        .blocks;
         for expanded in [
             HashSet::new(),
             HashSet::from([0]),
@@ -145,8 +155,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| {
-                    b.kind
-                        .metadata_section()
+                    b.metadata_section()
                         .is_none_or(|section| expanded.contains(&section))
                 })
                 .map(|(ix, _)| ix)

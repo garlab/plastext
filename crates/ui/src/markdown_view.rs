@@ -7,18 +7,16 @@ use gpui::{
 use plastext_buffer::{ByteSource as _, FileSource, LineIndex};
 use plastext_editor::{TextStyle, TextView, Theme};
 use plastext_markdown::{
-    Block, BlockKind, Document, LinkTarget, ParseSummary, parse, parse_stream, resolve_link,
+    Block, BlockKind, Document, DocumentIndex, LinkTarget, PageCache, parse, resolve_link,
 };
 use plastext_syntax::{Highlight, Symbol};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    ops::ControlFlow,
     path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant},
 };
 
 use crate::tab_view::format_size;
@@ -64,22 +62,14 @@ pub enum MarkdownEvent {
 impl EventEmitter<MarkdownEvent> for MarkdownView {}
 
 enum Update {
-    Initial(Document),
-    Batch {
-        first: bool,
-        blocks: Vec<Arc<Block>>,
-    },
-    Finished(ParseSummary, bool),
+    Initial(Document, usize),
+    Finished(Arc<DocumentIndex>, Arc<Vec<Symbol>>, Vec<Arc<Block>>),
     Error(String),
 }
 
 /// Body text size, in logical pixels, and line height in multiples of it.
 const BODY_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 1.55;
-
-/// How long one turn of the UI thread may spend applying parse results
-/// before input and painting get to run.
-const RECEIVE_BUDGET: Duration = Duration::from_millis(4);
 
 pub struct MarkdownView {
     path: PathBuf,
@@ -88,7 +78,10 @@ pub struct MarkdownView {
     text_style: TextStyle,
     settings: Arc<plastext_settings::Markdown>,
     prose_width: Option<gpui::Pixels>,
-    document: Document,
+    document: Arc<DocumentIndex>,
+    pages: PageCache,
+    pending_pages: HashSet<usize>,
+    failed_pages: HashSet<usize>,
     symbols: Arc<Vec<Symbol>>,
     list: ListState,
     visible: visibility::VisibleBlocks,
@@ -123,68 +116,56 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
-        // Room for a few frames' worth of batches, so the parser keeps going
-        // while the UI thread is busy painting.
-        let (send, receive) = async_channel::bounded(32);
+        let (send, receive) = async_channel::bounded(2);
         cx.background_executor()
             .spawn({
                 let source = source.clone();
                 let cancel = cancel.clone();
                 async move {
                     let result = (|| -> std::io::Result<()> {
-                        // Show the first screen before the parser's full-document
-                        // reference-definition pass. Full batches replace it later.
                         let head = source.head(64 * 1024)?;
                         let initial = parse(&String::from_utf8_lossy(&head));
-                        if send.send_blocking(Update::Initial(initial)).is_err() {
+                        if send
+                            .send_blocking(Update::Initial(initial, head.len()))
+                            .is_err()
+                        {
                             return Ok(());
                         }
-                        if cancel.load(Ordering::Relaxed) {
-                            return Ok(());
-                        }
-                        // Keep even accidentally huge .md files bounded; Source
-                        // remains available through the chunked text reader.
-                        const PREVIEW_LIMIT: u64 = 128 * 1024 * 1024;
-                        let len = source.len().min(PREVIEW_LIMIT);
-                        let mut bytes = Vec::with_capacity(len as usize);
-                        source.scan(0..len, |chunk| {
-                            if cancel.load(Ordering::Relaxed) {
-                                return ControlFlow::Break(());
-                            }
-                            bytes.extend_from_slice(chunk);
-                            ControlFlow::Continue(())
-                        })?;
-                        if cancel.load(Ordering::Relaxed) {
-                            return Ok(());
-                        }
-                        let utf8 = match std::str::from_utf8(&bytes) {
-                            Err(error) if source.len() > len && error.error_len().is_none() => {
-                                // A preview boundary can cut a valid multibyte scalar.
-                                std::str::from_utf8(&bytes[..error.valid_up_to()])
-                            }
-                            result => result,
-                        };
-                        let text = utf8.map_err(|_| {
-                            std::io::Error::other(
-                                "Markdown preview requires UTF-8; use Source view for this file.",
-                            )
-                        })?;
-                        let mut first = true;
-                        let summary = parse_stream(
-                            text,
+                        let document = Arc::new(DocumentIndex::build(
+                            &source,
                             || cancel.load(Ordering::Relaxed),
-                            |blocks| {
-                                let result =
-                                    send.send_blocking(Update::Batch { first, blocks }).is_ok();
-                                first = false;
-                                result
+                            |tex| {
+                                if plastext_math::may_number(tex) {
+                                    plastext_math::equation_numbers(tex)
+                                } else {
+                                    0
+                                }
                             },
+                        )?);
+                        let symbols = Arc::new(
+                            document
+                                .headings
+                                .iter()
+                                .map(|h| Symbol {
+                                    name: h.text.clone(),
+                                    kind: "heading".into(),
+                                    range: h.source.clone(),
+                                    depth: h.level.saturating_sub(1) as usize,
+                                })
+                                .collect(),
                         );
-                        send.send_blocking(Update::Finished(summary, source.len() > PREVIEW_LIMIT))
+                        let first = if document.pages.is_empty() {
+                            Vec::new()
+                        } else {
+                            document.parse_page(&source, 0, || cancel.load(Ordering::Relaxed))?
+                        };
+                        send.send_blocking(Update::Finished(document, symbols, first))
                             .ok();
                         Ok(())
                     })();
-                    if let Err(error) = result {
+                    if let Err(error) = result
+                        && error.kind() != std::io::ErrorKind::Interrupted
+                    {
                         send.send_blocking(Update::Error(error.to_string())).ok();
                     }
                 }
@@ -192,26 +173,11 @@ impl MarkdownView {
             .detach();
         let parsing = cx.spawn(async move |this, cx| {
             while let Ok(update) = receive.recv().await {
-                // Apply everything already parsed rather than one batch per
-                // wakeup, which took several times longer than parsing.
-                let started = Instant::now();
-                let Ok(out_of_time) = this.update(cx, |this, cx| {
-                    this.receive(update, cx);
-                    while let Ok(update) = receive.try_recv() {
-                        this.receive(update, cx);
-                        if started.elapsed() >= RECEIVE_BUDGET {
-                            return true;
-                        }
-                    }
-                    false
-                }) else {
+                if this
+                    .update(cx, |this, cx| this.receive(update, cx))
+                    .is_err()
+                {
                     break;
-                };
-                // A continuously ready channel must not starve input/paint.
-                if out_of_time {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(1))
-                        .await;
                 }
             }
         });
@@ -227,7 +193,10 @@ impl MarkdownView {
             text_style,
             settings,
             prose_width: None,
-            document: Document::default(),
+            document: Arc::default(),
+            pages: PageCache::default(),
+            pending_pages: HashSet::new(),
+            failed_pages: HashSet::new(),
             symbols: Arc::default(),
             list,
             visible: visibility::VisibleBlocks::default(),
@@ -255,44 +224,39 @@ impl MarkdownView {
 
     fn receive(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
-            Update::Initial(document) => {
-                self.document = document;
+            Update::Initial(document, bytes) => {
+                self.document = Arc::new(DocumentIndex::initial(&document, bytes));
+                self.pages.insert(0, document.blocks);
                 self.visible.reset(&self.document.blocks, &self.expanded);
                 self.list.reset(self.visible.len());
                 self.update_symbols();
             }
-            Update::Batch { first, blocks } => {
-                if first {
-                    if let Some(find) = &mut self.find {
-                        find.reset();
-                    }
-                    self.pending_offset = self.pending_offset.or(Some(self.position(cx) as usize));
-                    self.document.blocks.clear();
-                    self.visible.reset(&[], &self.expanded);
-                    self.image_rows.clear();
-                    self.formulas.clear_rows();
-                    self.code_highlights.clear();
-                    self.list.reset(0);
+            Update::Finished(document, symbols, first) => {
+                let offset = self.pending_offset.unwrap_or(self.position(cx) as usize);
+                let within = self.list.logical_scroll_top().offset_in_item;
+                if let Some(find) = &mut self.find {
+                    find.reset();
                 }
-                let old = self.visible.len();
-                self.document.blocks.extend(blocks);
-                self.visible.extend(&self.document.blocks, &self.expanded);
-                self.list.splice(old..old, self.visible.len() - old);
-            }
-            Update::Finished(summary, limited) => {
+                self.document = document;
+                self.pages.clear();
+                self.pending_pages.clear();
+                self.failed_pages.clear();
+                self.pages.insert(0, first);
+                self.image_rows.clear();
+                self.formulas.clear_rows();
+                self.code_highlights.clear();
+                self.visible.reset(&self.document.blocks, &self.expanded);
+                self.list.reset(self.visible.len());
                 self.parsing = false;
-                self.preview_complete = !limited && !summary.cancelled;
-                self.document.headings = summary.headings;
-                self.document.warnings = summary.warnings;
-                self.update_symbols();
+                self.preview_complete = true;
+                self.symbols = symbols;
+                self.list.scroll_to(ListOffset {
+                    item_ix: self.visible.row(self.document.block_at(offset)),
+                    offset_in_item: within,
+                });
                 self.search(cx);
                 self.number_equations(cx);
-                if limited {
-                    self.notice = Some(
-                        "Preview covers the first 128 MiB. Source view can read the whole file."
-                            .into(),
-                    );
-                } else if !self.document.warnings.is_empty() {
+                if !self.document.warnings.is_empty() {
                     self.notice = Some(self.document.warnings.join(" ").into());
                 }
             }
@@ -463,7 +427,7 @@ impl MarkdownView {
             .document
             .blocks
             .get(block)
-            .and_then(|b| b.kind.metadata_section())
+            .and_then(|b| b.metadata_section())
             && self.expanded.insert(section)
         {
             self.visible.reset(&self.document.blocks, &self.expanded);
@@ -765,16 +729,11 @@ impl MarkdownView {
                         .unwrap_or_default()
                 }
             });
-            let original = block.clone();
+            let original = self.document.clone();
             cx.spawn(async move |this, cx| {
                 let highlights = parsing.await;
                 this.update(cx, |this, cx| {
-                    if this
-                        .document
-                        .blocks
-                        .get(ix)
-                        .is_some_and(|b| Arc::ptr_eq(b, &original))
-                    {
+                    if Arc::ptr_eq(&this.document, &original) {
                         if this.code_highlights.len() > 128 {
                             this.code_highlights.retain(|&key, _| key.abs_diff(ix) < 64);
                         }
@@ -813,24 +772,106 @@ impl MarkdownView {
     }
 
     fn copy_fence(&mut self, ix: usize, cx: &mut Context<Self>) {
-        let blocks: Vec<_> = self
-            .document
-            .blocks
-            .iter()
-            .skip(ix)
-            .enumerate()
-            .take_while(|(i, block)| {
-                *i == 0 || matches!(block.kind, BlockKind::Code { first: false, .. })
+        let document = self.document.clone();
+        let source = self.source.clone();
+        let cancel = self.cancel.clone();
+        let copying = cx.background_executor().spawn(async move {
+            let end = ix
+                + document
+                    .blocks
+                    .iter()
+                    .skip(ix)
+                    .enumerate()
+                    .take_while(|(i, b)| {
+                        *i == 0 || (b.kind == plastext_markdown::BlockType::Code && !b.code_first)
+                    })
+                    .count();
+            let mut text = String::new();
+            let mut at = ix;
+            while at < end {
+                let page = document.blocks[at].page as usize;
+                let blocks =
+                    document.parse_page(&source, page, || cancel.load(Ordering::Relaxed))?;
+                let range = &document.pages[page].blocks;
+                let until = range.end.min(end);
+                for block in &blocks[at - range.start..until - range.start] {
+                    if text.len() + block.text.len() > 32 * 1024 * 1024 {
+                        return Err(std::io::Error::other(
+                            "Code fence exceeds the 32 MiB copy limit; use Source view",
+                        ));
+                    }
+                    text.push_str(&block.text);
+                }
+                at = until;
+            }
+            Ok(text)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = copying.await;
+            this.update(cx, |this, cx| match result {
+                Ok(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+                Err(error) => {
+                    this.notice = Some(error.to_string().into());
+                    cx.notify();
+                }
             })
-            .map(|(_, block)| block.clone())
-            .collect();
-        let copying = cx
-            .background_executor()
-            .spawn(async move { blocks.iter().map(|b| b.text.as_str()).collect::<String>() });
-        cx.spawn(async move |_, cx| {
-            let text = copying.await;
-            cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(text)))
-                .ok();
+            .ok();
+        })
+        .detach();
+    }
+
+    fn request_page(&mut self, page: usize, cx: &mut Context<Self>) {
+        if page >= self.document.pages.len()
+            || self.pages.contains(page)
+            || self.pending_pages.contains(&page)
+            || self.failed_pages.contains(&page)
+            || self.pending_pages.len() >= 2
+        {
+            return;
+        }
+        self.pending_pages.insert(page);
+        let document = self.document.clone();
+        let source = self.source.clone();
+        let cancel = self.cancel.clone();
+        let work = cx.background_executor().spawn({
+            let document = document.clone();
+            async move { document.parse_page(&source, page, || cancel.load(Ordering::Relaxed)) }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            this.update(cx, |this, cx| {
+                if !Arc::ptr_eq(&document, &this.document) {
+                    return;
+                }
+                this.pending_pages.remove(&page);
+                match result {
+                    Ok(blocks) => {
+                        if !this.pages.insert(page, blocks) {
+                            this.failed_pages.insert(page);
+                            this.notice = Some(
+                                "A Markdown page exceeds the parsed-cache budget; use Source view."
+                                    .into(),
+                            );
+                        } else if let Some(profile) = &mut this.profile {
+                            profile.loaded_page(page);
+                        }
+                    }
+                    Err(error) => {
+                        this.failed_pages.insert(page);
+                        this.notice = Some(error.to_string().into());
+                    }
+                }
+                let blocks = &document.pages[page].blocks;
+                if !blocks.is_empty() {
+                    let first = this.visible.row(blocks.start);
+                    let end = this.visible.row(blocks.end - 1) + 1;
+                    let anchor = this.list.logical_scroll_top();
+                    this.list.splice(first..end, end - first);
+                    this.list.scroll_to(anchor);
+                }
+                cx.notify();
+            })
+            .ok();
         })
         .detach();
     }
@@ -841,9 +882,37 @@ impl MarkdownView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(block) = self.document.blocks.get(ix).cloned() else {
+        let Some(entry) = self.document.blocks.get(ix).cloned() else {
             return div().into_any_element();
         };
+        let page = entry.page as usize;
+        let block = self.pages.get(page, entry.local as usize);
+        if !self.parsing {
+            self.request_page(page, cx);
+            // A small margin in source order; no whole-document prefetch.
+            self.request_page(page + 1, cx);
+            if page > 0 {
+                self.request_page(page - 1, cx);
+            }
+        }
+        let Some(block) = block else {
+            return div()
+                .id(("md-block", ix))
+                .h(px(40.))
+                .px_6()
+                .py_2()
+                .text_color(Theme::get(window, cx).text_muted)
+                .child(if self.failed_pages.contains(&page) {
+                    "Preview unavailable · use Source"
+                } else {
+                    "Loading…"
+                })
+                .into_any_element();
+        };
+        if let Some(profile) = &mut self.profile {
+            let row = self.visible.row(ix);
+            profile.rendered_target(row);
+        }
         let theme = Theme::get(window, cx);
         self.prepare_math(&block, ix, theme, window, cx);
         let base = div()

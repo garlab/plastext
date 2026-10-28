@@ -12,6 +12,25 @@ pub(super) struct ReadingProfile {
     frame_pending: bool,
     previous_frame: Option<Instant>,
     targets: Vec<usize>,
+    visited: HashSet<usize>,
+    placeholder_frames: usize,
+    page_loads: usize,
+    page_reloads: usize,
+    seen_pages: HashSet<usize>,
+}
+
+impl ReadingProfile {
+    pub(super) fn loaded_page(&mut self, page: usize) {
+        self.page_loads += 1;
+        if !self.seen_pages.insert(page) {
+            self.page_reloads += 1;
+        }
+    }
+    pub(super) fn rendered_target(&mut self, row: usize) {
+        if self.targets.contains(&row) {
+            self.visited.insert(row);
+        }
+    }
 }
 
 impl MarkdownView {
@@ -26,11 +45,20 @@ impl MarkdownView {
             frame_pending: false,
             previous_frame: None,
             targets: Vec::new(),
+            visited: HashSet::new(),
+            placeholder_frames: 0,
+            page_loads: 0,
+            page_reloads: 0,
+            seen_pages: HashSet::from([0]),
         });
     }
 
     pub(super) fn profile_painted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.profile.is_some() && (!self.rendered || (!self.parsing && !self.preview_complete)) {
+        if self.profile.is_some()
+            && (!self.rendered
+                || (!self.parsing && !self.preview_complete)
+                || !self.failed_pages.is_empty())
+        {
             eprintln!("reading: aborted: full rendered preview is unavailable");
             cx.quit();
             return;
@@ -41,7 +69,18 @@ impl MarkdownView {
         if profile.frame_pending {
             return;
         }
-        let ready = !self.document.blocks.is_empty();
+        let top = self.list.logical_scroll_top().item_ix;
+        let ready = self
+            .visible
+            .block(top)
+            .and_then(|ix| self.document.blocks.get(ix))
+            .is_some_and(|entry| self.pages.contains(entry.page as usize));
+        if !ready && self.preview_complete {
+            profile.placeholder_frames += 1;
+        }
+        if ready && self.preview_complete && profile.targets.contains(&top) {
+            profile.visited.insert(top);
+        }
         let complete = ready && self.preview_complete;
         let first = !profile.painted;
         let first_preview = ready && !profile.preview_painted;
@@ -52,12 +91,12 @@ impl MarkdownView {
                 .document
                 .blocks
                 .iter()
-                .position(|b| matches!(b.kind, BlockKind::Code { .. }));
+                .position(|b| matches!(b.kind, plastext_markdown::BlockType::Code));
             let prose = self
                 .document
                 .blocks
                 .iter()
-                .position(|b| matches!(b.kind, BlockKind::Paragraph));
+                .position(|b| matches!(b.kind, plastext_markdown::BlockType::Paragraph));
             profile.targets = vec![
                 0,
                 code.unwrap_or(last / 4),
@@ -69,6 +108,10 @@ impl MarkdownView {
             .map(|block| self.visible.row(block))
             .collect();
             profile.steps = 0;
+            if profile.targets.contains(&top) {
+                profile.visited.insert(top);
+            }
+            eprintln!("reading: indexed preview");
         }
         if ready {
             let now = Instant::now();
@@ -88,7 +131,22 @@ impl MarkdownView {
         if !first && !ready {
             return;
         }
-        let done = complete && profile.frames_left == 0;
+        let required = profile
+            .targets
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .len();
+        let done = complete && profile.frames_left == 0 && profile.visited.len() == required;
+        if done {
+            eprintln!("reading: index bytes {}", self.document.retained_bytes());
+            eprintln!("reading: parsed cache bytes {}", self.pages.bytes());
+            eprintln!("reading: placeholder frames {}", profile.placeholder_frames);
+            eprintln!("reading: visited targets {}", profile.visited.len());
+            eprintln!("reading: required targets {required}");
+            eprintln!("reading: page loads {}", profile.page_loads);
+            eprintln!("reading: page reloads {}", profile.page_reloads);
+        }
         let opened = profile.opened;
         profile.frame_pending = true;
         let view = cx.entity().downgrade();
@@ -128,8 +186,15 @@ impl MarkdownView {
                     // sequential scroll. This reaches the table, fence and prose
                     // in the 100 MB fixture instead of staying in its first rows.
                     if complete && profile.steps.is_multiple_of(250) {
-                        let target = (profile.steps / 250) % profile.targets.len();
-                        let item_ix = profile.targets[target];
+                        let jump = profile.steps / 250;
+                        let item_ix = if jump % 2 == 1 {
+                            profile.targets[(jump / 2) % profile.targets.len()]
+                        } else {
+                            // Distant jumps exercise cold pages and evict old
+                            // prose pages before the fixed targets recur.
+                            let block = jump.wrapping_mul(104_729) % this.document.blocks.len();
+                            this.visible.row(block)
+                        };
                         this.list.scroll_to(ListOffset {
                             item_ix,
                             offset_in_item: px(0.),

@@ -1,11 +1,8 @@
 use super::*;
 use plastext_editor::{TextInput, TextInputEvent};
-use plastext_markdown::{RenderedMatch, find_rendered};
+use plastext_markdown::RenderedMatch;
 
 const LIMIT: usize = 10_000;
-/// Blocks per background search job. Each job ends with a pause for input
-/// and painting, so small jobs make a large document slow to search.
-const CHUNK: usize = 4096;
 actions!(markdown_find, [Find, Next, Previous, Close]);
 
 pub(super) fn init(cx: &mut App) {
@@ -33,14 +30,22 @@ pub(super) struct FindState {
     searching: bool,
     _input_changes: Subscription,
     _search: Option<Task<()>>,
+    cancel: Arc<AtomicBool>,
 }
 
 impl FindState {
     pub(super) fn reset(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
         self._search = None;
         self.matches.clear();
         self.current = None;
         self.searching = !self.query.is_empty();
+    }
+}
+
+impl Drop for FindState {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
     }
 }
 
@@ -59,6 +64,7 @@ impl MarkdownView {
                 searching: false,
                 _input_changes: changes,
                 _search: None,
+                cancel: Arc::new(AtomicBool::new(false)),
             });
         }
         let input = &self.find.as_ref().unwrap().input;
@@ -69,42 +75,58 @@ impl MarkdownView {
 
     pub(super) fn search(&mut self, cx: &mut Context<Self>) {
         let Some(find) = &mut self.find else { return };
-        find._search = None;
-        find.matches.clear();
-        find.current = None;
+        find.reset();
+        find.cancel = Arc::new(AtomicBool::new(false));
         find.query = find.input.read(cx).text().to_owned();
         find.searching = !find.query.is_empty();
-        if !find.searching {
+        if !find.searching || self.parsing {
             cx.notify();
             return;
         }
         let query = find.query.clone();
-        find._search = Some(cx.spawn(async move |this, cx| {
-            let mut first = 0;
-            loop {
-                let Ok(Some((blocks, limit))) = this.update(cx, |this, _| {
-                    let find = this.find.as_ref()?;
-                    if first >= this.document.blocks.len() || find.matches.len() == LIMIT {
-                        return None;
+        let cancel = find.cancel.clone();
+        let document = self.document.clone();
+        let source = self.source.clone();
+        let (send, receive) = async_channel::bounded(4);
+        cx.background_executor()
+            .spawn({
+                let cancel = cancel.clone();
+                let document = document.clone();
+                async move {
+                    let result = document.search(
+                        &source,
+                        &query,
+                        LIMIT,
+                        || cancel.load(Ordering::Relaxed),
+                        |hits| send.send_blocking(Ok(hits)).is_ok(),
+                    );
+                    if let Err(error) = result
+                        && error.kind() != std::io::ErrorKind::Interrupted
+                    {
+                        send.send_blocking(Err(error.to_string())).ok();
                     }
-                    let end = (first + CHUNK).min(this.document.blocks.len());
-                    Some((
-                        this.document.blocks[first..end].to_vec(),
-                        LIMIT - find.matches.len(),
-                    ))
-                }) else {
-                    break;
-                };
-                let count = blocks.len();
-                let query = query.clone();
-                let hits = cx
-                    .background_executor()
-                    .spawn(async move { find_rendered(&blocks, first, &query, limit) })
-                    .await;
+                }
+            })
+            .detach();
+        find._search = Some(cx.spawn(async move |this, cx| {
+            while let Ok(result) = receive.recv().await {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
                 if this
                     .update(cx, |this, cx| {
-                        if let Some(find) = &mut this.find {
-                            find.matches.extend(hits);
+                        if !Arc::ptr_eq(&document, &this.document) {
+                            return;
+                        }
+                        let Some(find) = &mut this.find else {
+                            return;
+                        };
+                        if !Arc::ptr_eq(&cancel, &find.cancel) {
+                            return;
+                        }
+                        match result {
+                            Ok(hits) => find.matches.extend(hits),
+                            Err(error) => this.notice = Some(error.into()),
                         }
                         cx.notify();
                     })
@@ -112,17 +134,14 @@ impl MarkdownView {
                 {
                     return;
                 }
-                first += count;
-                // Yield even when a short worker job completes immediately.
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(1))
-                    .await;
             }
             this.update(cx, |this, cx| {
-                if let Some(find) = &mut this.find {
+                if let Some(find) = &mut this.find
+                    && Arc::ptr_eq(&cancel, &find.cancel)
+                {
                     find.searching = false;
+                    cx.notify();
                 }
-                cx.notify();
             })
             .ok();
         }));

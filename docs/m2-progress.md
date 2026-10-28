@@ -20,9 +20,9 @@ cargo run -p plastext-app -- docs/fixtures/m2.md
 
 ## Work bounds
 
-The Markdown worker first parses a 64 KiB prefix, then replaces it with complete-document results in batches of at most 256 blocks through a bounded channel. The full parse resolves reference definitions. The channel holds up to 32 batches, so parsing continues while the UI thread paints. Each UI turn applies every ready batch, for up to 4 ms, then lets input and painting run before continuing. Rendered find searches 4,096 blocks per background job. Only nearby blocks are laid out; long code fences split into short items and table rows are independent items. Text per block is at most 16 KiB, deep nesting is flattened after 128 levels, and oversized table rows fall back to bounded text blocks without dropping cell contents.
+The Markdown worker first parses a 64 KiB prefix, then builds a source-backed index using bounded parsing windows. The index keeps 32-byte block records, headings, reference definitions and equation-number prefixes. Parsed text and inline spans live in a 32 MiB page cache, with at most two page jobs active and a small prefetch margin. Completed pages replace placeholders while preserving the visible content anchor. Rendered find scans pages independently on a worker, with cancellation, a bounded result channel and a 10,000-match limit; it does not populate the viewport cache.
 
-The current parser still materializes UTF-8 input and retains the parsed model. Preview is limited to the first 128 MiB; Source remains available for the entire file. These bounds do **not** establish the spec's total-memory target. Native scrolling measurements are recorded below; retained memory and stable anchoring still need validation.
+Pages normally contain up to 64 KiB of source. Complete Markdown containers can use up to 256 KiB so nested lists and quotes retain their context; larger containers fall back explicitly to bounded source blocks. Large top-level tables and code fences carry their headers/openers across pages and remain virtualized; headers/openers exceeding 64 KiB use the source fallback. Text per layout block remains at most 16 KiB, code items remain short, and nesting is flattened after 128 levels. The former 128 MiB preview cutoff is removed. The index has a 64 MiB budget, including a 16 MiB limit for global reference definitions; exceeding either leaves Source view available. See [Markdown memory design](markdown-memory.md) for the architecture and validation criteria.
 
 Image decoding limits encoded input to 32 MiB and raster images to 16 megapixels, then reduces previews to a 1,600-pixel maximum edge. Larger raster images display an explicit limit message until tiled decoding exists. SVG dimensions are downscaled before allocating the output pixels. Markdown keeps at most four image jobs active and caps its image cache at 64 MiB/128 entries. Visible code highlights have a bounded cache and at most four jobs.
 
@@ -93,7 +93,7 @@ A separate [1,500-frame smoke run](benchmarks/m2-2026-10-24-front-matter-native.
 
 ### Batch delivery — 2026-10-25
 
-The UI used to apply one 256-block batch per wakeup, with a 1 ms timer between batches. In practice each wakeup took several milliseconds, so the 100 MB fixture's ~1,290 batches finished long after parsing did. The UI now applies every ready batch within a 4 ms budget per turn (see [Work bounds](#work-bounds)).
+The UI used to apply one 256-block batch per wakeup, with a 1 ms timer between batches. In practice each wakeup took several milliseconds, so the 100 MB fixture's ~1,290 batches finished long after parsing did. That change applied every ready batch within a 4 ms budget per turn. The source-backed preview described in [Work bounds](#work-bounds) now replaces this full-model delivery path.
 
 Same fixture and machine, 1,500 frames, `--foreground --keep-visible`:
 
@@ -216,13 +216,15 @@ Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branc
 
 Inline math (`$…$`) renders the same way. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Headings still show inline TeX, since they use larger text.
 
-Display math puts `\tag`s and automatic equation numbers (`equation`, `gather`, `align`, `alignat`, `multline`) against the right edge of the column, on the formula's baseline. Numbers count up through the whole document, as on a web page. After parsing, a background pass counts each numbering formula's equations, and only those formulas are laid out. Numbered formulas show their TeX until that pass finishes.
+Display math puts `\tag`s and automatic equation numbers (`equation`, `gather`, `align`, `alignat`, `multline`) against the right edge of the column, on the formula's baseline. Numbers count up through the whole document, as on a web page. The background indexing pass counts each numbering formula's equations and records its starting number. Layout remains limited to nearby formulas. Numbered formulas show their TeX until the index is ready.
 
 The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
 
 ### Retained memory — 2026-10-28
 
-`plastext-bench m2` now keeps the parsed blocks, as the preview does, and reports resident memory. On the 100 MB fixture (330,080 blocks, 9.5 million inline spans), the parsed model holds 709 MB of live heap in 2.1 million allocations, after the parser now trims each block's buffers (the trimming saves about 225 MB of slack). The breakdown:
+The replacement architecture and acceptance criteria are recorded in [Markdown memory design](markdown-memory.md).
+
+The earlier `plastext-bench m2` measurement kept all parsed blocks, matching the previous preview. On the 100 MB fixture (330,080 blocks, 9.5 million inline spans), that parsed model held 709 MB of live heap in 2.1 million allocations, after trimming each block's buffers (saving about 225 MB of slack). The breakdown:
 - Spans: 532 MB. Each `Span` is 56 bytes: two `usize` ranges, six flags and an optional link.
 - Block text: 70 MB.
 - Block structs: 66 MB.
@@ -230,11 +232,31 @@ The branch depends on `../katex-native` by path, so it must not be merged until 
 
 Resident memory, which includes allocator overhead and fragmentation, varied between runs: 1.2–1.8 GB with trimming and 1.4–2.2 GB without. The fixture is dense, with about 200 inline spans per paragraph, but even an ordinary large document would keep hundreds of megabytes. Keeping the whole parsed document conflicts with the spec's principle that cost follows what's on screen.
 
+### Source-backed preview — 2026-10-28
+
+The same 100 MB fixture now produces a 15,645,376-byte index (14.92 MiB), with 330,110 layout blocks and 45,391 headings. The extra fence fragments occur at page boundaries. No parsed document is retained outside the bounded cache.
+
+| Measurement | Result |
+|---|---:|
+| Initial 64 KiB core preview | 1.85 ms |
+| Complete index | 1,897.55 ms |
+| Core RSS after indexing | 29.94 MiB |
+| Core peak RSS across indexing, two traversals and find | 109.78 MiB |
+| Parsed-page cache limit | 32 MiB |
+| Individual page parse p99 | 1.01 ms |
+| Full rendered-text search, no matches | 1,020.46 ms |
+
+The [core memory summary](benchmarks/m2-2026-10-28-indexed-memory.summary.json) traverses every page forward and backward, then searches all rendered text. RSS was 109.28 MiB after the first traversal, 109.47 MiB after the second and 109.78 MiB after search. Search left the cache's charged bytes unchanged. These measurements exclude native layout and equation counting.
+
+The [native 10,000-frame run](benchmarks/m2-2026-10-28-indexed-native.summary.json) completed with first preview at 16.68 ms and full index at 1,769.55 ms. Its broader workload alternates the required table/code/prose/end targets with distant jumps: all five targets rendered, 104 page loads completed and nine were reloads after eviction. There were 23 placeholder frames in addition to the 10,000 content frames. The final parsed cache was 31.78 MiB. App RSS, sampled every 500 ms, reached **224.59 MiB** and ended at 212.41 MiB; this sampled maximum can miss shorter peaks.
+
+Draw/submit p99 was **8.77 ms**, above the 8 ms target (`complete: true`, `passed: false`). Frame-interval p99 was 10.69 ms. The memory reduction is established on this fixture; scrolling certification remains open. Earlier baseline artifacts are unchanged. The source-backed parser/cache tests cover page boundaries, late and duplicate definitions, footnotes, headings, metadata, nested containers, equation prefixes, large tables/fences, Unicode/CRLF, cancellation, source changes and eviction.
+
 ## Remaining M2 work
 
 - Inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
-- Keep only a compact block index for large Markdown and parse visible blocks on demand (see Retained memory); certify 100 MB scrolling over 10,000 frames; run native 20M-row CSV scrolling tests; visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.
+- Validate memory and scrolling on the reference M1 Air, run native 20M-row CSV scrolling tests, and visually review light/dark themes and anchoring. The 8 ms scrolling budget still needs a passing 10,000-frame run.
 
 Workspace tests, strict Clippy and the GPUI dependency-boundary check cover this increment. M2's exit conditions have not been met. Markdown editing, task-list mutation, live preview and synchronized edit/preview belong to M3.

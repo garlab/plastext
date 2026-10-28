@@ -2,7 +2,7 @@ use crate::{
     Alignment, BLOCK_TEXT_LIMIT, Block, BlockKind, Document, Heading, InlineStyle, MetadataFormat,
     Span,
 };
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{BrokenLink, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
@@ -44,17 +44,51 @@ pub fn parse_stream(
     cancelled: impl Fn() -> bool,
     mut emit: impl FnMut(Vec<Arc<Block>>) -> bool,
 ) -> ParseSummary {
-    let options = Options::ENABLE_TABLES
+    parse_context(
+        text,
+        cancelled,
+        &mut emit,
+        &mut HeadingIds::default(),
+        None,
+        true,
+        0..text.len(),
+    )
+}
+
+pub(crate) fn options(metadata: bool) -> Options {
+    let mut options = Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_HEADING_ATTRIBUTES
         | Options::ENABLE_GFM
         | Options::ENABLE_DEFINITION_LIST
-        | Options::ENABLE_MATH
-        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
-    let mut builder = Builder::new(&mut emit);
+        | Options::ENABLE_MATH;
+    if metadata {
+        options |= Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+            | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS;
+    }
+    options
+}
+
+#[derive(Default)]
+pub(crate) struct HeadingIds {
+    ids: HashMap<String, usize>,
+    used_ids: HashSet<String>,
+}
+
+pub(crate) type References = HashMap<unicase::UniCase<String>, (Arc<str>, Arc<str>)>;
+
+pub(crate) fn parse_context(
+    text: &str,
+    cancelled: impl Fn() -> bool,
+    emit: &mut dyn FnMut(Vec<Arc<Block>>) -> bool,
+    ids: &mut HeadingIds,
+    references: Option<&References>,
+    metadata: bool,
+    source_window: Range<usize>,
+) -> ParseSummary {
+    let mut builder = Builder::new(emit, ids);
     let mut depth = 0usize;
     let mut inline = Vec::new();
     let mut style = InlineStyle::default();
@@ -63,7 +97,30 @@ pub fn parse_stream(
     let mut image_depth = None;
     let mut in_comment = false;
     let mut in_metadata = false;
-    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+    let callback = |link: BrokenLink<'_>| {
+        let (url, title) = references?.get(&unicase::UniCase::new(link.reference.into_string()))?;
+        Some((url.to_string().into(), title.to_string().into()))
+    };
+    for (event, range) in
+        Parser::new_with_broken_link_callback(text, options(metadata), Some(callback))
+            .into_offset_iter()
+    {
+        if range.start >= source_window.end {
+            break;
+        }
+        if range.end <= source_window.start {
+            continue;
+        }
+        // Synthetic footnote definitions supply parser context only. Their
+        // ranges can include blank lines from the real page that follows.
+        if range.start < source_window.start
+            && matches!(
+                event,
+                Event::Start(Tag::FootnoteDefinition(_)) | Event::End(TagEnd::FootnoteDefinition)
+            )
+        {
+            continue;
+        }
         if cancelled() || builder.stopped {
             builder.summary.cancelled = true;
             break;
@@ -350,12 +407,11 @@ struct Builder<'a> {
     lists: Vec<Option<u64>>,
     quotes: Vec<String>,
     marker: Option<String>,
-    ids: HashMap<String, usize>,
-    used_ids: HashSet<String>,
+    ids: &'a mut HeadingIds,
     summary: ParseSummary,
 }
 impl<'a> Builder<'a> {
-    fn new(emit: &'a mut dyn FnMut(Vec<Arc<Block>>) -> bool) -> Self {
+    fn new(emit: &'a mut dyn FnMut(Vec<Arc<Block>>) -> bool, ids: &'a mut HeadingIds) -> Self {
         Self {
             current: None,
             batch: Vec::new(),
@@ -364,8 +420,7 @@ impl<'a> Builder<'a> {
             lists: Vec::new(),
             quotes: Vec::new(),
             marker: None,
-            ids: HashMap::new(),
-            used_ids: HashSet::new(),
+            ids,
             summary: ParseSummary::default(),
         }
     }
@@ -539,7 +594,7 @@ impl<'a> Builder<'a> {
             } else {
                 id.clone()
             };
-            let count = self.ids.entry(base.clone()).or_default();
+            let count = self.ids.ids.entry(base.clone()).or_default();
             loop {
                 *id = if *count == 0 {
                     base.clone()
@@ -547,7 +602,7 @@ impl<'a> Builder<'a> {
                     format!("{base}-{count}")
                 };
                 *count += 1;
-                if self.used_ids.insert(id.clone()) {
+                if self.ids.used_ids.insert(id.clone()) {
                     break;
                 }
             }

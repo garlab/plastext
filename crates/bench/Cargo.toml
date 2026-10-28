@@ -17,6 +17,7 @@ plastext-syntax.workspace = true
 plastext-markdown.workspace = true
 plastext-assets.workspace = true
 serde_json = "1"
+libc = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }

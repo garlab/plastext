@@ -8,6 +8,8 @@ pub struct NativeLog {
     first: bool,
     content: bool,
     full: bool,
+    indexed: bool,
+    cache: std::collections::HashMap<&'static str, usize>,
 }
 
 impl NativeLog {
@@ -20,16 +22,32 @@ impl NativeLog {
             first: false,
             content: false,
             full: !markdown,
+            indexed: false,
+            cache: std::collections::HashMap::new(),
         };
         let mut scrolling = false;
         for line in stderr.lines() {
             match line {
+                "reading: indexed preview" => result.indexed = true,
                 "reading: scrolling" => scrolling = true,
                 "reading: done" => {
                     result.finished = true;
                     scrolling = false;
                 }
                 _ => {}
+            }
+            for (prefix, key) in [
+                ("reading: index bytes ", "index_bytes"),
+                ("reading: parsed cache bytes ", "parsed_cache_bytes"),
+                ("reading: placeholder frames ", "placeholder_frames"),
+                ("reading: visited targets ", "visited_targets"),
+                ("reading: required targets ", "required_targets"),
+                ("reading: page loads ", "page_loads"),
+                ("reading: page reloads ", "page_reloads"),
+            ] {
+                if let Some(value) = line.strip_prefix(prefix).and_then(|s| s.parse().ok()) {
+                    result.cache.insert(key, value);
+                }
             }
             for (prefix, budget) in [
                 ("reading: first paint ", Some(50.)),
@@ -74,6 +92,21 @@ impl NativeLog {
             && self.content
             && self.full
             && self.frames.len() >= frames.max(1)
+            && (!self.indexed
+                || (self.cache.get("visited_targets").is_some_and(|&n| n > 0)
+                    && self.cache.get("visited_targets") == self.cache.get("required_targets")
+                    && self
+                        .cache
+                        .get("parsed_cache_bytes")
+                        .is_some_and(|&n| n <= plastext_markdown::PARSED_CACHE_BYTES)))
+    }
+
+    pub fn cache_summary(&self) -> serde_json::Value {
+        if self.indexed {
+            serde_json::json!(self.cache)
+        } else {
+            serde_json::Value::Null
+        }
     }
 }
 
@@ -117,5 +150,28 @@ mod tests {
         for invalid in ["NaNms", "infms", "-1ms", "12minutes"] {
             assert!(duration_ms(invalid).is_none());
         }
+    }
+
+    #[test]
+    fn indexed_preview_requires_real_target_content_and_bounded_cache() {
+        let log = format!(
+            "{LOG}reading: indexed preview\nreading: index bytes 1234\nreading: parsed cache bytes 1024\nreading: placeholder frames 2\nreading: visited targets 5\nreading: required targets 5\n"
+        );
+        assert!(NativeLog::parse(&log, true).complete(true, false, 2));
+        assert!(
+            !NativeLog::parse(&log.replace("visited targets 5", "visited targets 4"), true)
+                .complete(true, false, 2)
+        );
+        assert!(
+            !NativeLog::parse(
+                &log.replace("cache bytes 1024", "cache bytes 999999999"),
+                true
+            )
+            .complete(true, false, 2)
+        );
+        assert!(
+            !NativeLog::parse(&log.replace("reading: parsed cache bytes 1024\n", ""), true)
+                .complete(true, false, 2)
+        );
     }
 }
