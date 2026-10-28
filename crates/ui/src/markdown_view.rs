@@ -535,7 +535,8 @@ impl MarkdownView {
             if style.math
                 && inline_math
                 && span.range == (start..end)
-                && let Some((count, width, formula)) = self.inline_slot(&block.text[start..end])
+                && let Some((count, width, formula)) =
+                    self.inline_slot(&block.text[start..end], math::inline_color(style, theme))
             {
                 let slot = math::Slot::new(text.len(), count, width, formula);
                 if let Some(target) = &style.link {

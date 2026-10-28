@@ -61,7 +61,6 @@ struct InlineMetrics {
     descent: f32,
     line_height: f32,
     scale: f32,
-    color: [u8; 4],
 }
 
 /// An inline formula in laid-out text.
@@ -83,6 +82,15 @@ fn scale_key(scale: f32) -> u32 {
     (scale * 1000.).round() as u32
 }
 
+/// The color of an inline formula: a link's inside links, like its text.
+pub(super) fn inline_color(style: &plastext_markdown::InlineStyle, theme: Theme) -> gpui::Rgba {
+    if style.link.is_some() {
+        theme.syntax(Highlight::Link)
+    } else {
+        theme.text
+    }
+}
+
 impl MarkdownView {
     /// Measures what inline formulas need and requests the ones in
     /// `block`. Call before laying out the block's text.
@@ -95,12 +103,11 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) {
         let scale = window.scale_factor();
-        let color = channels(theme.text);
         // The prose font only changes on restart.
         if !self
             .formulas
             .inline
-            .is_some_and(|metrics| metrics.scale == scale && metrics.color == color)
+            .is_some_and(|metrics| metrics.scale == scale)
         {
             let font = text_run(1, false, false, false, theme.text, self).font;
             let text_system = window.text_system();
@@ -117,7 +124,6 @@ impl MarkdownView {
                         descent: f32::from(text_system.descent(font_id, size)).abs(),
                         line_height: BODY_SIZE * LINE_HEIGHT,
                         scale,
-                        color,
                     });
         }
         if self.formulas.inline.is_none() || !inline_math_shown(block) {
@@ -127,7 +133,7 @@ impl MarkdownView {
             let key = FormulaKey {
                 tex: block.text[span.range.clone()].to_owned(),
                 display: false,
-                color: channels(theme.text),
+                color: channels(inline_color(&span.style, theme)),
                 scale: scale_key(scale),
             };
             self.request_formula(&key, ix, scale, cx);
@@ -136,12 +142,16 @@ impl MarkdownView {
 
     /// The placeholder for an inline formula: how many [`SLOT_CHAR`]s, and
     /// how wide they are. `None` until the formula has rendered.
-    pub(super) fn inline_slot(&self, tex: &str) -> Option<(usize, f32, Formula)> {
+    pub(super) fn inline_slot(
+        &self,
+        tex: &str,
+        color: gpui::Rgba,
+    ) -> Option<(usize, f32, Formula)> {
         let metrics = self.formulas.inline?;
         let key = FormulaKey {
             tex: tex.to_owned(),
             display: false,
-            color: metrics.color,
+            color: channels(color),
             scale: scale_key(metrics.scale),
         };
         let formula = self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?;
