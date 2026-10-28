@@ -73,8 +73,9 @@ enum Update {
     Error(String),
 }
 
-/// Body text size, in logical pixels.
+/// Body text size, in logical pixels, and line height in multiples of it.
 const BODY_SIZE: f32 = 16.;
+const LINE_HEIGHT: f32 = 1.55;
 
 /// How long one turn of the UI thread may spend applying parse results
 /// before input and painting get to run.
@@ -507,15 +508,19 @@ impl MarkdownView {
         theme: Theme,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let text = block.text[range.clone()].to_owned();
+        // The displayed text: the source, except that rendered inline
+        // formulas replace their TeX with placeholders.
+        let mut text = String::with_capacity(range.len());
         let mut runs = Vec::new();
         let mut links = Vec::new();
         let mut targets = Vec::new();
+        let mut slots = Vec::new();
         let mut at = range.start;
         let bold = matches!(
             block.kind,
             BlockKind::Heading { .. } | BlockKind::TableRow { header: true, .. }
         );
+        let inline_math = !mono && math::inline_math_shown(block);
         for span in &block.spans {
             let start = span.range.start.max(range.start);
             let end = span.range.end.min(range.end);
@@ -523,9 +528,30 @@ impl MarkdownView {
                 continue;
             }
             if start > at {
+                text.push_str(&block.text[at..start]);
                 runs.push(text_run(start - at, mono, bold, false, theme.text, self));
             }
             let style = &span.style;
+            if style.math
+                && inline_math
+                && span.range == (start..end)
+                && let Some((count, width, formula)) = self.inline_slot(&block.text[start..end])
+            {
+                let slot = math::Slot::new(text.len(), count, width, formula);
+                if let Some(target) = &style.link {
+                    links.push(slot.range());
+                    targets.push(target.clone());
+                }
+                text.push_str(&math::SLOT_CHAR.to_string().repeat(count));
+                slots.push(slot);
+                let transparent = gpui::Rgba {
+                    a: 0.,
+                    ..theme.text
+                };
+                runs.push(text_run(count, false, false, false, transparent, self));
+                at = end;
+                continue;
+            }
             let color = if style.dim {
                 theme.text_muted
             } else if style.math {
@@ -550,13 +576,15 @@ impl MarkdownView {
                 });
             }
             if let Some(target) = &style.link {
-                links.push(start - range.start..end - range.start);
+                links.push(text.len()..text.len() + end - start);
                 targets.push(target.clone());
             }
+            text.push_str(&block.text[start..end]);
             runs.push(run);
             at = end;
         }
         if at < range.end {
+            text.push_str(&block.text[at..range.end]);
             runs.push(text_run(
                 range.end - at,
                 mono,
@@ -569,8 +597,16 @@ impl MarkdownView {
         let weak = cx.entity().downgrade();
         let tooltip_targets = targets.clone();
         let tooltip_ranges = links.clone();
-        let runs = self.highlight_matches(&text, runs, theme);
-        InteractiveText::new(("md-text", id), StyledText::new(text).with_runs(runs))
+        // Find can't match inside placeholders: blank them, keeping offsets.
+        let mut searchable = text.clone();
+        for slot in &slots {
+            let range = slot.range();
+            searchable.replace_range(range.clone(), &"\u{1}".repeat(range.len()));
+        }
+        let runs = self.highlight_matches(&searchable, runs, theme);
+        let styled = StyledText::new(text).with_runs(runs);
+        let layout = styled.layout().clone();
+        let text = InteractiveText::new(("md-text", id), styled)
             .on_click(links, move |ix, _, cx| {
                 weak.update(cx, |view, cx| view.open_link(&targets[ix], cx))
                     .ok();
@@ -581,8 +617,8 @@ impl MarkdownView {
                     .position(|range| range.contains(&ix))?;
                 let text: SharedString = tooltip_targets[link].to_string().into();
                 Some(cx.new(|_| LinkTooltip(text)).into())
-            })
-            .into_any_element()
+            });
+        self.with_inline_math(text, layout, slots)
     }
     fn image(
         &mut self,
@@ -807,6 +843,7 @@ impl MarkdownView {
             return div().into_any_element();
         };
         let theme = Theme::get(window, cx);
+        self.prepare_math(&block, ix, theme, window, cx);
         let base = div()
             .id(("md-block", ix))
             .w_full()
@@ -819,7 +856,7 @@ impl MarkdownView {
                 |d| d.py_0(),
             )
             .text_size(px(BODY_SIZE))
-            .line_height(relative(1.55))
+            .line_height(relative(LINE_HEIGHT))
             .text_color(theme.text);
         let content = match &block.kind {
             BlockKind::Rule => div()

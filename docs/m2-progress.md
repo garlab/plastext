@@ -212,7 +212,11 @@ Layout, including parsing, takes 0.1 ms per formula at the median and under 1 ms
 
 KaTeX's font files all claim to be upright regular faces; only the bold ones set a heavier weight. A font system that trusts those flags draws `KaTeX_Main` Italic for Regular. katex-native therefore lists each face's real style for renderers to register it under, as KaTeX's `@font-face` rules do.
 
-Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branch. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails. The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
+Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branch. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails.
+
+Inline math (`$…$`) renders the same way. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Headings still show inline TeX, since they use larger text.
+
+The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
 
 ### Retained memory — 2026-10-28
 
@@ -226,7 +230,7 @@ Resident memory, which includes allocator overhead and fragmentation, varied bet
 
 ## Remaining M2 work
 
-- Inline math, which needs room reserved inside wrapped text; equation numbers; document-scoped macros; formula selection and copy.
+- Equation numbers, inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
 - Keep only a compact block index for large Markdown and parse visible blocks on demand (see Retained memory); certify 100 MB scrolling over 10,000 frames; run native 20M-row CSV scrolling tests; visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.
