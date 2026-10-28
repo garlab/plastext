@@ -6,9 +6,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    NavigationDirection, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
-    Window, actions, div, prelude::*, px, uniform_list,
+    AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
+    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle, Window, actions,
+    canvas, div, prelude::*, px, uniform_list,
 };
 use plastext_buffer::{FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
@@ -102,6 +103,8 @@ pub struct Workspace {
     notice: Option<SharedString>,
     tree_options: TreeOptions,
     sidebar: Sidebar,
+    sidebar_width: Pixels,
+    sidebar_drag: Option<SidebarDrag>,
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
@@ -149,6 +152,25 @@ struct Outline {
 enum Sidebar {
     Files,
     Search,
+}
+
+#[derive(Clone, Copy)]
+struct SidebarDrag {
+    start_x: Pixels,
+    start_width: Pixels,
+}
+
+impl SidebarDrag {
+    fn width_at(self, x: Pixels, available: Pixels) -> Pixels {
+        clamp_sidebar_width(self.start_width + x - self.start_x, available)
+    }
+}
+
+/// Reserve room for the document, including in a narrow window.
+fn clamp_sidebar_width(width: Pixels, available: Pixels) -> Pixels {
+    let available = available.max(px(0.));
+    let maximum = (available - px(320.).min(available / 2.)).min(px(600.));
+    width.clamp(px(160.).min(maximum), maximum)
 }
 
 #[derive(Default)]
@@ -210,6 +232,8 @@ impl Workspace {
             notice,
             tree_options,
             sidebar: Sidebar::Files,
+            sidebar_width: px(SIDEBAR_WIDTH),
+            sidebar_drag: None,
             search: None,
             quick_open: None,
             picker: None,
@@ -710,9 +734,71 @@ impl Workspace {
         cx.notify();
     }
 
-    fn render_sidebar(&self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn sidebar_available_width(&self, window: &Window) -> Pixels {
+        window.viewport_size().width
+            - if self.outline.shown {
+                px(OUTLINE_WIDTH)
+            } else {
+                px(0.)
+            }
+    }
+
+    fn sidebar_drag_overlay(&self, cx: &Context<Self>) -> impl IntoElement {
+        let weak = cx.entity().downgrade();
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .cursor(CursorStyle::ResizeLeftRight)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        // Window listeners keep the drag active beyond the divider's hitbox.
+                        let moved = weak.clone();
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+                            moved
+                                .update(cx, |this, cx| {
+                                    if let Some(drag) = this.sidebar_drag {
+                                        if event.dragging() {
+                                            this.sidebar_width = drag.width_at(
+                                                event.position.x,
+                                                this.sidebar_available_width(window),
+                                            );
+                                        } else {
+                                            // Also recover if the mouse was released outside the window.
+                                            this.sidebar_drag = None;
+                                        }
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                        });
+                        let released = weak.clone();
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                released
+                                    .update(cx, |this, cx| {
+                                        this.sidebar_drag = None;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                        });
+                    },
+                )
+                .size_full(),
+            )
+    }
+
+    fn render_sidebar(&self, width: Pixels, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
         let sidebar = div()
-            .w(px(SIDEBAR_WIDTH))
+            .w(width)
             .flex_none()
             .h_full()
             .flex()
@@ -1149,7 +1235,9 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
-        let sidebar = self.render_sidebar(theme, cx);
+        let sidebar_width =
+            clamp_sidebar_width(self.sidebar_width, self.sidebar_available_width(window));
+        let sidebar = self.render_sidebar(sidebar_width, theme, cx);
         let editor_area =
             div()
                 .flex_1()
@@ -1197,14 +1285,41 @@ impl Render for Workspace {
             .text_color(theme.text)
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .child(sidebar)
                     .child(editor_area)
-                    .children(outline),
+                    .children(outline)
+                    .child(
+                        div()
+                            .id("sidebar-divider")
+                            .absolute()
+                            .left(sidebar_width - px(4.))
+                            .top_0()
+                            .bottom_0()
+                            .w(px(8.))
+                            .occlude()
+                            .cursor(CursorStyle::ResizeLeftRight)
+                            .hover(|divider| divider.bg(theme.border))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    this.sidebar_drag = Some(SidebarDrag {
+                                        start_x: event.position.x,
+                                        start_width: sidebar_width,
+                                    });
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
             )
             .child(self.render_status_bar(theme, cx))
+            .when(self.sidebar_drag.is_some(), |d| {
+                d.child(self.sidebar_drag_overlay(cx))
+            })
             .children(self.picker.as_ref().map(|(picker, _)| {
                 div()
                     .absolute()
@@ -1230,7 +1345,23 @@ impl Render for Workspace {
 
 #[cfg(test)]
 mod tests {
-    use super::command_name;
+    use super::{SidebarDrag, clamp_sidebar_width, command_name};
+    use gpui::px;
+
+    #[test]
+    fn sidebar_drag_preserves_grab_offset_and_document_space() {
+        let drag = SidebarDrag {
+            start_x: px(263.),
+            start_width: px(260.),
+        };
+        assert_eq!(drag.width_at(px(303.), px(1000.)), px(300.));
+        assert_eq!(drag.width_at(px(-100.), px(1000.)), px(160.));
+        assert_eq!(drag.width_at(px(1200.), px(1000.)), px(600.));
+        assert_eq!(drag.width_at(px(900.), px(800.)), px(480.));
+        assert_eq!(clamp_sidebar_width(px(260.), px(400.)), px(200.));
+        assert_eq!(clamp_sidebar_width(px(260.), px(200.)), px(100.));
+        assert_eq!(clamp_sidebar_width(px(260.), px(-10.)), px(0.));
+    }
 
     #[test]
     fn names_commands_readably() {

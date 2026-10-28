@@ -45,6 +45,8 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
+Drag the divider beside the Files/Search pane to resize it. The pointer changes to a horizontal resize cursor over the divider.
+
 ## Benchmarks
 
 ```sh
