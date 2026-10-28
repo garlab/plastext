@@ -1,9 +1,10 @@
 //! Math, rendered off the UI thread and cached like images.
 //!
-//! Display formulas are blocks of their own. An inline formula takes the
-//! place of its TeX in the text as a run of transparent `l`s about as wide
-//! as the formula: the text wraps around it like a word, and the formula is
-//! painted over it once the text is laid out.
+//! Display formulas are blocks of their own, with any tag or equation
+//! numbers against the right edge. An inline formula takes the place of its
+//! TeX in the text as a run of transparent `l`s about as wide as the
+//! formula: the text wraps around it like a word, and the formula is painted
+//! over it once the text is laid out.
 use super::*;
 use gpui::{Bounds, Corners, TextLayout, canvas, point, size};
 
@@ -20,19 +21,27 @@ pub(super) const SLOT_CHAR: char = 'l';
 pub(super) struct FormulaKey {
     tex: String,
     display: bool,
+    /// The first automatic equation number, or 0 if it numbers none.
+    first_number: u32,
     color: [u8; 4],
     /// Device pixels per logical pixel, in thousandths.
     scale: u32,
 }
 
+/// A rendered piece of a formula, in logical pixels.
 #[derive(Clone)]
-pub(super) struct Formula {
+pub(super) struct Image {
     image: Arc<gpui::RenderImage>,
-    /// Logical pixels.
     width: f32,
     height: f32,
-    /// The baseline, in logical pixels from the top.
+    /// The baseline, from the top.
     baseline: f32,
+}
+
+pub(super) struct Formula {
+    body: Image,
+    /// The tag or equation numbers of display math.
+    tag: Option<Image>,
 }
 
 #[derive(Default)]
@@ -41,18 +50,22 @@ pub(super) struct Formulas {
     order: VecDeque<FormulaKey>,
     /// The list rows showing each formula, to re-measure when it arrives.
     rows: HashMap<FormulaKey, Vec<usize>>,
-    /// Measured for the current window and theme by [`MarkdownView::prepare_math`].
+    /// Measured for the current window by [`MarkdownView::prepare_math`].
     inline: Option<InlineMetrics>,
+    /// The first equation number of each display formula that numbers its
+    /// equations, by block. `None` until the document has finished parsing.
+    numbering: Option<Arc<HashMap<usize, u32>>>,
 }
 
 impl Formulas {
-    /// Forgets which rows show what, when the document's blocks change.
+    /// Forgets what depends on the document's blocks, when they change.
     pub(super) fn clear_rows(&mut self) {
         self.rows.clear();
+        self.numbering = None;
     }
 }
 
-/// What inline formulas need from the window and theme, in logical pixels.
+/// What inline formulas need from the window, in logical pixels.
 #[derive(Clone, Copy)]
 struct InlineMetrics {
     /// The advance of [`SLOT_CHAR`] in the prose font.
@@ -71,7 +84,7 @@ pub(super) struct Slot {
     count: usize,
     /// The placeholder's width.
     width: f32,
-    formula: Formula,
+    formula: Image,
 }
 
 fn channels(color: gpui::Rgba) -> [u8; 4] {
@@ -133,6 +146,7 @@ impl MarkdownView {
             let key = FormulaKey {
                 tex: block.text[span.range.clone()].to_owned(),
                 display: false,
+                first_number: 0,
                 color: channels(inline_color(&span.style, theme)),
                 scale: scale_key(scale),
             };
@@ -142,19 +156,16 @@ impl MarkdownView {
 
     /// The placeholder for an inline formula: how many [`SLOT_CHAR`]s, and
     /// how wide they are. `None` until the formula has rendered.
-    pub(super) fn inline_slot(
-        &self,
-        tex: &str,
-        color: gpui::Rgba,
-    ) -> Option<(usize, f32, Formula)> {
+    pub(super) fn inline_slot(&self, tex: &str, color: gpui::Rgba) -> Option<(usize, f32, Image)> {
         let metrics = self.formulas.inline?;
         let key = FormulaKey {
             tex: tex.to_owned(),
             display: false,
+            first_number: 0,
             color: channels(color),
             scale: scale_key(metrics.scale),
         };
-        let formula = self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?;
+        let formula = &self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?.body;
         let count = ((formula.width / metrics.slot_char).round() as usize).max(1);
         Some((count, count as f32 * metrics.slot_char, formula.clone()))
     }
@@ -200,6 +211,43 @@ impl MarkdownView {
             .into_any_element()
     }
 
+    /// Works out where each display formula's equation numbers start, so
+    /// they count up through the document as on a web page.
+    pub(super) fn number_equations(&mut self, cx: &mut Context<Self>) {
+        let numbered: Vec<(usize, Arc<Block>)> = self
+            .document
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| {
+                matches!(block.kind, BlockKind::Math) && plastext_math::may_number(&block.text)
+            })
+            .map(|(ix, block)| (ix, block.clone()))
+            .collect();
+        if numbered.is_empty() {
+            self.formulas.numbering = Some(Arc::default());
+            return;
+        }
+        let counting = cx.background_executor().spawn(async move {
+            let mut next = 1;
+            let mut starts = HashMap::new();
+            for (ix, block) in numbered {
+                starts.insert(ix, next);
+                next += plastext_math::equation_numbers(&block.text);
+            }
+            starts
+        });
+        cx.spawn(async move |this, cx| {
+            let starts = counting.await;
+            this.update(cx, |this, cx| {
+                this.formulas.numbering = Some(Arc::new(starts));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// A display formula, or its TeX while it renders or when it can't.
     pub(super) fn display_math(
         &mut self,
@@ -210,13 +258,25 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let scale = window.scale_factor();
-        let key = FormulaKey {
+        // Numbered formulas wait until their first number is known.
+        let first_number = if plastext_math::may_number(&block.text) {
+            self.formulas
+                .numbering
+                .as_ref()
+                .map(|starts| starts.get(&ix).copied().unwrap_or(1))
+        } else {
+            Some(0)
+        };
+        let key = first_number.map(|first_number| FormulaKey {
             tex: block.text.to_string(),
             display: true,
+            first_number,
             color: channels(theme.text),
             scale: scale_key(scale),
-        };
-        self.request_formula(&key, ix, scale, cx);
+        });
+        if let Some(key) = &key {
+            self.request_formula(key, ix, scale, cx);
+        }
         // Without the newlines that usually surround `$$` math.
         let start = block.text.len() - block.text.trim_start().len();
         let end = block.text.trim_end().len().max(start);
@@ -230,20 +290,12 @@ impl MarkdownView {
                 cx,
             ))
         };
-        match self.formulas.cache.get(&key).and_then(Option::as_ref) {
-            Some(Ok(formula)) => div()
-                .id(("md-math", ix))
-                .w_full()
-                .overflow_x_scroll()
-                .child(
-                    div().min_w_full().flex().justify_center().child(
-                        gpui::img(formula.image.clone())
-                            .flex_none()
-                            .w(px(formula.width))
-                            .h(px(formula.height)),
-                    ),
-                )
-                .into_any_element(),
+        let rendered = key
+            .as_ref()
+            .and_then(|key| self.formulas.cache.get(key))
+            .and_then(Option::as_ref);
+        match rendered {
+            Some(Ok(formula)) => display_formula(formula, ix),
             Some(Err(error)) => source()
                 .child(
                     div()
@@ -277,18 +329,16 @@ impl MarkdownView {
             let key = key.clone();
             async move {
                 let px_per_em = BODY_SIZE * plastext_math::SCALE * scale;
-                let rendered = plastext_math::render(&key.tex, key.display, px_per_em, key.color)?;
-                let mut bgra = rendered.rgba;
-                for pixel in bgra.as_chunks_mut::<4>().0 {
-                    pixel.swap(0, 2);
-                }
-                let buffer = image::RgbaImage::from_raw(rendered.width, rendered.height, bgra)
-                    .ok_or("The formula's image has the wrong size.")?;
+                let rendered = plastext_math::render(
+                    &key.tex,
+                    key.display,
+                    key.first_number.max(1),
+                    px_per_em,
+                    key.color,
+                )?;
                 Ok(Formula {
-                    image: Arc::new(gpui::RenderImage::new([image::Frame::new(buffer)])),
-                    width: rendered.width as f32 / scale,
-                    height: rendered.height as f32 / scale,
-                    baseline: rendered.baseline / scale,
+                    body: image(rendered.body, scale)?,
+                    tag: rendered.tag.map(|tag| image(tag, scale)).transpose()?,
                 })
             }
         });
@@ -323,6 +373,62 @@ impl MarkdownView {
     }
 }
 
+/// A GPUI image of `raster`, rendered at `scale` device pixels per point.
+fn image(raster: plastext_math::Raster, scale: f32) -> Result<Image, String> {
+    let mut bgra = raster.rgba;
+    for pixel in bgra.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    let buffer = image::RgbaImage::from_raw(raster.width, raster.height, bgra)
+        .ok_or("The formula's image has the wrong size.")?;
+    Ok(Image {
+        image: Arc::new(gpui::RenderImage::new([image::Frame::new(buffer)])),
+        width: raster.width as f32 / scale,
+        height: raster.height as f32 / scale,
+        baseline: raster.baseline / scale,
+    })
+}
+
+/// A display formula centered in the column, with its tag against the right
+/// edge on the same baseline, as KaTeX lays them out. Too wide a formula
+/// scrolls sideways.
+fn display_formula(formula: &Formula, ix: usize) -> AnyElement {
+    let Formula { body, tag } = formula;
+    let above = body
+        .baseline
+        .max(tag.as_ref().map_or(0., |tag| tag.baseline));
+    let below =
+        (body.height - body.baseline).max(tag.as_ref().map_or(0., |tag| tag.height - tag.baseline));
+    div()
+        .id(("md-math", ix))
+        .w_full()
+        .overflow_x_scroll()
+        .child(
+            div()
+                .relative()
+                .min_w_full()
+                .h(px(above + below))
+                .flex()
+                .justify_center()
+                .child(
+                    gpui::img(body.image.clone())
+                        .flex_none()
+                        .mt(px(above - body.baseline))
+                        .w(px(body.width))
+                        .h(px(body.height)),
+                )
+                .children(tag.as_ref().map(|tag| {
+                    gpui::img(tag.image.clone())
+                        .absolute()
+                        .right_0()
+                        .top(px(above - tag.baseline))
+                        .w(px(tag.width))
+                        .h(px(tag.height))
+                })),
+        )
+        .into_any_element()
+}
+
 /// Inline formulas are laid out at body size; headings and the TeX of
 /// display math keep their source.
 pub(super) fn inline_math_shown(block: &Block) -> bool {
@@ -330,7 +436,7 @@ pub(super) fn inline_math_shown(block: &Block) -> bool {
 }
 
 impl Slot {
-    pub(super) fn new(start: usize, count: usize, width: f32, formula: Formula) -> Self {
+    pub(super) fn new(start: usize, count: usize, width: f32, formula: Image) -> Self {
         Self {
             start,
             count,

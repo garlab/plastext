@@ -216,6 +216,8 @@ Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branc
 
 Inline math (`$…$`) renders the same way. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Headings still show inline TeX, since they use larger text.
 
+Display math puts `\tag`s and automatic equation numbers (`equation`, `gather`, `align`, `alignat`, `multline`) against the right edge of the column, on the formula's baseline. Numbers count up through the whole document, as on a web page. After parsing, a background pass counts each numbering formula's equations, and only those formulas are laid out. Numbered formulas show their TeX until that pass finishes.
+
 The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
 
 ### Retained memory — 2026-10-28
@@ -230,7 +232,7 @@ Resident memory, which includes allocator overhead and fragmentation, varied bet
 
 ## Remaining M2 work
 
-- Equation numbers, inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
+- Inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
 - Keep only a compact block index for large Markdown and parse visible blocks on demand (see Retained memory); certify 100 MB scrolling over 10,000 frames; run native 20M-row CSV scrolling tests; visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.

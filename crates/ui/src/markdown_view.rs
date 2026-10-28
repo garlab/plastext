@@ -286,6 +286,7 @@ impl MarkdownView {
                 self.document.warnings = summary.warnings;
                 self.update_symbols();
                 self.search(cx);
+                self.number_equations(cx);
                 if limited {
                     self.notice = Some(
                         "Preview covers the first 128 MiB. Source view can read the whole file."
