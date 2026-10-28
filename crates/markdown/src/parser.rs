@@ -558,6 +558,9 @@ impl<'a> Builder<'a> {
                 source: block.source.clone(),
             });
         }
+        // Blocks are kept for the document's lifetime: drop growth slack.
+        block.text.shrink_to_fit();
+        block.spans.shrink_to_fit();
         self.batch.push(Arc::new(block));
         if self.batch.len() >= BATCH {
             self.stopped = !(self.emit)(std::mem::take(&mut self.batch));

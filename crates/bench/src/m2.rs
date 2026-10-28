@@ -17,6 +17,7 @@ pub fn run(file: &Path, output: Option<&Path>) -> io::Result<()> {
             "M2 preview benchmark accepts up to 128 MiB",
         ));
     }
+    let rss_start = rss_mb();
     let head = source.head(64 * 1024)?;
     let preview = parse(&String::from_utf8_lossy(&head));
     let first_ms = start.elapsed().as_secs_f64() * 1000.;
@@ -27,7 +28,8 @@ pub fn run(file: &Path, output: Option<&Path>) -> io::Result<()> {
     })?;
     let text = std::str::from_utf8(&bytes).map_err(io::Error::other)?;
     let full = Instant::now();
-    let mut blocks = 0;
+    // Keep the blocks, as the preview does, to measure what it retains.
+    let mut retained = Vec::new();
     let mut max_block = 0;
     let mut max_batch = 0;
     let summary = parse_stream(
@@ -35,19 +37,43 @@ pub fn run(file: &Path, output: Option<&Path>) -> io::Result<()> {
         || false,
         |batch| {
             max_batch = max_batch.max(batch.len());
-            blocks += batch.len();
             max_block = max_block.max(batch.iter().map(|b| b.text.len()).max().unwrap_or(0));
+            retained.extend(batch);
             true
         },
     );
     let full_ms = full.elapsed().as_secs_f64() * 1000.;
-    let result = json!({"schema":1,"file":file,"bytes":source.len(),"scope":"core parse only; excludes native layout/paint and reference-machine certification","initial_64k_blocks":preview.blocks.len(),"initial_read_and_parse_ms":first_ms,"full_parse_ms":full_ms,"blocks":blocks,"headings":summary.headings.len(),"max_block_text_bytes":max_block,"max_batch_blocks":max_batch,"warnings":summary.warnings});
+    let rss_parsed = rss_mb();
+    // The preview drops the file's text once it has parsed it.
+    drop(bytes);
+    let rss_retained = rss_mb();
+    let blocks = retained.len();
+    let block_text: usize = retained.iter().map(|block| block.text.len()).sum();
+    let spans: usize = retained.iter().map(|block| block.spans.len()).sum();
+    let result = json!({"schema":1,"file":file,"bytes":source.len(),"scope":"core parse only; excludes native layout/paint and reference-machine certification","initial_64k_blocks":preview.blocks.len(),"initial_read_and_parse_ms":first_ms,"full_parse_ms":full_ms,"blocks":blocks,"headings":summary.headings.len(),"max_block_text_bytes":max_block,"max_batch_blocks":max_batch,"warnings":summary.warnings,
+        "memory_mb":{"before":rss_start,"text_and_model":rss_parsed,"model_retained":rss_retained,"retained_over_start":rss_retained - rss_start},
+        "model":{"block_text_bytes":block_text,"spans":spans}});
     let summary = crate::report::LocalRun::new("m2")?.save(&result, output)?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     if max_block > plastext_markdown::BLOCK_TEXT_LIMIT || max_batch > 256 {
         return Err(io::Error::other("Markdown layout/batch bound exceeded"));
     }
     Ok(())
+}
+
+/// This process's resident memory, in MB.
+fn rss_mb() -> f64 {
+    std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .parse::<f64>()
+                .ok()
+        })
+        .map_or(0., |kb| kb / 1024.)
 }
 
 pub fn csv(file: &Path) -> io::Result<()> {

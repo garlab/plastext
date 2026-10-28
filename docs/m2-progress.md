@@ -198,11 +198,21 @@ cargo run --release -p plastext-math --features katex-rs,latex-rust --example en
 cargo build --release -p plastext-math --example engine_size --features katex-rs
 ```
 
+### Retained memory — 2026-10-28
+
+`plastext-bench m2` now keeps the parsed blocks, as the preview does, and reports resident memory. On the 100 MB fixture (330,080 blocks, 9.5 million inline spans), the parsed model holds 709 MB of live heap in 2.1 million allocations, after the parser now trims each block's buffers (the trimming saves about 225 MB of slack). The breakdown:
+- Spans: 532 MB. Each `Span` is 56 bytes: two `usize` ranges, six flags and an optional link.
+- Block text: 70 MB.
+- Block structs: 66 MB.
+- Link strings: about 40 MB.
+
+Resident memory, which includes allocator overhead and fragmentation, varied between runs: 1.2–1.8 GB with trimming and 1.4–2.2 GB without. The fixture is dense, with about 200 inline spans per paragraph, but even an ordinary large document would keep hundreds of megabytes. Keeping the whole parsed document conflicts with the spec's principle that cost follows what's on screen.
+
 ## Remaining M2 work
 
 - Native math integration, document-scoped macros, delimiter coverage, formula caching/selection and KaTeX corpus validation.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
-- Reduce the 100 MB Markdown draw/submit p99 below 8 ms, run native 20M-row CSV scrolling tests, check retained memory, and visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.
+- Keep only a compact block index for large Markdown and parse visible blocks on demand (see Retained memory); certify 100 MB scrolling over 10,000 frames; run native 20M-row CSV scrolling tests; visually review light/dark themes. The Markdown long run now completes, but layout has not been visually certified.
 
 Workspace tests, strict Clippy and the GPUI dependency-boundary check cover this increment. M2's exit conditions have not been met. Markdown editing, task-list mutation, live preview and synchronized edit/preview belong to M3.
