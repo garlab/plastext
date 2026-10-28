@@ -217,10 +217,13 @@ impl MarkdownView {
             scale: scale_key(scale),
         };
         self.request_formula(&key, ix, scale, cx);
+        // Without the newlines that usually surround `$$` math.
+        let start = block.text.len() - block.text.trim_start().len();
+        let end = block.text.trim_end().len().max(start);
         let source = || {
             div().p_3().bg(theme.surface).child(self.rich_text(
                 block,
-                0..block.text.len(),
+                start..end,
                 ix,
                 true,
                 theme,
