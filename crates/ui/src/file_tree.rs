@@ -1,8 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{
-    Context, EventEmitter, SharedString, Task, UniformListScrollHandle, Window, div, prelude::*,
-    px, uniform_list,
+    Context, EventEmitter, PathBuilder, SharedString, Task, UniformListScrollHandle, Window,
+    canvas, div, point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
 use plastext_project::{EntryKind, FileTree, TreeOptions, read_dir};
@@ -96,11 +96,6 @@ impl Render for FileTreeView {
                         let row = this.tree.rows().get(index)?;
                         let entry = &row.entry;
                         let selected = this.selected.as_ref() == Some(&entry.path);
-                        let chevron = match (entry.kind, row.expanded) {
-                            (EntryKind::Dir, true) => "▾",
-                            (EntryKind::Dir, false) => "▸",
-                            (EntryKind::File, _) => "",
-                        };
                         let name: SharedString = entry.name.clone().into();
                         Some(
                             div()
@@ -120,11 +115,12 @@ impl Render for FileTreeView {
                                     theme.text
                                 })
                                 .child(
-                                    div()
-                                        .w(px(12.))
-                                        .flex_none()
-                                        .text_color(theme.text_muted)
-                                        .child(chevron),
+                                    div().size(px(18.)).flex_none().when(
+                                        entry.kind == EntryKind::Dir,
+                                        |slot| {
+                                            slot.child(disclosure(row.expanded, theme.text_muted))
+                                        },
+                                    ),
                                 )
                                 .child(
                                     div()
@@ -143,4 +139,27 @@ impl Render for FileTreeView {
         .size_full()
         .py_1()
     }
+}
+
+/// A consistent disclosure chevron independent of the system font's glyphs.
+fn disclosure(expanded: bool, color: gpui::Rgba) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let mut path = PathBuilder::stroke(px(1.75));
+            let points = if expanded {
+                [(4., 6.5), (9., 11.5), (14., 6.5)]
+            } else {
+                [(6.5, 4.), (11.5, 9.), (6.5, 14.)]
+            };
+            path.move_to(bounds.origin + point(px(points[0].0), px(points[0].1)));
+            for (x, y) in &points[1..] {
+                path.line_to(bounds.origin + point(px(*x), px(*y)));
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(px(18.))
 }
