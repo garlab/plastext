@@ -40,7 +40,7 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⇧⌘F` / `⇧⌘E` | Search the project / show files |
 | `j` `k`, `space` `⇧space`, `g` `G` | Scroll by line, by page, to top / bottom |
 | `⌃-` / `⌃⇧-` (or `⌘[` / `⌘]`) | Go back / forward |
-| `⌘\` / `⌘⌥\` | Split right / down |
+| `⌘D` / `⇧⌘D` | Split right / down |
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
