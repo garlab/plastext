@@ -897,16 +897,24 @@ impl MarkdownView {
         }
         let Some(block) = block else {
             return div()
-                .id(("md-block", ix))
-                .h(px(40.))
-                .px_6()
-                .py_2()
-                .text_color(Theme::get(window, cx).text_muted)
-                .child(if self.failed_pages.contains(&page) {
-                    "Preview unavailable · use Source"
-                } else {
-                    "Loading…"
-                })
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .id(("md-block", ix))
+                        .w_full()
+                        .max_w(self.prose_width.unwrap_or(px(820.)))
+                        .h(px(40.))
+                        .px_6()
+                        .py_2()
+                        .text_color(Theme::get(window, cx).text_muted)
+                        .child(if self.failed_pages.contains(&page) {
+                            "Preview unavailable · use Source"
+                        } else {
+                            "Loading…"
+                        }),
+                )
                 .into_any_element();
         };
         if let Some(profile) = &mut self.profile {
@@ -919,7 +927,6 @@ impl MarkdownView {
             .id(("md-block", ix))
             .w_full()
             .max_w(self.prose_width.unwrap_or(px(820.)))
-            .mx_auto()
             .px_6()
             .py_2()
             .when(
@@ -1044,36 +1051,44 @@ impl MarkdownView {
             BlockKind::Math => self.display_math(&block, ix, theme, window, cx),
             _ => self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx),
         };
-        base.child(
-            div()
-                .pl(px(block.indent as f32 * 18.))
-                .when(block.quote.is_some(), |d| {
-                    d.border_l_2()
-                        .border_color(theme.syntax(Highlight::Link))
-                        .pl_3()
-                })
-                .children(block.quote.as_ref().filter(|s| !s.is_empty()).map(|q| {
+        // List items are laid out as roots, so their auto margins do not
+        // center them. Give each row a full-width flex parent instead.
+        div()
+            .w_full()
+            .flex()
+            .justify_center()
+            .child(
+                base.child(
                     div()
-                        .text_sm()
-                        .font_weight(FontWeight::BOLD)
-                        .text_color(theme.syntax(Highlight::Link))
-                        .child(q.clone())
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .children(block.marker.clone().map(|m| div().flex_none().child(m)))
-                        .children(block.task.map(|checked| {
+                        .pl(px(block.indent as f32 * 18.))
+                        .when(block.quote.is_some(), |d| {
+                            d.border_l_2()
+                                .border_color(theme.syntax(Highlight::Link))
+                                .pl_3()
+                        })
+                        .children(block.quote.as_ref().filter(|s| !s.is_empty()).map(|q| {
                             div()
-                                .flex_none()
-                                .text_color(theme.text_muted)
-                                .child(if checked { "☑" } else { "☐" })
+                                .text_sm()
+                                .font_weight(FontWeight::BOLD)
+                                .text_color(theme.syntax(Highlight::Link))
+                                .child(q.clone())
                         }))
-                        .child(div().flex_1().min_w_0().child(content)),
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .children(block.marker.clone().map(|m| div().flex_none().child(m)))
+                                .children(block.task.map(|checked| {
+                                    div()
+                                        .flex_none()
+                                        .text_color(theme.text_muted)
+                                        .child(if checked { "☑" } else { "☐" })
+                                }))
+                                .child(div().flex_1().min_w_0().child(content)),
+                        ),
                 ),
-        )
-        .into_any_element()
+            )
+            .into_any_element()
     }
 }
 
