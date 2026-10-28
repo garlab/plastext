@@ -25,6 +25,8 @@ Default builds use the `runtime-shaders` feature so development works with Comma
 
 `plastext` is the command-line launcher. It hands its arguments to the running app, or starts the `plastext-app` binary sitting next to it, so keep the two in the same directory. Settings are read from `~/.config/plastext/config.toml`; see spec §5.10.
 
+See [Local development](docs/local-development.md) to open other projects, install a copy on your `PATH`, and run development independently of the installed app.
+
 ## Keys
 
 | Keys | Action |
