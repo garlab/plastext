@@ -55,6 +55,11 @@ pub fn supported() -> bool {
     cfg!(target_os = "macos")
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn worker_resident_bytes(pid: u32) -> Option<u64> {
+    macos::resident_bytes(pid)
+}
+
 pub fn is_pdf(path: &Path, head: &[u8]) -> bool {
     path.extension()
         .is_some_and(|s| s.eq_ignore_ascii_case("pdf"))

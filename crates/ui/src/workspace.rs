@@ -30,6 +30,7 @@ use crate::{
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
     tab_view::TabView,
+    tex_view::TexView,
     zoom::Zoom,
 };
 
@@ -70,6 +71,7 @@ pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
     crate::markdown_view::init(cx);
     crate::pdf_view::init(cx);
+    crate::tex_view::init(cx);
     crate::quick_open::init(cx);
     crate::picker::init(cx);
     let context = Some(KEY_CONTEXT);
@@ -423,6 +425,15 @@ impl Workspace {
                                     view.profile_reading(opening_started, frames);
                                 }
                                 view
+                            }))
+                        }
+                        Opened::Text(source, index, language)
+                            if path
+                                .extension()
+                                .is_some_and(|s| s.eq_ignore_ascii_case("tex")) =>
+                        {
+                            TabView::Tex(cx.new(|cx| {
+                                TexView::new(path.clone(), source, index, style, language, cx)
                             }))
                         }
                         Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {

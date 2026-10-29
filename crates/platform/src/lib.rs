@@ -2,6 +2,7 @@
 
 pub mod instance;
 pub mod pdf;
+pub mod tex;
 
 /// Set the running macOS application's Dock / app-switcher icon, including when
 /// launched as a bare executable. Call on the UI thread after AppKit starts.

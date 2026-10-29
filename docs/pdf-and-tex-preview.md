@@ -1,7 +1,7 @@
 # PDF and TeX preview design
 
-Status: accepted direction; the first PDF increment is implemented below. TeX
-compilation and package downloads are subsequent increments.
+Status: accepted direction. The PDF viewer and an offline pdfLaTeX increment
+are implemented below. Other engines and package downloads remain future work.
 
 ## Scope and modes
 
@@ -9,7 +9,7 @@ PDF files open in Preview, with a persistent Preview/Binary switch and
 Cmd+Shift+V shortcut. Binary uses the existing hex reader. Each mode retains its
 position. Preview failure must never prevent inspecting the file's bytes.
 
-TeX files will offer Source/Preview. Preview compiles a document to PDF locally;
+TeX files offer Source/Preview. Preview compiles a document to PDF locally;
 formula rendering alone cannot reproduce a complete LaTeX document.
 
 ## Performance and isolation
@@ -121,6 +121,8 @@ the application unresponsive.
 - [Accepted performance baseline](m1-performance.md)
 - [Tectonic CLI controls](https://tectonic-typesetting.github.io/book/latest/ref/v1cli.html)
 - [PDFium build configuration](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/README.md)
+- [pdfTeX manual](https://tug.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf)
+- [Kpathsea filename controls](https://tug.org/texinfohtml/kpathsea.html#Safe-filenames)
 
 ## First PDF increment
 
@@ -177,11 +179,11 @@ page bitmap or document-sized byte buffer is retained by the UI.
 
 The macOS worker denies networking, filesystem writes and child execution using
 Seatbelt, failing closed if the restrictions cannot be installed. File reads
-remain available for system PDF/font services. This deprecated API is defense
-in depth, not the future TeX filesystem sandbox; a signed helper/confinement
-strategy still needs validation before automatic compilation. Running inside
-an existing OS sandbox can prevent the worker from starting. There is no TeX
-execution, package installation or downloading in this increment.
+remain available for system PDF/font services. This PDF-only profile is separate
+from the stricter compiler profile below. Seatbelt is deprecated; a signed-helper
+confinement strategy and oldest-OS validation remain future work. Running inside
+an existing OS sandbox can prevent the worker from starting. PDF viewing never
+executes TeX or downloads packages; compilation requires separate enablement.
 
 Native tests generate their own PDFs and cover rotation, clipping, Retina
 enlargement, BGRA/row orientation, page 10,000, malformed inputs and protocol
@@ -201,3 +203,83 @@ resource limits, Linux/Windows rendering and validation on the oldest supported
 macOS. Native UI interaction and the large/complex PDF performance matrix remain
 acceptance work. A 10,000-page correctness test is not scrolling or memory
 certification. The accepted M1/M2 performance baseline is unchanged.
+
+## Local TeX increment
+
+Open a `.tex` file in Source, then choose **Preview** (Cmd+Shift+V). Select
+**Enable pdfLaTeX** to authorize its document folder for this application
+session. MacTeX/BasicTeX's installed pdfLaTeX is offered when available;
+**Choose pdfLaTeX…** selects another TeX Live installation. Nothing is installed
+or downloaded. Opening a source tab alone starts no compiler discovery, watcher,
+or compilation. TeX compilation currently requires macOS and an installed TeX
+Live distribution containing the document's packages and fonts.
+
+**Root…** chooses the main `.tex` document when viewing an included file. Inputs
+come from that document's folder and its subdirectories. **Add input folder…**
+explicitly authorizes a sibling folder for shared sources, figures or listings.
+Relative paths are preserved in the private snapshot; adding one sibling does
+not grant access to their entire parent. Up to eight folders share the same
+input budget. Changing the root to a different folder requires its own enable
+action.
+
+**Rebuild** (Cmd+R) rebuilds and resumes automatic updates; **Pause** stops them.
+Switching to Source or hiding every preview pauses compilation. Split views of
+the same tab share a compiler session and its result.
+
+The native filesystem watcher coalesces saves for at least 500 ms, increasing
+the delay up to two seconds after slow builds. It watches the authorized folders
+conservatively, including new files and atomic replacements. One global slot
+serializes compilation and snapshot creation. Changes cancel obsolete process
+groups; only the latest revision can be published. No polling runs while idle.
+The last successful PDF remains visible during builds and errors. Its replacement
+viewport is rendered before the swap, preserving page, fit mode, zoom and pan.
+Both presentations use the existing displayed/replacement tile allowance, so
+staging a new PDF does not temporarily lower the old one's raster resolution.
+
+Each build copies regular inputs into a private temporary directory, rejects
+symlinks, and hashes their contents. Before publication, it validates all captured
+inputs again, including dependencies first encountered during compilation.
+Hidden entries and common auxiliary files are excluded. The current conservative
+snapshot limit is 512 MiB and 10,000 directory entries; precise dependency-only
+snapshots are a later optimization. Outputs never go into the input folder.
+Temporary directories are removed on success, failure and cancellation; abnormal
+application termination can leave OS-temporary remnants.
+
+The compiler uses macOS's Seatbelt launcher with a deny-by-default profile and
+standard system runtime rules. It can read only its private inputs, outputs,
+the selected TeX installation, its existing MacTeX user font cache, and required
+system resources. The font cache is read-only; redirected cache folders are
+ignored. Missing fonts must be installed outside Plastext. Writes are confined
+to the build output; networking and process creation are denied. The application
+selects the executable and fixed arguments, disables shell escape, first-line
+format selection and automatic font/format generation, and clears inherited
+TeX configuration. Project Makefiles, latexmk configuration and document engine
+directives are never executed. Kpathsea filename settings alone are not a
+security boundary; `openin_any` no longer restricts reads in TeX Live 2026.
+
+pdfLaTeX runs up to three passes for references, with an explicit sandboxed
+BibTeX pass when required. The build has a 60-second deadline, a sampled 1 GiB
+compiler RSS limit, a 256 MiB output allowance, a 64 MiB per-file limit and a
+1 MiB console log limit. A child alarm also bounds orphaned work after a parent
+crash. Displayed errors retain only a short log tail. These are initial limits,
+not certification for arbitrary large documents.
+
+Tests cover private snapshots, same-length input changes, symlink rejection,
+outside-file/network/subprocess denial, read-only cached fonts, explicitly added
+input folders, atomic saves, included-file updates,
+save bursts, pause/resume, cancellation and retaining a successful PDF after an
+error. The headless smoke test exercises the same compiler and PDF worker:
+
+```sh
+cargo run -p plastext-platform --example tex_probe -- /path/to/main.tex
+# Optional explicitly authorized shared inputs:
+cargo run -p plastext-platform --example tex_probe -- /path/to/paper/main.tex --input-folder /path/to/shared
+```
+
+Still pending: XeLaTeX/LuaLaTeX, Biber and other generated-asset pipelines,
+Tectonic setup/downloads, persistent project permissions, unsaved-buffer overlays
+once editing is implemented, SyncTeX, configurable limits and cleanup after
+crashes. Source is currently read-only;
+external editor saves drive automatic rebuilding. Sandbox validation on the
+oldest supported macOS, visual UI acceptance and large-project resource/frame
+certification remain outstanding. The accepted performance baseline is unchanged.

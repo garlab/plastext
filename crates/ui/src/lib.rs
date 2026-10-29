@@ -12,6 +12,7 @@ mod picker;
 mod quick_open;
 mod search_panel;
 mod tab_view;
+mod tex_view;
 mod workspace;
 mod zoom;
 

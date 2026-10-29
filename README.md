@@ -44,12 +44,18 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
 | `⇧⌘V` in PDF | Toggle Preview / Binary, preserving each position |
+| `⇧⌘V` in TeX | Toggle Source / Preview; local pdfLaTeX requires explicit folder enablement |
+| `⌘R` in TeX | Rebuild and resume automatic preview updates |
 | `←` / `→`, `Home` / `End` in PDF preview | Previous / next page, first / last page |
 | `⌃G` in PDF preview | Jump to a page number |
 | `⌘R` in PDF preview | Reload the file from disk |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
+
+TeX previews use an installed TeX Live pdfLaTeX, stay offline and rebuild after
+external saves. Use **Root…** for included files and **Pause** for expensive
+documents. See [setup, behavior and limits](docs/pdf-and-tex-preview.md#local-tex-increment).
 
 The file tree shows coloured file-type icons, with dedicated icons for common languages, documents, images, configuration files and folders. Use `⇧⌘P` → **File Icon Theme** to choose Material, None, or an imported VS Code icon theme, including Seti. The choice applies immediately and is saved independently of the colour theme. See [icon themes](docs/icon-themes.md) for imports and compatibility.
 

@@ -38,12 +38,12 @@ actions!(
 
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-shift-v", ToggleBinary, Some("Pdf")),
+        KeyBinding::new("cmd-shift-v", ToggleBinary, Some("Pdf && !Tex")),
         KeyBinding::new("right", NextPage, Some("PdfPreview")),
         KeyBinding::new("left", PreviousPage, Some("PdfPreview")),
         KeyBinding::new("home", FirstPage, Some("PdfPreview")),
         KeyBinding::new("end", LastPage, Some("PdfPreview")),
-        KeyBinding::new("cmd-r", Reload, Some("PdfPreview")),
+        KeyBinding::new("cmd-r", Reload, Some("PdfPreview && !Tex")),
     ]);
 }
 
@@ -87,6 +87,10 @@ pub struct PdfView {
     prefetch_retry: Option<Task<()>>,
     generation: u64,
     error: Option<SharedString>,
+    embedded: bool,
+    ready: bool,
+    prefetch_suspended: bool,
+    budget_sponsored: bool,
 }
 
 impl PdfView {
@@ -129,7 +133,74 @@ impl PdfView {
             prefetch_retry: None,
             generation: 0,
             error: None,
+            embedded: false,
+            ready: false,
+            prefetch_suspended: false,
+            budget_sponsored: false,
         }
+    }
+
+    pub(super) fn compiled(
+        path: PathBuf,
+        source: Arc<FileSource>,
+        output: &plastext_platform::tex::Compiled,
+        style: TextStyle,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut view = Self::new(path, source, style, cx);
+        view.embedded = true;
+        view.document = Some(output.document.clone());
+        view.source_snapshot = view.document.clone();
+        view.info = Some(output.info);
+        view.pages = Some(output.info.pages);
+        view.nearby.visit(1, output.info.pages);
+        view.nearby.insert(output.info);
+        view
+    }
+    pub(super) fn ready(&self) -> bool {
+        self.ready && self.error.is_none()
+    }
+    /// A replacement borrows the old view's reserved half-cache until the swap.
+    /// Counting it as another pane would lower both raster scales mid-rebuild.
+    pub(super) fn stage(&mut self, sponsored: bool) {
+        self.budget_sponsored = sponsored;
+        self.prefetch_suspended = true;
+    }
+    pub(super) fn suspend_prefetch(&mut self, suspend: bool, cx: &mut Context<Self>) {
+        self.prefetch_suspended = suspend;
+        if suspend {
+            self.cancel_prefetch();
+            Tiles::retain_prefetched(cx.entity_id(), &[], cx);
+        }
+        cx.notify();
+    }
+    pub(super) fn publish(&mut self, cx: &mut Context<Self>) {
+        self.budget_sponsored = false;
+        self.prefetch_suspended = false;
+        Tiles::set_active(cx.entity_id(), self.visible, cx);
+        cx.notify();
+    }
+    pub(super) fn reading_state(&self) -> (u32, bool, Point<f64>) {
+        (self.page, self.fit_page, self.pan)
+    }
+    pub(super) fn restore_reading_state(
+        &mut self,
+        state: (u32, bool, Point<f64>),
+        cx: &mut Context<Self>,
+    ) {
+        let state = (
+            state.0.min(self.pages.unwrap_or(u32::MAX)),
+            state.1,
+            state.2,
+        );
+        if self.reading_state() == state {
+            return;
+        }
+        self.go_to(state.0, cx);
+        self.fit_page = state.1;
+        self.pan = state.2;
+        self.ready = false;
+        cx.notify();
     }
 
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
@@ -150,6 +221,7 @@ impl PdfView {
             view.fit_page = self.fit_page;
             view.pan = self.pan;
             view.binary = self.binary;
+            view.embedded = self.embedded;
             if let Some(raw) = &self.raw {
                 let raw = raw.update(cx, |raw, cx| raw.duplicate(cx));
                 view.raw_observer = Some(cx.observe(&raw, |_, _, cx| cx.notify()));
@@ -160,6 +232,9 @@ impl PdfView {
     }
 
     pub fn set_zoom(&mut self, factor: f32, font_size: Pixels, cx: &mut Context<Self>) {
+        if self.zoom != factor {
+            self.ready = false;
+        }
         self.zoom = factor;
         if let Some(raw) = &self.raw {
             raw.update(cx, |raw, cx| raw.set_font_size(font_size, cx));
@@ -175,7 +250,11 @@ impl PdfView {
             self.cancel();
             self.reset_presentation(cx);
         }
-        Tiles::set_active(cx.entity_id(), visible && !self.binary, cx);
+        Tiles::set_active(
+            cx.entity_id(),
+            visible && !self.binary && !self.budget_sponsored,
+            cx,
+        );
     }
     pub fn notice(&self) -> Option<SharedString> {
         if self.binary {
@@ -219,6 +298,7 @@ impl PdfView {
         }
     }
     fn reset_presentation(&mut self, cx: &mut Context<Self>) {
+        self.ready = false;
         self.presentation = Presentation::default();
         self.resize_task = None;
         self.prefetch_blocked = false;
@@ -516,6 +596,7 @@ impl PdfView {
     fn prefetch(&mut self, viewport: PrefetchViewport, window: &Window, cx: &mut Context<Self>) {
         if !self.visible
             || self.binary
+            || self.prefetch_suspended
             || self.pending.is_some()
             || self.error.is_some()
             || self.prefetch_retry.is_some()
@@ -561,6 +642,9 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> PageLayout {
+        if !self.visible {
+            return PageLayout::default();
+        }
         let Some(info) = self.info else {
             self.load_page(cx);
             return PageLayout::default();
@@ -641,6 +725,11 @@ impl PdfView {
                 );
                 tiles.push((rect, image));
             }
+        }
+        let ready = missing.is_none() && !settling;
+        if self.ready != ready {
+            self.ready = ready;
+            cx.notify();
         }
         if let Some(tile) = missing {
             self.cancel_prefetch();
@@ -750,8 +839,10 @@ impl Render for PdfView {
             .size_full()
             .flex()
             .flex_col()
-            .on_action(cx.listener(Self::toggle_binary))
-            .on_action(cx.listener(Self::reload))
+            .when(!self.embedded, |d| {
+                d.on_action(cx.listener(Self::toggle_binary))
+                    .on_action(cx.listener(Self::reload))
+            })
             .on_action(
                 cx.listener(|this, _: &NextPage, _, cx| {
                     this.go_to(this.page.saturating_add(1), cx)
@@ -817,31 +908,35 @@ impl Render for PdfView {
                                     cx.notify();
                                 })),
                         )
-                        .child(
-                            div()
-                                .id("pdf-reload")
-                                .cursor_pointer()
-                                .child("Reload")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.reload(&Reload, window, cx);
-                                    this.focus.focus(window);
-                                })),
-                        )
+                        .when(!self.embedded, |bar| {
+                            bar.child(
+                                div()
+                                    .id("pdf-reload")
+                                    .cursor_pointer()
+                                    .child("Reload")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.reload(&Reload, window, cx);
+                                        this.focus.focus(window);
+                                    })),
+                            )
+                        })
                     })
                     .child(div().flex_1())
-                    .child(
-                        div()
-                            .id("pdf-toggle")
-                            .cursor_pointer()
-                            .child(if self.binary {
-                                "Preview  ⇧⌘V"
-                            } else {
-                                "Binary  ⇧⌘V"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_binary(&ToggleBinary, window, cx)
-                            })),
-                    ),
+                    .when(!self.embedded, |bar| {
+                        bar.child(
+                            div()
+                                .id("pdf-toggle")
+                                .cursor_pointer()
+                                .child(if self.binary {
+                                    "Preview  ⇧⌘V"
+                                } else {
+                                    "Binary  ⇧⌘V"
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_binary(&ToggleBinary, window, cx)
+                                })),
+                        )
+                    }),
             )
             .child(div().flex_1().min_h_0().child(body))
     }

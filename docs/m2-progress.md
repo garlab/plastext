@@ -257,7 +257,10 @@ Draw/submit p99 was **8.77 ms**, above the 8 ms target (`complete: true`, `passe
 PDF viewing has an initial isolated, tiled page viewer with Preview/Binary
 switching. Its implemented controls, resource limits and remaining validation
 are recorded in [PDF and TeX preview design](pdf-and-tex-preview.md#first-pdf-increment).
-TeX compilation is not implemented yet.
+TeX now has an opt-in offline pdfLaTeX preview, with save batching, cancellation,
+private build inputs and retention of the last successful PDF. Other engines,
+downloads and large-project certification remain pending; see the
+[local TeX increment](pdf-and-tex-preview.md#local-tex-increment).
 
 - Inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
