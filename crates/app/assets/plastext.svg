@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Plastext</title>
+  <desc>A folded-page P with cyan text on a rounded midnight-blue tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="160" y1="96" x2="848" y2="944" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#314D70"/>
+      <stop offset="0.55" stop-color="#1B2D48"/>
+      <stop offset="1" stop-color="#101C30"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="360" y1="224" x2="600" y2="800" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DAEAF4"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="565" y1="224" x2="704" y2="363" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A2F3F6"/>
+      <stop offset="1" stop-color="#42C7E7"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#071121" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <rect x="80" y="80" width="864" height="864" rx="196" fill="url(#tile)" filter="url(#shadow)"/>
+  <rect x="81" y="81" width="862" height="862" rx="195" fill="none" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="2"/>
+  <path fill="#071121" opacity="0.22" transform="translate(0 12)" fill-rule="evenodd"
+    d="M328 224H565L704 363V504C704 575 647 632 576 632H424V800H296V256C296 238 310 224 328 224ZM424 352V512H558C577 512 592 497 592 478V386C592 367 577 352 558 352Z"/>
+  <path fill="url(#paper)" fill-rule="evenodd"
+    d="M328 224H565L704 363V504C704 575 647 632 576 632H424V800H296V256C296 238 310 224 328 224ZM424 352V512H558C577 512 592 497 592 478V386C592 367 577 352 558 352Z"/>
+  <path d="M565 224L704 363H603C582 363 565 346 565 325Z" fill="url(#fold)"/>
+  <path d="M455 407H548M455 457H514" fill="none" stroke="#6DE0EC" stroke-width="18" stroke-linecap="round"/>
+</svg>

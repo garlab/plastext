@@ -76,6 +76,12 @@ fn main() -> ExitCode {
 
     let application = Application::new().with_assets(plastext_ui::Assets);
     application.run(move |cx: &mut App| {
+        #[cfg(target_os = "macos")]
+        if let Err(error) =
+            plastext_platform::set_application_icon(include_bytes!("../assets/plastext.icns"))
+        {
+            eprintln!("plastext: {error}");
+        }
         if env::var_os("PLASTEXT_PROFILE_STARTUP").is_some() {
             cx.set_global(StartupProfile {
                 start,

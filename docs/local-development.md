@@ -12,6 +12,8 @@ cargo run -p plastext-app -- ../another-project
 
 Replace `../another-project` with the folder you want to open. Relative paths are resolved from your current directory.
 
+On macOS, the running app sets its Dock and app-switcher icon automatically, including with `cargo run`. Quit any older running instance before trying an updated build. The editable SVG and regeneration instructions are in [app icon assets](../crates/app/assets/README.md).
+
 ## Install for your user
 
 Install the app and launcher together:
