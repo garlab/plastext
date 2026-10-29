@@ -47,6 +47,8 @@ See [Local development](docs/local-development.md) to open other projects, insta
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
 
+The file tree shows coloured file-type icons, with dedicated icons for common languages, documents, images, configuration files and folders.
+
 ## Benchmarks
 
 ```sh
@@ -103,5 +105,7 @@ The workspace follows spec §7.3, with one crate per concern under `crates/`. On
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
+
+File icons are from [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme) under its MIT licence. Their copyright and licence are retained in [Third-party notices](THIRD_PARTY_NOTICES.md), also available with `plastext --notices`.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in plastext by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

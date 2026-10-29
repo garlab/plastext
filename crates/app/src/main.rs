@@ -47,7 +47,10 @@ fn main() -> ExitCode {
         return math_probe(&fonts.to_string_lossy(), start);
     }
     // Handles `--help` and `--version`, and rejects bad arguments.
-    Cli::parse();
+    if Cli::parse().notices {
+        print!("{}", plastext_cli::BUNDLED_ASSET_NOTICES);
+        return ExitCode::SUCCESS;
+    }
     let request = match OpenRequest::from_env() {
         Ok(request) => request,
         Err(err) => {
@@ -71,7 +74,8 @@ fn main() -> ExitCode {
         }
     };
 
-    Application::new().run(move |cx: &mut App| {
+    let application = Application::new().with_assets(plastext_ui::Assets);
+    application.run(move |cx: &mut App| {
         if env::var_os("PLASTEXT_PROFILE_STARTUP").is_some() {
             cx.set_global(StartupProfile {
                 start,

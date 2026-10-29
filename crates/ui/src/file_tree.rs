@@ -2,10 +2,12 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{
     Context, EventEmitter, PathBuilder, SharedString, Task, UniformListScrollHandle, Window,
-    canvas, div, point, prelude::*, px, uniform_list,
+    canvas, div, img, point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
 use plastext_project::{EntryKind, FileTree, TreeOptions, read_dir};
+
+use crate::file_icons::FileIcon;
 
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
@@ -91,12 +93,21 @@ impl Render for FileTreeView {
             self.tree.rows().len(),
             cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
                 let theme = Theme::get(window, cx);
+                let light = matches!(
+                    window.appearance(),
+                    gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
+                );
                 range
                     .filter_map(|index| {
                         let row = this.tree.rows().get(index)?;
                         let entry = &row.entry;
                         let selected = this.selected.as_ref() == Some(&entry.path);
                         let name: SharedString = entry.name.clone().into();
+                        let icon = if entry.kind == EntryKind::Dir {
+                            FileIcon::Folder
+                        } else {
+                            FileIcon::for_name(&entry.name, light)
+                        };
                         Some(
                             div()
                                 .id(index)
@@ -124,6 +135,18 @@ impl Render for FileTreeView {
                                 )
                                 .child(
                                     div()
+                                        .size(px(18.))
+                                        .flex_none()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .when(entry.ignored, |icon| icon.opacity(0.5))
+                                        .child(img(icon.path()).size(px(16.))),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
                                         .overflow_hidden()
                                         .whitespace_nowrap()
                                         .text_ellipsis()

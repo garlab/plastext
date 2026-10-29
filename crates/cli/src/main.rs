@@ -14,7 +14,10 @@ use plastext_platform::instance::{self, OpenRequest};
 
 fn main() -> ExitCode {
     // Handles `--help` and `--version`, and rejects bad arguments before the app sees them.
-    Cli::parse();
+    if Cli::parse().notices {
+        print!("{}", plastext_cli::BUNDLED_ASSET_NOTICES);
+        return ExitCode::SUCCESS;
+    }
 
     if let Ok(request) = OpenRequest::from_env()
         && instance::send(&request).is_ok()
