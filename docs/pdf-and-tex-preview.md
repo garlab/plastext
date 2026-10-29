@@ -157,12 +157,14 @@ remain progressive. Hiding a preview, changing page or reloading clears the
 retained presentation so another document or page cannot appear as a fallback.
 
 After the visible page is ready, the viewer caches dimensions and preloads the
-first viewport of two pages ahead and two behind, prioritizing the direction of
-travel. These small previews appear immediately on a cached page turn and are
-replaced together when full-resolution tiles are ready. Metadata is limited to
-five pages, and speculative images use at most a quarter of each view's existing
-cache share. Preloading never evicts another pane's images; visible work in any
-pane can interrupt it. Resizing, page changes, hiding and Binary mode cancel
+first viewport of up to two pages ahead and two behind, prioritizing the direction
+of travel. Preloaded tiles use the exact display resolution, so cached page turns
+do not briefly show enlarged thumbnails or change text weight. Only complete
+viewports that fit the view's remaining share of the 128 MiB cache are admitted;
+large viewports or many split panes reduce the number of pages preloaded instead
+of lowering their quality. Metadata is limited to five pages. Preloading never
+evicts another pane's images; visible work can reclaim speculative tiles and
+interrupt their rendering. Resizing, page changes, hiding and Binary mode cancel
 obsolete work. Toolbar controls return keyboard focus to the preview, so arrow
 navigation remains available after changing the fit mode.
 

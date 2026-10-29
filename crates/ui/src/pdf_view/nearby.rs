@@ -67,6 +67,27 @@ pub(super) struct PrefetchViewport {
     pub fit_page: bool,
 }
 impl PrefetchViewport {
+    /// Use the same raster scale as the visible page. Admit complete viewports
+    /// in navigation order instead of shrinking them to fit a per-page quota.
+    pub fn plan(self, pages: &[PageInfo], tile_budget: usize, mut bytes: usize) -> Vec<Vec<Tile>> {
+        let mut plan = Vec::new();
+        for &info in pages {
+            let tiles = self.tiles(info, tile_budget);
+            if tiles.is_empty() {
+                continue;
+            }
+            let cost = tiles.iter().try_fold(0, |cost, tile| {
+                let (width, height) = tile.dimensions(info).ok()?;
+                Some(cost + width as usize * height as usize * 8)
+            });
+            if let Some(cost) = cost.filter(|&cost| cost <= bytes) {
+                bytes -= cost;
+                plan.push(tiles);
+            }
+        }
+        plan
+    }
+
     pub fn tiles(self, info: PageInfo, budget: usize) -> Vec<Tile> {
         let mut view = Viewport::new(
             info,
@@ -148,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn page_turn_uses_cached_dimensions_and_preview_until_sharp_tiles_are_ready() {
+    fn page_turn_reuses_the_exact_display_tiles_without_a_quality_change() {
         let mut nearby = Nearby::default();
         nearby.visit(1, 10_000);
         nearby.insert(info(1));
@@ -165,25 +186,62 @@ mod tests {
             zoom: 1.,
             fit_page: true,
         };
-        let coarse = viewport.tiles(next, 4);
-        nearby.ready(2, coarse.clone());
+        let sharp = viewport.tiles(next, 32);
+        let plan = viewport.plan(&[next], 32, 64 * 1024 * 1024);
+        assert_eq!(plan.as_slice(), std::slice::from_ref(&sharp));
+        nearby.ready(2, plan[0].clone());
         nearby.visit(2, 10_000);
         assert_eq!(nearby.info(2), Some(next));
-        let sharp = viewport.tiles(next, 32);
-        assert!(sharp[0].scale > coarse[0].scale);
         let mut presentation = Presentation::default();
         presentation.target(2, sharp[0].scale, Instant::now());
+        // A differently scaled thumbnail must not sneak into a page turn.
+        presentation.seed(&viewport.tiles(next, 4));
+        assert!(presentation.select(&sharp, &[]).is_empty());
         presentation.seed(nearby.preview(2));
-        assert_eq!(presentation.select(&sharp, &[]), coarse);
-        assert_eq!(presentation.select(&sharp, &sharp[..1]), coarse);
+        assert_eq!(presentation.select(&sharp, &[]), sharp);
         assert_eq!(presentation.select(&sharp, &sharp), sharp);
 
         // A jump beyond the small cache never displays a previous page.
         nearby.visit(100, 10_000);
         presentation.target(100, sharp[0].scale, Instant::now());
-        presentation.seed(&coarse);
+        presentation.seed(&sharp);
         assert!(nearby.info(100).is_none());
         assert!(nearby.preview(2).is_empty());
         assert!(presentation.select(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn preload_admits_whole_viewports_in_priority_order_within_spare_memory() {
+        let pages = [info(2), info(3), info(1), info(4)];
+        for (width, height, dpr, zoom, fit_page, tile_budget) in [
+            (1500., 1000., 2., 1., true, 32),
+            (2400., 1500., 2., 2., false, 32),
+            (600., 700., 2., 1., true, 16),
+            (600., 700., 1., 1., false, 4),
+        ] {
+            let viewport = PrefetchViewport {
+                width,
+                height,
+                dpr,
+                zoom,
+                fit_page,
+            };
+            let expected = viewport.tiles(pages[0], tile_budget);
+            let bytes: usize = expected
+                .iter()
+                .map(|tile| {
+                    let (w, h) = tile.dimensions(pages[0]).unwrap();
+                    w as usize * h as usize * 8
+                })
+                .sum();
+            assert!(viewport.plan(&pages, tile_budget, bytes - 1).is_empty());
+            let plan = viewport.plan(&pages, tile_budget, bytes * 2);
+            assert_eq!(plan.len(), 2);
+            assert_eq!(plan[0], expected);
+            assert_eq!(plan[1], viewport.tiles(pages[1], tile_budget));
+            // Direction reversal changes priority, without changing quality.
+            let reverse = viewport.plan(&[pages[2], pages[0]], tile_budget, bytes);
+            assert_eq!(reverse, [viewport.tiles(pages[2], tile_budget)]);
+        }
     }
 }

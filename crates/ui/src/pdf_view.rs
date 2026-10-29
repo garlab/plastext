@@ -532,20 +532,18 @@ impl PdfView {
                 return;
             }
         }
-        let budget = Tiles::prefetch_tile_budget(cx);
-        for page in candidates {
-            let ready = self.nearby.preview(page);
-            if !ready.is_empty()
-                && ready
-                    .iter()
-                    .all(|&tile| Tiles::contains(cx.entity_id(), tile, cx))
-            {
-                continue;
-            }
-            let tiles = viewport.tiles(self.nearby.info(page).unwrap(), budget);
-            if tiles.is_empty() {
-                continue;
-            }
+        let pages: Vec<_> = candidates
+            .into_iter()
+            .filter_map(|page| self.nearby.info(page))
+            .collect();
+        let plan = viewport.plan(
+            &pages,
+            Tiles::tile_budget(cx),
+            Tiles::prefetch_space(cx.entity_id(), cx),
+        );
+        let wanted: Vec<_> = plan.iter().flatten().copied().collect();
+        Tiles::prepare_prefetch(cx.entity_id(), &wanted, cx);
+        for tiles in plan {
             if let Some(&tile) = tiles
                 .iter()
                 .find(|&&tile| !Tiles::contains(cx.entity_id(), tile, cx))
@@ -553,7 +551,7 @@ impl PdfView {
                 self.request_tile(tile, true, window, cx);
                 return;
             }
-            self.nearby.ready(page, tiles);
+            self.nearby.ready(tiles[0].page, tiles);
         }
     }
 
@@ -574,7 +572,7 @@ impl PdfView {
             zoom: self.zoom as f64,
             fit_page: self.fit_page,
         };
-        let prefetch_key = (prefetch_viewport, Tiles::prefetch_tile_budget(cx));
+        let prefetch_key = (prefetch_viewport, Tiles::tile_budget(cx));
         if self.prefetch_viewport != Some(prefetch_key) {
             self.cancel_prefetch();
             Tiles::retain_prefetched(cx.entity_id(), &[], cx);

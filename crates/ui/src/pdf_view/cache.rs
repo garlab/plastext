@@ -48,9 +48,49 @@ impl Tiles {
         // Leave equal room for the displayed viewport and its replacement.
         BUDGET / cx.global::<Self>().active.len().max(1) / (512 * 512 * 8) / 2
     }
-    pub fn prefetch_tile_budget(cx: &App) -> usize {
-        // Four neighbors together use at most a quarter of this view's share.
-        Self::tile_budget(cx) / 8
+    pub fn prefetch_space(owner: EntityId, cx: &App) -> usize {
+        let cache = cx.global::<Self>();
+        let mut owner_bytes = 0;
+        let mut pinned_bytes = 0;
+        for ((id, _), entry) in &cache.entries {
+            if *id == owner {
+                owner_bytes += entry.charged;
+                if entry.pinned {
+                    pinned_bytes += entry.charged;
+                }
+            }
+        }
+        // Full-resolution neighbors may use this view's spare capacity. Visible
+        // work can reclaim it immediately; no other pane's images are displaced.
+        let share = BUDGET / cache.active.len().max(1);
+        share
+            .saturating_sub(pinned_bytes)
+            .min(BUDGET.saturating_sub(cache.bytes - owner_bytes + pinned_bytes))
+    }
+    pub fn prepare_prefetch(owner: EntityId, wanted: &[Tile], cx: &mut App) {
+        cx.update_global::<Self, _>(|cache, cx| {
+            let mut evicted = Vec::new();
+            for ((id, tile), entry) in &mut cache.entries {
+                if *id != owner || entry.pinned {
+                    continue;
+                }
+                if wanted.contains(tile) {
+                    // Preserve cached historical pages that are in the new plan.
+                    entry.prefetched = true;
+                } else if entry.prefetched {
+                    evicted.push((*id, *tile));
+                }
+            }
+            let evicted = evicted
+                .into_iter()
+                .map(|key| {
+                    let entry = cache.entries.remove(&key).unwrap();
+                    cache.bytes -= entry.charged;
+                    entry
+                })
+                .collect();
+            release(evicted, cx);
+        });
     }
     pub fn contains(owner: EntityId, tile: Tile, cx: &App) -> bool {
         cx.global::<Self>().entries.contains_key(&(owner, tile))
@@ -168,14 +208,11 @@ impl Tiles {
             }
             let share = BUDGET / cache.active.len().max(1);
             let mut owner_bytes = 0;
-            let mut prefetched_bytes = 0;
             let mut disposable_bytes = 0;
             for ((id, _), entry) in &cache.entries {
                 if *id == owner {
                     owner_bytes += entry.charged;
-                    if entry.prefetched {
-                        prefetched_bytes += entry.charged;
-                    } else if !entry.pinned {
+                    if !entry.prefetched && !entry.pinned {
                         disposable_bytes += entry.charged;
                     }
                 }
@@ -183,8 +220,7 @@ impl Tiles {
             // Speculation only replaces this view's old, unpinned foreground
             // tiles. Never evict another pane's displayed or in-progress frame,
             // or cycle endlessly through the other preloaded neighbors.
-            if prefetched_bytes + charged > share / 4
-                || owner_bytes + charged > share + disposable_bytes
+            if owner_bytes + charged > share + disposable_bytes
                 || cache.bytes + charged > BUDGET + disposable_bytes
             {
                 return false;

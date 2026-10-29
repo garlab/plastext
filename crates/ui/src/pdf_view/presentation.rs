@@ -48,9 +48,7 @@ impl Presentation {
     pub fn seed(&mut self, tiles: &[Tile]) {
         if self.displayed.is_empty()
             && !tiles.is_empty()
-            && tiles
-                .iter()
-                .all(|tile| self.target.is_some_and(|target| target.0 == tile.page))
+            && tiles.iter().all(|tile| self.is_current(*tile))
         {
             self.displayed.extend_from_slice(tiles);
         }
