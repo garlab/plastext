@@ -170,14 +170,24 @@ impl Render for FileTreeView {
                                 } else {
                                     theme.text
                                 })
-                                .when(!hide_arrows, |row_element| {
-                                    row_element.child(div().size(px(18.)).flex_none().when(
-                                        entry.kind == EntryKind::Dir,
-                                        |slot| {
-                                            slot.child(disclosure(row.expanded, theme.text_muted))
-                                        },
-                                    ))
-                                })
+                                // A file icon occupies the disclosure column.
+                                // An extra empty chevron slot makes files look
+                                // like children of their sibling directories.
+                                .when(
+                                    !hide_arrows
+                                        && (entry.kind == EntryKind::Dir || icon.is_none()),
+                                    |row_element| {
+                                        row_element.child(div().size(px(18.)).flex_none().when(
+                                            entry.kind == EntryKind::Dir,
+                                            |slot| {
+                                                slot.child(disclosure(
+                                                    row.expanded,
+                                                    theme.text_muted,
+                                                ))
+                                            },
+                                        ))
+                                    },
+                                )
                                 .children(icon)
                                 .child(
                                     div()
