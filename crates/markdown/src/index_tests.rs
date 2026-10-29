@@ -15,6 +15,7 @@ fn indexed(text: &str) -> (DocumentIndex, Vec<Arc<Block>>) {
 fn compact_records_and_small_document_parity() {
     assert_eq!(size_of::<BlockEntry>(), 32);
     for text in [
+        include_str!("../../../docs/fixtures/tables.md"),
         "# Title\n\n**Hello** *world* &amp; café\n\n> quote\n>\n> - nested\n>   - deeper\n\n---\n",
         "---\ntitle: café\nitems: [one, two]\n---\n# Body\n\n- [x] done\n- next\n\n```rust\nlet x = 42;\n```\n",
         "+++\nname = 'test'\n[table]\na = 1\n+++\n# Body\n\nTerm\n: definition\n",
@@ -73,6 +74,22 @@ fn large_tables_and_fences_keep_context_and_every_byte() {
     );
     let (index, blocks) = indexed(&text);
     assert!(index.warnings.is_empty(), "{:?}", index.warnings);
+    assert_eq!(
+        index
+            .blocks
+            .iter()
+            .filter(|b| b.kind == BlockType::TableHead)
+            .count(),
+        1
+    );
+    assert_eq!(
+        index
+            .blocks
+            .iter()
+            .filter(|b| b.kind == BlockType::TableRow)
+            .count(),
+        20_000
+    );
     assert_eq!(
         blocks
             .iter()

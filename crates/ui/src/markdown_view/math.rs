@@ -86,6 +86,8 @@ struct InlineMetrics {
 pub(super) struct Slot {
     /// Where its placeholder starts in the displayed text.
     start: usize,
+    /// Byte offset of the hard line, for GPUI's per-line glyph indices.
+    line_start: usize,
     /// How many [`SLOT_CHAR`]s it has.
     count: usize,
     /// The placeholder's width.
@@ -419,6 +421,7 @@ impl Slot {
     pub(super) fn new(start: usize, count: usize, width: f32, formula: Image) -> Self {
         Self {
             start,
+            line_start: 0,
             count,
             width,
             formula,
@@ -428,6 +431,18 @@ impl Slot {
     /// The placeholder's bytes in the displayed text.
     pub(super) fn range(&self) -> std::ops::Range<usize> {
         self.start..self.start + self.count * SLOT_CHAR.len_utf8()
+    }
+
+    pub(super) fn set_line_starts(slots: &mut [Self], text: &str) {
+        // One forward scan, even for paragraphs dense with inline formulas.
+        let mut newlines = text.match_indices('\n').map(|(index, _)| index).peekable();
+        let mut line_start = 0;
+        for slot in slots {
+            while newlines.peek().is_some_and(|index| *index < slot.start) {
+                line_start = newlines.next().unwrap() + 1;
+            }
+            slot.line_start = line_start;
+        }
     }
 }
 
@@ -446,7 +461,34 @@ fn paint_slot(layout: &TextLayout, slot: &Slot, slot_char: f32, window: &mut Win
     let baseline = line_top
         + (line_height - line_layout.ascent - line_layout.descent) / 2.
         + line_layout.ascent;
-    let left = after_first.x - px(slot_char) + px((slot.width - slot.formula.width) / 2.);
+    // GPUI's index positions omit text-align's paint-time offset. Apply the
+    // same offset to formulas, using this wrapped row's actual glyph width.
+    let alignment = window.text_style().text_align;
+    let offset = if alignment == gpui::TextAlign::Left {
+        px(0.)
+    } else {
+        let index = slot.start + SLOT_CHAR.len_utf8() - slot.line_start;
+        let glyph_at = |boundary: &gpui::WrapBoundary| {
+            &line_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+        };
+        let row = line
+            .wrap_boundaries
+            .partition_point(|boundary| glyph_at(boundary).index < index);
+        let start = row.checked_sub(1).map_or(px(0.), |row| {
+            glyph_at(&line.wrap_boundaries[row]).position.x
+        });
+        let end = line
+            .wrap_boundaries
+            .get(row)
+            .map_or(line_layout.width, |boundary| glyph_at(boundary).position.x);
+        let spare = layout.bounds().size.width - (end - start);
+        if alignment == gpui::TextAlign::Center {
+            spare / 2.
+        } else {
+            spare
+        }
+    };
+    let left = after_first.x + offset - px(slot_char) + px((slot.width - slot.formula.width) / 2.);
     let bounds = Bounds::new(
         point(left, baseline - px(slot.formula.baseline)),
         size(px(slot.formula.width), px(slot.formula.height)),

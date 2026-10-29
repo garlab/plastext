@@ -590,6 +590,7 @@ impl MarkdownView {
             searchable.replace_range(range.clone(), &"\u{1}".repeat(range.len()));
         }
         let runs = self.highlight_matches(&searchable, runs, theme);
+        math::Slot::set_line_starts(&mut slots, &text);
         let styled = StyledText::new(text).with_runs(runs);
         let layout = styled.layout().clone();
         let text = InteractiveText::new(("md-text", id), styled)
@@ -953,6 +954,23 @@ impl MarkdownView {
                 matches!(block.kind, BlockKind::FrontMatterRow { .. }),
                 |d| d.py_0(),
             )
+            .when(matches!(block.kind, BlockKind::TableRow { .. }), |d| {
+                // Rows remain independently virtualized, but spacing belongs
+                // around the table, not between every pair of rows. Consult
+                // the compact index so this also works across cache pages.
+                d.py_0()
+                    .when(
+                        matches!(block.kind, BlockKind::TableRow { header: true, .. }),
+                        |d| d.pt_2(),
+                    )
+                    .when(
+                        self.document
+                            .blocks
+                            .get(ix + 1)
+                            .is_none_or(|next| next.kind != plastext_markdown::BlockType::TableRow),
+                        |d| d.pb_2(),
+                    )
+            })
             .text_size(px(BODY_SIZE * self.zoom))
             .line_height(relative(LINE_HEIGHT))
             .text_color(theme.text);
@@ -1035,20 +1053,27 @@ impl MarkdownView {
                 header,
                 cells,
                 alignments,
+                ..
             } => div()
                 .flex()
                 .w_full()
                 .border_b_1()
+                .border_r_1()
                 .border_color(theme.border)
                 .when(*header, |d| {
-                    d.bg(theme.surface).font_weight(FontWeight::BOLD)
+                    d.border_t_1()
+                        .bg(theme.surface)
+                        .font_weight(FontWeight::BOLD)
                 })
                 .children(cells.iter().enumerate().map(|(cell, range)| {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .px_2()
-                        .py_1()
+                        .flex()
+                        .flex_col()
+                        .justify_center()
+                        .px_3()
+                        .py(px(6. * self.zoom))
                         .border_l_1()
                         .border_color(theme.border)
                         .map(|d| match alignments.get(cell) {
@@ -1098,7 +1123,33 @@ impl MarkdownView {
                             div()
                                 .flex()
                                 .gap_2()
-                                .children(block.marker.clone().map(|m| div().flex_none().child(m)))
+                                .when(
+                                    matches!(block.kind, BlockKind::TableRow { in_list: true, .. }),
+                                    |d| {
+                                        // Reserve the same marker column on every
+                                        // row, even though only the header has a bullet.
+                                        d.child(
+                                            div()
+                                                .w(px(18.))
+                                                .flex_none()
+                                                .child(block.marker.clone().unwrap_or_default()),
+                                        )
+                                    },
+                                )
+                                .when(
+                                    !matches!(
+                                        block.kind,
+                                        BlockKind::TableRow { in_list: true, .. }
+                                    ),
+                                    |d| {
+                                        d.children(
+                                            block
+                                                .marker
+                                                .clone()
+                                                .map(|m| div().flex_none().child(m)),
+                                        )
+                                    },
+                                )
                                 .children(block.task.map(|checked| {
                                     div()
                                         .flex_none()

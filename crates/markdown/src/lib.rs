@@ -86,6 +86,7 @@ pub enum BlockKind {
     },
     TableRow {
         header: bool,
+        in_list: bool,
         cells: Vec<Range<usize>>,
         alignments: Arc<[Alignment]>,
     },

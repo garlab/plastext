@@ -27,6 +27,8 @@ pub enum BlockType {
     Math,
     Metadata,
     MetadataRow,
+    TableHead,
+    TableRow,
     Other,
 }
 
@@ -54,6 +56,8 @@ impl BlockEntry {
                 BlockKind::Heading { .. } => BlockType::Heading,
                 BlockKind::Code { .. } => BlockType::Code,
                 BlockKind::Math => BlockType::Math,
+                BlockKind::TableRow { header: true, .. } => BlockType::TableHead,
+                BlockKind::TableRow { header: false, .. } => BlockType::TableRow,
                 BlockKind::FrontMatter { .. } => BlockType::Metadata,
                 BlockKind::FrontMatterRow { .. } | BlockKind::FrontMatterSource { .. } => {
                     BlockType::MetadataRow

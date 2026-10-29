@@ -246,6 +246,7 @@ pub(crate) fn parse_context(
                 builder.start(
                     BlockKind::TableRow {
                         header,
+                        in_list: !builder.lists.is_empty(),
                         cells: Vec::new(),
                         alignments: alignments.clone(),
                     },
