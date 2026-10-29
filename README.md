@@ -45,7 +45,7 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
-Drag the divider beside the Files/Search pane to resize it. The pointer changes to a horizontal resize cursor over the divider.
+Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
 
 ## Benchmarks
 

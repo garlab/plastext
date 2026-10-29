@@ -1,6 +1,8 @@
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Instant,
 };
@@ -8,8 +10,8 @@ use std::{
 use gpui::{
     AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
     KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle, Window, actions,
-    canvas, div, prelude::*, px, uniform_list,
+    Pixels, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle, Window,
+    actions, canvas, div, prelude::*, px, relative, uniform_list,
 };
 use plastext_buffer::{FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
@@ -20,7 +22,7 @@ use crate::{
     csv_view::CsvView,
     file_tree::{FileTreeEvent, FileTreeView},
     image_view::ImageView,
-    layout::{Axis, Layout},
+    layout::{Axis, Layout, Resize},
     markdown_view::{MarkdownEvent, MarkdownView},
     picker::{Picker, PickerEvent, PickerItem},
     quick_open::{QuickOpen, QuickOpenEvent},
@@ -104,7 +106,7 @@ pub struct Workspace {
     tree_options: TreeOptions,
     sidebar: Sidebar,
     sidebar_width: Pixels,
-    sidebar_drag: Option<SidebarDrag>,
+    divider_drag: Option<DividerDrag>,
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
@@ -158,6 +160,28 @@ enum Sidebar {
 struct SidebarDrag {
     start_x: Pixels,
     start_width: Pixels,
+}
+
+#[derive(Clone, Copy)]
+enum DividerDrag {
+    Sidebar(SidebarDrag),
+    Pane { resize: Resize, start: Pixels },
+}
+
+impl DividerDrag {
+    fn cursor(self) -> CursorStyle {
+        match self {
+            Self::Pane { resize, .. } if resize.axis == Axis::Vertical => CursorStyle::ResizeUpDown,
+            _ => CursorStyle::ResizeLeftRight,
+        }
+    }
+}
+
+fn axis_position(axis: Axis, position: Point<Pixels>) -> Pixels {
+    match axis {
+        Axis::Horizontal => position.x,
+        Axis::Vertical => position.y,
+    }
 }
 
 impl SidebarDrag {
@@ -233,7 +257,7 @@ impl Workspace {
             tree_options,
             sidebar: Sidebar::Files,
             sidebar_width: px(SIDEBAR_WIDTH),
-            sidebar_drag: None,
+            divider_drag: None,
             search: None,
             quick_open: None,
             picker: None,
@@ -506,6 +530,7 @@ impl Workspace {
             return;
         }
         pane.active = None;
+        self.divider_drag = None;
         if self.layout.remove(pane_id) {
             self.panes.remove(&pane_id);
         }
@@ -743,7 +768,7 @@ impl Workspace {
             }
     }
 
-    fn sidebar_drag_overlay(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn divider_drag_overlay(&self, drag: DividerDrag, cx: &Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
         div()
             .absolute()
@@ -751,7 +776,7 @@ impl Workspace {
             .left_0()
             .size_full()
             .occlude()
-            .cursor(CursorStyle::ResizeLeftRight)
+            .cursor(drag.cursor())
             .child(
                 canvas(
                     |_, _, _| {},
@@ -764,15 +789,25 @@ impl Workspace {
                             }
                             moved
                                 .update(cx, |this, cx| {
-                                    if let Some(drag) = this.sidebar_drag {
+                                    if let Some(drag) = this.divider_drag {
                                         if event.dragging() {
-                                            this.sidebar_width = drag.width_at(
-                                                event.position.x,
-                                                this.sidebar_available_width(window),
-                                            );
+                                            match drag {
+                                                DividerDrag::Sidebar(drag) => {
+                                                    this.sidebar_width = drag.width_at(
+                                                        event.position.x,
+                                                        this.sidebar_available_width(window),
+                                                    );
+                                                }
+                                                DividerDrag::Pane { resize, start } => {
+                                                    let delta =
+                                                        axis_position(resize.axis, event.position)
+                                                            - start;
+                                                    this.layout.resize(resize, delta.into());
+                                                }
+                                            }
                                         } else {
                                             // Also recover if the mouse was released outside the window.
-                                            this.sidebar_drag = None;
+                                            this.divider_drag = None;
                                         }
                                         cx.notify();
                                     }
@@ -784,7 +819,7 @@ impl Workspace {
                             if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
                                 released
                                     .update(cx, |this, cx| {
-                                        this.sidebar_drag = None;
+                                        this.divider_drag = None;
                                         cx.notify();
                                     })
                                     .ok();
@@ -996,6 +1031,7 @@ impl Workspace {
     /// Adds a pane next to the active one, showing the active tab's file at
     /// the same position.
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
+        self.divider_drag = None;
         let new_pane = self.next_pane;
         self.next_pane += 1;
         if !self.layout.split(self.active_pane, axis, new_pane) {
@@ -1016,23 +1052,102 @@ impl Workspace {
     fn render_layout(&self, layout: &Layout, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
         match layout {
             Layout::Pane(id) => self.render_pane(*id, theme, cx).into_any_element(),
-            Layout::Split(axis, children) => div()
-                .size_full()
-                .flex()
-                .when(*axis == Axis::Vertical, |split| split.flex_col())
-                .children(children.iter().enumerate().map(|(i, child)| {
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .min_h_0()
-                        .border_color(theme.border)
-                        .when(i > 0 && *axis == Axis::Horizontal, |child| {
-                            child.border_l_1()
-                        })
-                        .when(i > 0 && *axis == Axis::Vertical, |child| child.border_t_1())
-                        .child(self.render_layout(child, theme, cx))
-                }))
-                .into_any_element(),
+            Layout::Split(axis, children) => {
+                let axis = *axis;
+                let total: f32 = children.iter().map(|child| child.weight).sum();
+                let extent = Rc::new(Cell::new(px(0.)));
+                let measured = extent.clone();
+                let mut split = div().relative().size_full().child(
+                    canvas(
+                        move |bounds, _, _| {
+                            measured.set(match axis {
+                                Axis::Horizontal => bounds.size.width,
+                                Axis::Vertical => bounds.size.height,
+                            })
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                );
+                let mut offset = 0.;
+                let mut dividers = Vec::new();
+                for (i, child) in children.iter().enumerate() {
+                    let fraction = child.weight / total;
+                    if i > 0 {
+                        dividers.push((child.layout.first_pane(), offset));
+                    }
+                    split = split.child(
+                        div()
+                            .absolute()
+                            .min_w_0()
+                            .min_h_0()
+                            .when(axis == Axis::Horizontal, |pane| {
+                                pane.left(relative(offset))
+                                    .top_0()
+                                    .w(relative(fraction))
+                                    .h_full()
+                            })
+                            .when(axis == Axis::Vertical, |pane| {
+                                pane.top(relative(offset))
+                                    .left_0()
+                                    .h(relative(fraction))
+                                    .w_full()
+                            })
+                            .border_color(theme.border)
+                            .when(i > 0 && axis == Axis::Horizontal, |pane| pane.border_l_1())
+                            .when(i > 0 && axis == Axis::Vertical, |pane| pane.border_t_1())
+                            .child(self.render_layout(&child.layout, theme, cx)),
+                    );
+                    offset += fraction;
+                }
+                // Paint the hit areas last so both sides of each divider are draggable.
+                split
+                    .children(dividers.into_iter().map(|(pane_after, offset)| {
+                        let extent = extent.clone();
+                        div()
+                            .id(("pane-divider", pane_after))
+                            .absolute()
+                            .occlude()
+                            .when(axis == Axis::Horizontal, |divider| {
+                                divider
+                                    .left(relative(offset))
+                                    .ml(px(-4.))
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(px(8.))
+                                    .cursor(CursorStyle::ResizeLeftRight)
+                            })
+                            .when(axis == Axis::Vertical, |divider| {
+                                divider
+                                    .top(relative(offset))
+                                    .mt(px(-4.))
+                                    .left_0()
+                                    .right_0()
+                                    .h(px(8.))
+                                    .cursor(CursorStyle::ResizeUpDown)
+                            })
+                            .hover(|divider| divider.bg(theme.border))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    if let Some(resize) =
+                                        this.layout.begin_resize(pane_after, extent.get().into())
+                                    {
+                                        this.divider_drag = Some(DividerDrag::Pane {
+                                            resize,
+                                            start: axis_position(axis, event.position),
+                                        });
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                    }))
+                    .into_any_element()
+            }
         }
     }
 
@@ -1306,10 +1421,10 @@ impl Render for Workspace {
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                    this.sidebar_drag = Some(SidebarDrag {
+                                    this.divider_drag = Some(DividerDrag::Sidebar(SidebarDrag {
                                         start_x: event.position.x,
                                         start_width: sidebar_width,
-                                    });
+                                    }));
                                     cx.stop_propagation();
                                     cx.notify();
                                 }),
@@ -1317,8 +1432,8 @@ impl Render for Workspace {
                     ),
             )
             .child(self.render_status_bar(theme, cx))
-            .when(self.sidebar_drag.is_some(), |d| {
-                d.child(self.sidebar_drag_overlay(cx))
+            .when_some(self.divider_drag, |d, drag| {
+                d.child(self.divider_drag_overlay(drag, cx))
             })
             .children(self.picker.as_ref().map(|(picker, _)| {
                 div()
