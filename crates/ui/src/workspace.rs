@@ -34,6 +34,9 @@ use crate::{
     zoom::Zoom,
 };
 
+mod tab_menu;
+use tab_menu::TabMenu;
+
 actions!(
     workspace,
     [
@@ -118,6 +121,7 @@ pub struct Workspace {
     search: Option<(Entity<SearchPanel>, Subscription)>,
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
+    tab_menu: Option<TabMenu>,
     outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
@@ -278,6 +282,7 @@ impl Workspace {
             search: None,
             quick_open: None,
             picker: None,
+            tab_menu: None,
             outline: Outline::default(),
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
@@ -520,6 +525,7 @@ impl Workspace {
     }
 
     fn activate(&mut self, pane: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.tab_menu = None;
         let Some(tab) = self.panes.get_mut(&pane).and_then(|pane_state| {
             pane_state.active = Some(index);
             pane_state.tabs.get(index)
@@ -563,6 +569,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_tab_menu(window, cx);
         let Some(pane) = self.panes.get_mut(&pane_id) else {
             return;
         };
@@ -1392,6 +1399,14 @@ impl Workspace {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate(pane_id, index, window, cx)
                     }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            this.open_tab_menu(pane_id, index, event.position, window, cx);
+                        }),
+                    )
             }))
     }
 
@@ -1619,6 +1634,7 @@ impl Render for Workspace {
                     .justify_center()
                     .child(quick_open.clone())
             }))
+            .children(self.render_tab_menu(theme, cx))
     }
 }
 

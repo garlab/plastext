@@ -53,6 +53,8 @@ See [Local development](docs/local-development.md) to open other projects, insta
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
 
+Right-click a tab for **Close Others**, **Close Right**, or **Close Left**. These actions apply only to that pane and keep the clicked tab open.
+
 TeX opens in preview with an installed TeX Live pdfLaTeX. Roots and local inputs
 are detected automatically; external saves update the preview. Split with `⌘D`
 or `⇧⌘D`, then switch either pane to Source for side-by-side reading. Advanced
