@@ -5,7 +5,7 @@ use gpui::{
 };
 use plastext_settings::{
     Settings,
-    icons::{self, IconSettings, IconTheme, Registration},
+    icons::{self, Icon, IconSettings, IconTheme, Registration},
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -19,18 +19,51 @@ const MAX_PENDING: usize = 4;
 pub struct LoadedTheme {
     pub rules: IconTheme,
     origin: Option<Registration>,
+    fonts: HashMap<String, plastext_assets::icons::font::Font>,
+}
+
+impl LoadedTheme {
+    fn load(entry: Registration) -> Result<Self, String> {
+        let rules = icons::load(&entry)?;
+        let mut fonts = HashMap::new();
+        let mut bytes = 0;
+        // Read fonts once, off the UI thread. Glyph images are still rasterized
+        // lazily. Keep all decoded font data within a separate 8 MiB budget.
+        for font in &rules.fonts {
+            let mut loaded = Err(format!("No usable source for icon font {}", font.id));
+            for source in &font.sources {
+                loaded = icons::asset_path(&entry, source)
+                    .and_then(|path| plastext_assets::icons::font::Font::read(&path, &entry.root));
+                if loaded.is_ok() {
+                    break;
+                }
+            }
+            let loaded = loaded?;
+            bytes += loaded.retained_bytes();
+            if bytes > 8 * 1024 * 1024 {
+                return Err("Icon theme fonts exceed the 8 MiB decoded font budget".into());
+            }
+            fonts.insert(font.id.clone(), loaded);
+        }
+        Ok(Self {
+            rules,
+            origin: Some(entry),
+            fonts,
+        })
+    }
 }
 
 static MATERIAL: LazyLock<Arc<LoadedTheme>> = LazyLock::new(|| {
     Arc::new(LoadedTheme {
         rules: IconTheme::parse(MATERIAL_THEME).expect("bundled icon theme is valid"),
         origin: None,
+        fonts: HashMap::new(),
     })
 });
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct Key {
-    asset: String,
+    icon: Icon,
     edge: u32,
 }
 
@@ -174,14 +207,9 @@ impl IconThemes {
                     self.report("The selected icon theme is not registered. Use File Icon Theme to import or choose one.".into(),cx);
                     return;
                 };
-                let work = cx.background_executor().spawn(async move {
-                    icons::load(&entry).map(|rules| {
-                        Arc::new(LoadedTheme {
-                            rules,
-                            origin: Some(entry),
-                        })
-                    })
-                });
+                let work = cx
+                    .background_executor()
+                    .spawn(async move { LoadedTheme::load(entry).map(Arc::new) });
                 cx.spawn(async move |this, cx| {
                     let result = work.await;
                     this.update(cx, |this, cx| {
@@ -225,12 +253,16 @@ impl IconThemes {
 
     pub fn image(
         &mut self,
-        asset: &str,
+        mut icon: Icon,
         scale: f32,
+        foreground: u32,
         cx: &mut Context<Self>,
     ) -> Option<Arc<RenderImage>> {
+        if let Icon::Glyph { color, .. } = &mut icon {
+            *color = Some(color.unwrap_or(foreground));
+        }
         let key = Key {
-            asset: asset.to_owned(),
+            icon,
             edge: (16. * scale.ceil()).clamp(16., 64.) as u32,
         };
         if let Some(image) = self.cache.get(&key) {
@@ -246,16 +278,33 @@ impl IconThemes {
         let work = cx.background_executor().spawn({
             let key = key.clone();
             async move {
-                let bytes = if let Some(entry) = &theme.origin {
-                    let path = icons::asset_path(entry, &key.asset)?;
-                    std::borrow::Cow::Owned(plastext_assets::icons::read(&path, &entry.root)?)
-                } else {
-                    Assets
-                        .load(&format!("file-icons/{}", key.asset))
-                        .map_err(|e| e.to_string())?
-                        .ok_or("Bundled icon is missing")?
+                let preview = match &key.icon {
+                    Icon::Image(asset) => {
+                        let bytes = if let Some(entry) = &theme.origin {
+                            let path = icons::asset_path(entry, asset)?;
+                            std::borrow::Cow::Owned(plastext_assets::icons::read(
+                                &path,
+                                &entry.root,
+                            )?)
+                        } else {
+                            Assets
+                                .load(&format!("file-icons/{asset}"))
+                                .map_err(|e| e.to_string())?
+                                .ok_or("Bundled icon is missing")?
+                        };
+                        plastext_assets::icons::decode(&bytes, key.edge)?
+                    }
+                    Icon::Glyph {
+                        font,
+                        character,
+                        color,
+                        size,
+                    } => theme
+                        .fonts
+                        .get(font)
+                        .ok_or("Icon font was not loaded")?
+                        .render(*character, color.unwrap_or(foreground), *size, key.edge)?,
                 };
-                let preview = plastext_assets::icons::decode(&bytes, key.edge)?;
                 Ok::<_, String>(crate::image_view::render_image(preview).0)
             }
         });
@@ -326,7 +375,7 @@ mod tests {
     #[test]
     fn cache_evicts_old_icons_and_releases_their_memory() {
         let key = |i| Key {
-            asset: format!("{i}.svg"),
+            icon: Icon::Image(format!("{i}.svg")),
             edge: 32,
         };
         let mut cache = Cache::default();

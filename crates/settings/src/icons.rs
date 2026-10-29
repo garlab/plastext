@@ -1,4 +1,5 @@
-//! The declarative SVG/PNG subset of VS Code file-icon themes.
+//! Declarative VS Code file-icon themes, with image and font glyph definitions.
+pub use crate::icon_fonts::{Icon, IconFont};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -166,16 +167,22 @@ impl Associations {
     }
 }
 
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Definition {
     icon_path: Option<String>,
-    font_character: Option<String>,
+    #[serde(deserialize_with = "crate::icon_fonts::deserialize_character")]
+    font_character: Option<char>,
+    font_id: Option<String>,
+    font_color: Option<crate::Color>,
+    #[serde(deserialize_with = "crate::icon_fonts::deserialize_size")]
+    font_size: Option<u16>,
 }
 
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct RawTheme {
+    fonts: Vec<crate::icon_fonts::RawFont>,
     icon_definitions: HashMap<String, Definition>,
     #[serde(flatten)]
     associations: Associations,
@@ -186,7 +193,8 @@ struct RawTheme {
 
 #[derive(Debug)]
 pub struct IconTheme {
-    definitions: HashMap<String, String>,
+    definitions: HashMap<String, Definition>,
+    pub fonts: Vec<IconFont>,
     dark: Associations,
     light: Associations,
     high_contrast: Associations,
@@ -203,22 +211,11 @@ impl IconTheme {
         if raw.icon_definitions.is_empty() {
             return Err("No iconDefinitions found in this file".into());
         }
-        if raw
-            .icon_definitions
-            .values()
-            .any(|d| d.font_character.is_some())
-        {
-            return Err(
-                "This theme uses icon fonts. Plastext currently imports SVG/PNG icon themes only."
-                    .into(),
-            );
-        }
-        let definitions = raw
-            .icon_definitions
-            .into_iter()
-            .filter_map(|(id, d)| d.icon_path.map(|p| (id, p)))
-            .map(|(id, path)| {
-                let extension = Path::new(&path)
+        let fonts = crate::icon_fonts::fonts(raw.fonts)?;
+        let definitions = raw.icon_definitions;
+        for definition in definitions.values() {
+            if let Some(path) = &definition.icon_path {
+                let extension = Path::new(path)
                     .extension()
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
@@ -226,9 +223,17 @@ impl IconTheme {
                 if !matches!(extension.as_str(), "svg" | "png") {
                     return Err(format!("Unsupported icon asset {path}; use SVG or PNG"));
                 }
-                Ok((id, path))
-            })
-            .collect::<Result<HashMap<_, _>, String>>()?;
+            } else {
+                if fonts.is_empty() {
+                    return Err("Glyph icons require a fonts declaration with a local WOFF, TTF or OTF source".into());
+                }
+                if let Some(id) = &definition.font_id
+                    && !fonts.iter().any(|font| &font.id == id)
+                {
+                    return Err(format!("Undefined icon font: {id}"));
+                }
+            }
+        }
         raw.associations.normalize();
         raw.light.normalize();
         raw.high_contrast.normalize();
@@ -241,6 +246,7 @@ impl IconTheme {
         high_contrast.overlay(raw.high_contrast);
         let theme = Self {
             definitions,
+            fonts,
             dark,
             light,
             high_contrast,
@@ -286,7 +292,7 @@ impl IconTheme {
         root: bool,
         language: Option<&str>,
         appearance: Appearance,
-    ) -> Option<&str> {
+    ) -> Option<Icon> {
         let rules = match appearance {
             Appearance::Dark => &self.dark,
             Appearance::Light => &self.light,
@@ -349,7 +355,34 @@ impl IconTheme {
                 .or_else(|| language.and_then(|id| rules.language_ids.get(id)).cloned())
                 .or_else(|| rules.file.clone())
         }?;
-        self.definitions.get(&id).map(String::as_str)
+        let definition = self.definitions.get(&id)?;
+        if let Some(path) = &definition.icon_path {
+            return Some(Icon::Image(path.clone()));
+        }
+        // VS Code's generic file definition supplies inherited font properties.
+        let default = rules.file.as_ref().and_then(|id| self.definitions.get(id));
+        let font = definition
+            .font_id
+            .as_ref()
+            .or_else(|| default.and_then(|d| d.font_id.as_ref()))
+            .and_then(|id| self.fonts.iter().find(|font| &font.id == id))
+            .or_else(|| self.fonts.first())?;
+        let character = definition
+            .font_character
+            .or_else(|| default.and_then(|d| d.font_character))?;
+        let size = definition
+            .font_size
+            .or_else(|| default.and_then(|d| d.font_size))
+            .unwrap_or(font.size);
+        Some(Icon::Glyph {
+            font: font.id.clone(),
+            character,
+            color: definition
+                .font_color
+                .or_else(|| default.and_then(|d| d.font_color))
+                .map(|c| c.0),
+            size,
+        })
     }
 }
 
@@ -401,7 +434,17 @@ pub fn load(entry: &Registration) -> Result<IconTheme, String> {
         return Err("Theme file leaves its extension directory".into());
     }
     let theme = IconTheme::parse(&read_json(&path)?)?;
-    for relative in theme.definitions.values() {
+    for relative in theme
+        .definitions
+        .values()
+        .filter_map(|d| d.icon_path.as_deref())
+        .chain(
+            theme
+                .fonts
+                .iter()
+                .flat_map(|font| font.sources.iter().map(String::as_str)),
+        )
+    {
         asset_path(entry, relative)?;
     }
     Ok(theme)

@@ -52,49 +52,61 @@ fn associations_follow_vscode_precedence_and_appearance_overrides() {
         ("hidden.ts", None, None),
     ] {
         assert_eq!(
-            theme.resolve(
-                Path::new(path),
-                false,
-                false,
-                false,
-                language,
-                Appearance::Dark
-            ),
+            theme
+                .resolve(
+                    Path::new(path),
+                    false,
+                    false,
+                    false,
+                    language,
+                    Appearance::Dark
+                )
+                .as_ref()
+                .and_then(|icon| icon.image_path()),
             expected,
             "{path}"
         );
     }
     assert_eq!(
-        theme.resolve(
-            Path::new("other/thing.ts"),
-            false,
-            false,
-            false,
-            None,
-            Appearance::Light
-        ),
+        theme
+            .resolve(
+                Path::new("other/thing.ts"),
+                false,
+                false,
+                false,
+                None,
+                Appearance::Light
+            )
+            .as_ref()
+            .and_then(|icon| icon.image_path()),
         Some("name.svg")
     );
     assert_eq!(
-        theme.resolve(
-            Path::new("other/value.ts"),
-            false,
-            false,
-            false,
-            None,
-            Appearance::Light
-        ),
+        theme
+            .resolve(
+                Path::new("other/value.ts"),
+                false,
+                false,
+                false,
+                None,
+                Appearance::Light
+            )
+            .as_ref()
+            .and_then(|icon| icon.image_path()),
         Some("light-ext.svg")
     );
     assert_eq!(
-        theme.resolve(
-            Path::new("unknown"),
-            false,
-            false,
-            false,
-            None,
-            Appearance::HighContrast
-        ),
+        theme
+            .resolve(
+                Path::new("unknown"),
+                false,
+                false,
+                false,
+                None,
+                Appearance::HighContrast
+            )
+            .as_ref()
+            .and_then(|icon| icon.image_path()),
         Some("contrast.svg")
     );
 }
@@ -111,14 +123,17 @@ fn folders_use_named_expanded_and_root_associations() {
         ("project", true, true, "root-open.svg"),
     ] {
         assert_eq!(
-            theme.resolve(
-                Path::new(path),
-                true,
-                expanded,
-                root,
-                None,
-                Appearance::Dark
-            ),
+            theme
+                .resolve(
+                    Path::new(path),
+                    true,
+                    expanded,
+                    root,
+                    None,
+                    Appearance::Dark
+                )
+                .as_ref()
+                .and_then(|icon| icon.image_path()),
             Some(expected)
         );
     }
@@ -129,7 +144,10 @@ fn folders_use_named_expanded_and_root_associations() {
 fn jsonc_and_format_errors_are_explicit() {
     let theme = IconTheme::parse("\u{feff}{ // comment\n\"iconDefinitions\":{\"f\":{\"iconPath\":\"f.svg\"}},\"file\":\"f\",}").unwrap();
     assert_eq!(
-        theme.resolve(Path::new("a"), false, false, false, None, Appearance::Dark),
+        theme
+            .resolve(Path::new("a"), false, false, false, None, Appearance::Dark)
+            .as_ref()
+            .and_then(|icon| icon.image_path()),
         Some("f.svg")
     );
     for text in [
@@ -142,7 +160,7 @@ fn jsonc_and_format_errors_are_explicit() {
     }
     let error = IconTheme::parse(r#"{"iconDefinitions":{"f":{"fontCharacter":"x"}},"file":"f"}"#)
         .unwrap_err();
-    assert!(error.contains("icon fonts"));
+    assert!(error.contains("fonts declaration"));
     assert!(IconTheme::parse(&" ".repeat(MAX_JSON_BYTES as usize + 1)).is_err());
 }
 
@@ -184,11 +202,11 @@ fn discovers_extension_folders_and_direct_json_with_sibling_assets() {
     assert_eq!(discover(&dir.path().join("package.json")).unwrap(), entries);
     for entry in entries {
         let theme = load(&entry).unwrap();
-        let asset = theme
+        let icon = theme
             .resolve(Path::new("a"), false, false, false, None, Appearance::Dark)
             .unwrap();
         assert_eq!(
-            asset_path(&entry, asset).unwrap(),
+            asset_path(&entry, icon.image_path().unwrap()).unwrap(),
             dir.path().canonicalize().unwrap().join("icons/f.svg")
         );
         for bad in [
@@ -279,4 +297,151 @@ fn extracted_vsix_root_finds_the_extension_subfolder() {
     fs::create_dir(dir.path().join("extension")).unwrap();
     extension(&dir.path().join("extension"));
     assert_eq!(discover(dir.path()).unwrap().len(), 2);
+}
+
+fn glyph_theme() -> serde_json::Value {
+    json!({
+        "fonts": [
+            {"id":"seti", "src":[{"path":"seti.woff","format":"woff"}], "size":"150%"},
+            {"id":"other", "src":[{"path":"other.woff2","format":"woff2"},{"path":"other.ttf","format":"truetype"}], "size":"125%"}
+        ],
+        "iconDefinitions": {
+            "default":{"fontCharacter":"\\E001", "fontColor":"#519aba"},
+            "rust":{"fontCharacter":"\u{e002}"},
+            "light":{"fontCharacter":"\\E002 ","fontColor":"#1238","fontSize":"80%"},
+            "second":{"fontCharacter":"\\1F980", "fontId":"other"},
+            "picture":{"iconPath":"image.svg"}
+        },
+        "file":"default",
+        "fileExtensions":{"rs":"rust","second":"second","svg":"picture"},
+        "light":{"fileExtensions":{"rs":"light"}}
+    })
+}
+
+#[test]
+fn font_glyphs_resolve_css_escapes_colours_sizes_and_font_ids() {
+    let raw = glyph_theme();
+    let theme = IconTheme::parse(&raw.to_string()).unwrap();
+    assert_eq!(theme.fonts[1].sources, vec!["other.ttf"]);
+    let glyph = |font: &str, character, color, size| {
+        Some(Icon::Glyph {
+            font: font.into(),
+            character,
+            color: Some(color),
+            size,
+        })
+    };
+    for (path, appearance, expected) in [
+        (
+            "main.rs",
+            Appearance::Dark,
+            glyph("seti", '\u{e002}', 0x519abaff, 15000),
+        ),
+        (
+            "main.rs",
+            Appearance::Light,
+            glyph("seti", '\u{e002}', 0x11223388, 8000),
+        ),
+        (
+            "unknown",
+            Appearance::Dark,
+            glyph("seti", '\u{e001}', 0x519abaff, 15000),
+        ),
+        (
+            "x.second",
+            Appearance::Dark,
+            glyph("other", '🦀', 0x519abaff, 12500),
+        ),
+        (
+            "x.svg",
+            Appearance::Dark,
+            Some(Icon::Image("image.svg".into())),
+        ),
+    ] {
+        assert_eq!(
+            theme.resolve(Path::new(path), false, false, false, None, appearance),
+            expected
+        );
+    }
+    let mut inherited = raw;
+    inherited["iconDefinitions"]["default"]["fontSize"] = json!("175%");
+    inherited["iconDefinitions"]["default"]["fontId"] = json!("other");
+    let theme = IconTheme::parse(&inherited.to_string()).unwrap();
+    assert_eq!(
+        theme.resolve(
+            Path::new("main.rs"),
+            false,
+            false,
+            false,
+            None,
+            Appearance::Dark
+        ),
+        glyph("other", '\u{e002}', 0x519abaff, 17500)
+    );
+    inherited["iconDefinitions"]["default"]
+        .as_object_mut()
+        .unwrap()
+        .remove("fontColor");
+    let theme = IconTheme::parse(&inherited.to_string()).unwrap();
+    assert!(matches!(
+        theme.resolve(
+            Path::new("main.rs"),
+            false,
+            false,
+            false,
+            None,
+            Appearance::Dark
+        ),
+        Some(Icon::Glyph { color: None, .. })
+    ));
+}
+
+#[test]
+fn invalid_font_metadata_is_rejected_before_selection() {
+    for character in [
+        "", "ab", "\\", "\\NOPE", "\\D800", "\\110000", "\\E001x", "\\0", "\n",
+    ] {
+        let mut raw = glyph_theme();
+        raw["iconDefinitions"]["rust"]["fontCharacter"] = json!(character);
+        assert!(IconTheme::parse(&raw.to_string()).is_err(), "{character:?}");
+    }
+    for size in ["16px", "0%", "401%", "NaN%", "-100%"] {
+        let mut raw = glyph_theme();
+        raw["iconDefinitions"]["rust"]["fontSize"] = json!(size);
+        assert!(IconTheme::parse(&raw.to_string()).is_err(), "{size}");
+    }
+    let mut raw = glyph_theme();
+    raw["iconDefinitions"]["rust"]["fontId"] = json!("missing");
+    assert!(
+        IconTheme::parse(&raw.to_string())
+            .unwrap_err()
+            .contains("Undefined icon font")
+    );
+    let mut raw = glyph_theme();
+    raw["fonts"][0]["src"][0] = json!({"path":"seti.woff2","format":"woff2"});
+    assert!(
+        IconTheme::parse(&raw.to_string())
+            .unwrap_err()
+            .contains("WOFF2")
+    );
+    let mut raw = glyph_theme();
+    raw["fonts"][1]["id"] = json!("seti");
+    assert!(IconTheme::parse(&raw.to_string()).is_err());
+}
+
+#[test]
+fn font_asset_paths_cannot_escape_the_imported_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("icons.json");
+    let mut raw = glyph_theme();
+    for invalid in [
+        "../outside.woff",
+        "https://example.test/font.woff",
+        "/tmp/font.woff",
+    ] {
+        raw["fonts"][0]["src"][0]["path"] = json!(invalid);
+        fs::write(&path, raw.to_string()).unwrap();
+        let entries = discover(&path).unwrap();
+        assert!(load(&entries[0]).is_err());
+    }
 }

@@ -4,6 +4,7 @@
 //! the file leaves out.
 
 mod byte_size;
+mod icon_fonts;
 pub mod icons;
 mod markdown;
 mod theme;

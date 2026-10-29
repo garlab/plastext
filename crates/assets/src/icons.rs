@@ -10,7 +10,13 @@ use std::{
 
 pub const MAX_ICON_BYTES: usize = 256 * 1024;
 
+pub mod font;
+
 pub fn read(path: &Path, root: &Path) -> Result<Vec<u8>, String> {
+    read_limited(path, root, MAX_ICON_BYTES)
+}
+
+fn read_limited(path: &Path, root: &Path, limit: usize) -> Result<Vec<u8>, String> {
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     if !path.starts_with(root) {
@@ -18,10 +24,10 @@ pub fn read(path: &Path, root: &Path) -> Result<Vec<u8>, String> {
     }
     let mut bytes = Vec::new();
     File::open(path)
-        .and_then(|file| file.take(MAX_ICON_BYTES as u64 + 1).read_to_end(&mut bytes))
+        .and_then(|file| file.take(limit as u64 + 1).read_to_end(&mut bytes))
         .map_err(|e| e.to_string())?;
-    if bytes.len() > MAX_ICON_BYTES {
-        return Err("Icon exceeds 256 KiB".into());
+    if bytes.len() > limit {
+        return Err(format!("Icon asset exceeds {} KiB", limit / 1024));
     }
     Ok(bytes)
 }

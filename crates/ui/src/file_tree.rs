@@ -141,9 +141,9 @@ impl Render for FileTreeView {
                                 )
                             })
                             .map(|asset| {
-                                let image = this
-                                    .icons
-                                    .update(cx, |icons, cx| icons.image(asset, scale, cx));
+                                let image = this.icons.update(cx, |icons, cx| {
+                                    icons.image(asset, scale, theme.text.into(), cx)
+                                });
                                 div()
                                     .size(px(18.))
                                     .flex_none()

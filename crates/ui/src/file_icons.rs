@@ -106,19 +106,25 @@ mod tests {
             ("unknown", "document"),
         ] {
             assert_eq!(
-                theme.resolve(Path::new(name), false, false, false, None, Appearance::Dark),
+                theme
+                    .resolve(Path::new(name), false, false, false, None, Appearance::Dark)
+                    .as_ref()
+                    .and_then(|icon| icon.image_path()),
                 Some(format!("{icon}.svg").as_str())
             );
         }
         assert_eq!(
-            theme.resolve(
-                Path::new("config.toml"),
-                false,
-                false,
-                false,
-                None,
-                Appearance::Light
-            ),
+            theme
+                .resolve(
+                    Path::new("config.toml"),
+                    false,
+                    false,
+                    false,
+                    None,
+                    Appearance::Light
+                )
+                .as_ref()
+                .and_then(|icon| icon.image_path()),
             Some("toml_light.svg")
         );
     }
