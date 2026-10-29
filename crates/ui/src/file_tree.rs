@@ -1,13 +1,14 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{
-    Context, EventEmitter, PathBuilder, SharedString, Task, UniformListScrollHandle, Window,
-    canvas, div, img, point, prelude::*, px, uniform_list,
+    Context, Entity, EventEmitter, PathBuilder, SharedString, Subscription, Task,
+    UniformListScrollHandle, Window, canvas, div, img, point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
 use plastext_project::{EntryKind, FileTree, TreeOptions, read_dir};
 
-use crate::file_icons::FileIcon;
+use crate::icon_themes::{IconThemes, language_id};
+use plastext_settings::icons::Appearance;
 
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
@@ -24,18 +25,28 @@ pub struct FileTreeView {
     selected: Option<PathBuf>,
     scroll_handle: UniformListScrollHandle,
     listings: HashMap<PathBuf, Task<()>>,
+    icons: Entity<IconThemes>,
+    _icons_changed: Subscription,
 }
 
 impl EventEmitter<FileTreeEvent> for FileTreeView {}
 
 impl FileTreeView {
-    pub fn new(root: PathBuf, options: TreeOptions, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        options: TreeOptions,
+        icons: Entity<IconThemes>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let icons_changed = cx.observe(&icons, |_, _, cx| cx.notify());
         let mut this = Self {
             tree: FileTree::new(root.clone()),
             options: Arc::new(options),
             selected: None,
             scroll_handle: UniformListScrollHandle::new(),
             listings: HashMap::new(),
+            icons,
+            _icons_changed: icons_changed,
         };
         this.list(root, cx);
         this
@@ -97,17 +108,51 @@ impl Render for FileTreeView {
                     window.appearance(),
                     gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
                 );
+                let icons = this.icons.read(cx);
+                let icon_theme = icons.current();
+                let appearance = if icons.preferences.high_contrast {
+                    Appearance::HighContrast
+                } else if light {
+                    Appearance::Light
+                } else {
+                    Appearance::Dark
+                };
+                let hide_arrows = icon_theme
+                    .as_ref()
+                    .is_some_and(|theme| theme.rules.hides_explorer_arrows);
+                let scale = window.scale_factor();
                 range
                     .filter_map(|index| {
                         let row = this.tree.rows().get(index)?;
                         let entry = &row.entry;
                         let selected = this.selected.as_ref() == Some(&entry.path);
                         let name: SharedString = entry.name.clone().into();
-                        let icon = if entry.kind == EntryKind::Dir {
-                            FileIcon::Folder
-                        } else {
-                            FileIcon::for_name(&entry.name, light)
-                        };
+                        let icon = icon_theme
+                            .as_ref()
+                            .and_then(|theme| {
+                                let language = language_id(&entry.path);
+                                theme.rules.resolve(
+                                    &entry.path,
+                                    entry.kind == EntryKind::Dir,
+                                    row.expanded,
+                                    false,
+                                    language.as_deref(),
+                                    appearance,
+                                )
+                            })
+                            .map(|asset| {
+                                let image = this
+                                    .icons
+                                    .update(cx, |icons, cx| icons.image(asset, scale, cx));
+                                div()
+                                    .size(px(18.))
+                                    .flex_none()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .when(entry.ignored, |icon| icon.opacity(0.5))
+                                    .children(image.map(|image| img(image).size(px(16.))))
+                            });
                         Some(
                             div()
                                 .id(index)
@@ -125,24 +170,15 @@ impl Render for FileTreeView {
                                 } else {
                                     theme.text
                                 })
-                                .child(
-                                    div().size(px(18.)).flex_none().when(
+                                .when(!hide_arrows, |row_element| {
+                                    row_element.child(div().size(px(18.)).flex_none().when(
                                         entry.kind == EntryKind::Dir,
                                         |slot| {
                                             slot.child(disclosure(row.expanded, theme.text_muted))
                                         },
-                                    ),
-                                )
-                                .child(
-                                    div()
-                                        .size(px(18.))
-                                        .flex_none()
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .when(entry.ignored, |icon| icon.opacity(0.5))
-                                        .child(img(icon.path()).size(px(16.))),
-                                )
+                                    ))
+                                })
+                                .children(icon)
                                 .child(
                                     div()
                                         .flex_1()

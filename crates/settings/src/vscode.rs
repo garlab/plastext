@@ -253,7 +253,7 @@ fn read_theme(path: &Path, stack: &mut Vec<PathBuf>) -> Result<VscodeTheme, Them
 
 /// Remove comments and trailing commas without touching strings or line
 /// positions. JSON's own parser still validates strings and structure.
-fn jsonc(text: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn jsonc(text: &str) -> Result<Vec<u8>, String> {
     let mut out = text.as_bytes().to_vec();
     let mut i = 0;
     while i < out.len() {

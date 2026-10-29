@@ -1,0 +1,410 @@
+{
+  "iconDefinitions": {
+    "document": {
+      "iconPath": "document.svg"
+    },
+    "folder-base": {
+      "iconPath": "folder-base.svg"
+    },
+    "rust": {
+      "iconPath": "rust.svg"
+    },
+    "markdown": {
+      "iconPath": "markdown.svg"
+    },
+    "readme": {
+      "iconPath": "readme.svg"
+    },
+    "javascript": {
+      "iconPath": "javascript.svg"
+    },
+    "typescript": {
+      "iconPath": "typescript.svg"
+    },
+    "typescript-def": {
+      "iconPath": "typescript-def.svg"
+    },
+    "react": {
+      "iconPath": "react.svg"
+    },
+    "react_ts": {
+      "iconPath": "react_ts.svg"
+    },
+    "python": {
+      "iconPath": "python.svg"
+    },
+    "json": {
+      "iconPath": "json.svg"
+    },
+    "toml": {
+      "iconPath": "toml.svg"
+    },
+    "toml_light": {
+      "iconPath": "toml_light.svg"
+    },
+    "yaml": {
+      "iconPath": "yaml.svg"
+    },
+    "xml": {
+      "iconPath": "xml.svg"
+    },
+    "c": {
+      "iconPath": "c.svg"
+    },
+    "cpp": {
+      "iconPath": "cpp.svg"
+    },
+    "csharp": {
+      "iconPath": "csharp.svg"
+    },
+    "go": {
+      "iconPath": "go.svg"
+    },
+    "html": {
+      "iconPath": "html.svg"
+    },
+    "css": {
+      "iconPath": "css.svg"
+    },
+    "sass": {
+      "iconPath": "sass.svg"
+    },
+    "swift": {
+      "iconPath": "swift.svg"
+    },
+    "kotlin": {
+      "iconPath": "kotlin.svg"
+    },
+    "java": {
+      "iconPath": "java.svg"
+    },
+    "console": {
+      "iconPath": "console.svg"
+    },
+    "database": {
+      "iconPath": "database.svg"
+    },
+    "table": {
+      "iconPath": "table.svg"
+    },
+    "image": {
+      "iconPath": "image.svg"
+    },
+    "pdf": {
+      "iconPath": "pdf.svg"
+    },
+    "zip": {
+      "iconPath": "zip.svg"
+    },
+    "git": {
+      "iconPath": "git.svg"
+    },
+    "docker": {
+      "iconPath": "docker.svg"
+    },
+    "settings": {
+      "iconPath": "settings.svg"
+    },
+    "license": {
+      "iconPath": "license.svg"
+    },
+    "lock": {
+      "iconPath": "lock.svg"
+    },
+    "font": {
+      "iconPath": "font.svg"
+    },
+    "video": {
+      "iconPath": "video.svg"
+    },
+    "audio": {
+      "iconPath": "audio.svg"
+    },
+    "ruby": {
+      "iconPath": "ruby.svg"
+    },
+    "php": {
+      "iconPath": "php.svg"
+    },
+    "lua": {
+      "iconPath": "lua.svg"
+    },
+    "vue": {
+      "iconPath": "vue.svg"
+    },
+    "svelte": {
+      "iconPath": "svelte.svg"
+    },
+    "scala": {
+      "iconPath": "scala.svg"
+    },
+    "elixir": {
+      "iconPath": "elixir.svg"
+    },
+    "haskell": {
+      "iconPath": "haskell.svg"
+    },
+    "clojure": {
+      "iconPath": "clojure.svg"
+    },
+    "zig": {
+      "iconPath": "zig.svg"
+    },
+    "dart": {
+      "iconPath": "dart.svg"
+    },
+    "r": {
+      "iconPath": "r.svg"
+    },
+    "graphql": {
+      "iconPath": "graphql.svg"
+    },
+    "tex": {
+      "iconPath": "tex.svg"
+    },
+    "terraform": {
+      "iconPath": "terraform.svg"
+    },
+    "cmake": {
+      "iconPath": "cmake.svg"
+    },
+    "makefile": {
+      "iconPath": "makefile.svg"
+    }
+  },
+  "file": "document",
+  "folder": "folder-base",
+  "fileNames": {
+    "Cargo.toml": "rust",
+    "rust-toolchain": "rust",
+    "rust-toolchain.toml": "rust",
+    "Dockerfile": "docker",
+    "Containerfile": "docker",
+    "compose.yml": "docker",
+    "compose.yaml": "docker",
+    "docker-compose.yml": "docker",
+    "docker-compose.yaml": "docker",
+    ".dockerignore": "docker",
+    ".gitignore": "git",
+    ".gitattributes": "git",
+    ".gitmodules": "git",
+    ".gitkeep": "git",
+    "CMakeLists.txt": "cmake",
+    "Makefile": "makefile",
+    "GNUmakefile": "makefile",
+    ".bashrc": "console",
+    ".zshrc": "console",
+    ".profile": "console",
+    ".bash_profile": "console",
+    "justfile": "console",
+    ".editorconfig": "settings",
+    ".clang-format": "settings",
+    ".clang-tidy": "settings",
+    ".env": "settings",
+    "README": "readme",
+    "README.md": "readme",
+    "README.markdown": "readme",
+    "README.txt": "readme",
+    "README.rst": "readme",
+    "LICENSE": "license",
+    "LICENSE.md": "license",
+    "LICENSE.txt": "license",
+    "LICENSE-MIT": "license",
+    "LICENSE-APACHE": "license",
+    "LICENSE-BSD": "license",
+    "LICENCE": "license",
+    "LICENCE.md": "license",
+    "LICENCE.txt": "license",
+    "LICENCE-MIT": "license",
+    "LICENCE-APACHE": "license",
+    "LICENCE-BSD": "license",
+    "COPYING": "license",
+    "COPYING.md": "license",
+    "COPYING.txt": "license",
+    "COPYING-MIT": "license",
+    "COPYING-APACHE": "license",
+    "COPYING-BSD": "license",
+    "COPYRIGHT": "license",
+    "COPYRIGHT.md": "license",
+    "COPYRIGHT.txt": "license",
+    "COPYRIGHT-MIT": "license",
+    "COPYRIGHT-APACHE": "license",
+    "COPYRIGHT-BSD": "license",
+    ".env.local": "settings",
+    "Dockerfile.local": "docker",
+    "Containerfile.local": "docker",
+    ".env.dev": "settings",
+    "Dockerfile.dev": "docker",
+    "Containerfile.dev": "docker",
+    ".env.development": "settings",
+    "Dockerfile.development": "docker",
+    "Containerfile.development": "docker",
+    ".env.production": "settings",
+    "Dockerfile.production": "docker",
+    "Containerfile.production": "docker",
+    ".env.prod": "settings",
+    "Dockerfile.prod": "docker",
+    "Containerfile.prod": "docker",
+    ".env.test": "settings",
+    "Dockerfile.test": "docker",
+    "Containerfile.test": "docker",
+    ".env.example": "settings",
+    "Dockerfile.example": "docker",
+    "Containerfile.example": "docker",
+    ".env.sample": "settings",
+    "Dockerfile.sample": "docker",
+    "Containerfile.sample": "docker"
+  },
+  "fileExtensions": {
+    "rs": "rust",
+    "md": "markdown",
+    "markdown": "markdown",
+    "mdown": "markdown",
+    "mdx": "markdown",
+    "js": "javascript",
+    "mjs": "javascript",
+    "cjs": "javascript",
+    "ts": "typescript",
+    "mts": "typescript",
+    "cts": "typescript",
+    "jsx": "react",
+    "tsx": "react_ts",
+    "py": "python",
+    "pyi": "python",
+    "pyw": "python",
+    "json": "json",
+    "jsonc": "json",
+    "json5": "json",
+    "jsonl": "json",
+    "ipynb": "json",
+    "toml": "toml",
+    "yaml": "yaml",
+    "yml": "yaml",
+    "xml": "xml",
+    "xsd": "xml",
+    "xsl": "xml",
+    "plist": "xml",
+    "csproj": "xml",
+    "fsproj": "xml",
+    "c": "c",
+    "h": "c",
+    "cc": "cpp",
+    "cpp": "cpp",
+    "cxx": "cpp",
+    "hpp": "cpp",
+    "hxx": "cpp",
+    "hh": "cpp",
+    "cs": "csharp",
+    "csx": "csharp",
+    "go": "go",
+    "html": "html",
+    "htm": "html",
+    "css": "css",
+    "sass": "sass",
+    "scss": "sass",
+    "less": "sass",
+    "swift": "swift",
+    "kt": "kotlin",
+    "kts": "kotlin",
+    "java": "java",
+    "jar": "java",
+    "class": "java",
+    "sh": "console",
+    "bash": "console",
+    "zsh": "console",
+    "fish": "console",
+    "ps1": "console",
+    "bat": "console",
+    "cmd": "console",
+    "sql": "database",
+    "sqlite": "database",
+    "sqlite3": "database",
+    "db": "database",
+    "csv": "table",
+    "tsv": "table",
+    "xls": "table",
+    "xlsx": "table",
+    "ods": "table",
+    "svg": "image",
+    "png": "image",
+    "jpg": "image",
+    "jpeg": "image",
+    "webp": "image",
+    "gif": "image",
+    "bmp": "image",
+    "ico": "image",
+    "tif": "image",
+    "tiff": "image",
+    "avif": "image",
+    "heic": "image",
+    "pdf": "pdf",
+    "zip": "zip",
+    "tar": "zip",
+    "gz": "zip",
+    "tgz": "zip",
+    "bz2": "zip",
+    "xz": "zip",
+    "zst": "zip",
+    "7z": "zip",
+    "rar": "zip",
+    "lock": "lock",
+    "ini": "settings",
+    "conf": "settings",
+    "cfg": "settings",
+    "properties": "settings",
+    "woff": "font",
+    "woff2": "font",
+    "ttf": "font",
+    "otf": "font",
+    "mp4": "video",
+    "mov": "video",
+    "mkv": "video",
+    "webm": "video",
+    "avi": "video",
+    "mp3": "audio",
+    "wav": "audio",
+    "ogg": "audio",
+    "flac": "audio",
+    "m4a": "audio",
+    "aac": "audio",
+    "rb": "ruby",
+    "rake": "ruby",
+    "gemspec": "ruby",
+    "php": "php",
+    "lua": "lua",
+    "vue": "vue",
+    "svelte": "svelte",
+    "scala": "scala",
+    "sc": "scala",
+    "ex": "elixir",
+    "exs": "elixir",
+    "hs": "haskell",
+    "lhs": "haskell",
+    "clj": "clojure",
+    "cljs": "clojure",
+    "cljc": "clojure",
+    "edn": "clojure",
+    "zig": "zig",
+    "zon": "zig",
+    "dart": "dart",
+    "r": "r",
+    "rmd": "r",
+    "graphql": "graphql",
+    "gql": "graphql",
+    "tex": "tex",
+    "bib": "tex",
+    "sty": "tex",
+    "tf": "terraform",
+    "tfvars": "terraform",
+    "cmake": "cmake",
+    "mk": "makefile",
+    "d.ts": "typescript-def",
+    "d.mts": "typescript-def",
+    "d.cts": "typescript-def"
+  },
+  "light": {
+    "fileExtensions": {
+      "toml": "toml_light"
+    }
+  }
+}

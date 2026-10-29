@@ -1,5 +1,6 @@
 //! Bounded, UI-independent image decoding. No network access is performed here.
 pub mod csv;
+pub mod icons;
 use base64::Engine as _;
 use image::{GenericImageView, ImageReader};
 use std::{

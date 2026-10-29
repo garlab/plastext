@@ -47,7 +47,7 @@ See [Local development](docs/local-development.md) to open other projects, insta
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
 
-The file tree shows coloured file-type icons, with dedicated icons for common languages, documents, images, configuration files and folders.
+The file tree shows coloured file-type icons, with dedicated icons for common languages, documents, images, configuration files and folders. Use `⇧⌘P` → **File Icon Theme** to choose Material, None, or an imported VS Code SVG/PNG theme. The choice applies immediately and is saved independently of the colour theme. See [icon themes](docs/icon-themes.md) for imports and compatibility.
 
 ## Benchmarks
 

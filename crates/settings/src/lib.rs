@@ -4,6 +4,7 @@
 //! the file leaves out.
 
 mod byte_size;
+pub mod icons;
 mod markdown;
 mod theme;
 mod vscode;
@@ -29,6 +30,7 @@ pub struct Settings {
     pub limits: Limits,
     pub theme: Themes,
     pub markdown: Markdown,
+    pub icons: icons::IconSettings,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -156,6 +158,7 @@ impl Settings {
                 let mut settings = Self::parse(&text)
                     .map_err(|err| LoadError::Parse(path.to_owned(), Box::new(err)))?;
                 let base = path.parent().unwrap_or(Path::new("."));
+                settings.icons.resolve_paths(base);
                 for theme in [&mut settings.theme.light, &mut settings.theme.dark] {
                     if let Some(import) = &theme.import {
                         let mut imported =

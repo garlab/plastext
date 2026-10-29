@@ -3,6 +3,7 @@
 mod csv_view;
 mod file_icons;
 mod file_tree;
+mod icon_themes;
 mod image_view;
 mod layout;
 mod markdown_view;

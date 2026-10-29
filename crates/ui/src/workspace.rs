@@ -21,6 +21,7 @@ use plastext_settings::{self as settings, Settings};
 use crate::{
     csv_view::CsvView,
     file_tree::{FileTreeEvent, FileTreeView},
+    icon_themes::{IconNotice, IconThemes},
     image_view::ImageView,
     layout::{Axis, Layout, Resize},
     markdown_view::{MarkdownEvent, MarkdownView},
@@ -48,7 +49,9 @@ actions!(
         ToggleOutline,
         ZoomIn,
         ZoomOut,
-        ResetZoom
+        ResetZoom,
+        FileIconTheme,
+        ImportIconTheme
     ]
 );
 
@@ -97,6 +100,7 @@ pub fn init(cx: &mut App) {
 pub struct Workspace {
     root: Option<PathBuf>,
     tree: Option<Entity<FileTreeView>>,
+    icon_themes: Entity<IconThemes>,
     panes: HashMap<usize, Pane>,
     layout: Layout,
     active_pane: usize,
@@ -225,20 +229,27 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut subscriptions = vec![cx.observe_window_appearance(window, |_, _, cx| cx.notify())];
+        let icon_themes = IconThemes::shared(&settings.icons, cx);
+        subscriptions.push(
+            cx.subscribe(&icon_themes, |this, _, notice: &IconNotice, cx| {
+                this.show_notice(notice.0.clone(), cx);
+            }),
+        );
         let files = &settings.files;
         let show_ignored = match files.show_ignored {
             settings::ShowIgnored::Hide => ShowIgnored::Hide,
             settings::ShowIgnored::Dim => ShowIgnored::Dim,
             settings::ShowIgnored::Show => ShowIgnored::Show,
         };
-        let mut notice = None;
+        let mut notice = icon_themes.read(cx).error.clone().map(Into::into);
         let tree_options = TreeOptions::new(files.show_hidden, show_ignored, &files.exclude)
             .unwrap_or_else(|err| {
                 notice = Some(format!("Ignoring files.exclude in the settings: {err}").into());
                 TreeOptions::default()
             });
         let tree = root.clone().map(|root| {
-            let tree = cx.new(|cx| FileTreeView::new(root, tree_options.clone(), cx));
+            let tree =
+                cx.new(|cx| FileTreeView::new(root, tree_options.clone(), icon_themes.clone(), cx));
             subscriptions.push(
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
                     FileTreeEvent::Open(path) => this.open_file(path.clone(), None, window, cx),
@@ -249,6 +260,7 @@ impl Workspace {
         Self {
             root,
             tree,
+            icon_themes,
             panes: HashMap::from([(0, Pane::default())]),
             layout: Layout::Pane(0),
             active_pane: 0,
@@ -940,6 +952,110 @@ impl Workspace {
         );
     }
 
+    /// Choose a built-in or imported file-icon theme.
+    fn file_icon_theme(&mut self, _: &FileIconTheme, window: &mut Window, cx: &mut Context<Self>) {
+        let themes = self.icon_themes.read(cx);
+        let mut choices = vec![
+            ("material".to_owned(), "Material".to_owned()),
+            ("none".to_owned(), "None".to_owned()),
+        ];
+        choices.extend(
+            themes
+                .preferences
+                .imports
+                .iter()
+                .map(|entry| (entry.id(), entry.name.clone())),
+        );
+        let selected = choices
+            .iter()
+            .position(|(id, _)| id == &themes.active)
+            .unwrap_or(0);
+        let mut items: Vec<_> = choices
+            .iter()
+            .enumerate()
+            .map(|(i, (_, name))| PickerItem {
+                label: name.clone().into(),
+                detail: if i == selected {
+                    "Selected".into()
+                } else if i > 1 {
+                    "Imported".into()
+                } else {
+                    "".into()
+                },
+                depth: 0,
+            })
+            .collect();
+        items.push(PickerItem {
+            label: "Import Icon Theme…".into(),
+            detail: "JSON file or extension folder".into(),
+            depth: 0,
+        });
+        self.open_picker(
+            "File Icon Theme",
+            items,
+            selected,
+            window,
+            cx,
+            move |this, index, window, cx| {
+                if let Some((id, _)) = choices.get(index) {
+                    this.icon_themes
+                        .update(cx, |themes, cx| themes.select(id.clone(), true, cx));
+                } else {
+                    this.import_icon_theme(&ImportIconTheme, window, cx);
+                }
+            },
+        );
+    }
+
+    fn import_icon_theme(
+        &mut self,
+        _: &ImportIconTheme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: false,
+            prompt: Some("Import Icon Theme".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let path = match paths.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                error => {
+                    this.update(cx, |this, cx| {
+                        this.show_notice(format!("Couldn't open icon theme picker: {error:?}"), cx)
+                    })
+                    .ok();
+                    None
+                }
+            };
+            let Some(path) = path else { return };
+            let work = cx
+                .background_executor()
+                .spawn(async move { settings::icons::discover(&path) });
+            let result = work.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(entries) => {
+                    let only = (entries.len() == 1).then(|| entries[0].id());
+                    this.icon_themes.update(cx, |themes, cx| {
+                        themes.register(entries, cx);
+                        if let Some(id) = only.as_ref() {
+                            themes.select(id.clone(), true, cx);
+                        }
+                    });
+                    if only.is_none() {
+                        this.file_icon_theme(&FileIconTheme, window, cx);
+                    }
+                }
+                Err(error) => this.show_notice(format!("Couldn't import icon theme: {error}"), cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Lists the commands available where the focus is, with their shortcuts.
     fn open_command_palette(
         &mut self,
@@ -1374,6 +1490,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::go_to_symbol))
             .on_action(cx.listener(Self::open_command_palette))
+            .on_action(cx.listener(Self::file_icon_theme))
+            .on_action(cx.listener(Self::import_icon_theme))
             .on_action(cx.listener(Self::toggle_outline))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| {
                 this.set_zoom(this.zoom.step(1), cx);
