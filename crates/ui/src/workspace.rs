@@ -123,6 +123,7 @@ pub struct Workspace {
     text_style: TextStyle,
     zoom: Zoom,
     markdown_settings: Arc<settings::Markdown>,
+    tex_settings: settings::Tex,
     focus_handle: FocusHandle,
     /// Files in the order their tabs were last activated, most recent last.
     recent: Vec<PathBuf>,
@@ -291,6 +292,7 @@ impl Workspace {
                 max_parse_size: settings.limits.syntax_max_file_size.0,
             },
             markdown_settings: Arc::new(settings.markdown.clone()),
+            tex_settings: settings.tex.clone(),
             zoom: Zoom::default(),
             focus_handle: cx.focus_handle(),
             recent: Vec::new(),
@@ -433,7 +435,15 @@ impl Workspace {
                                 .is_some_and(|s| s.eq_ignore_ascii_case("tex")) =>
                         {
                             TabView::Tex(cx.new(|cx| {
-                                TexView::new(path.clone(), source, index, style, language, cx)
+                                TexView::new(
+                                    path.clone(),
+                                    source,
+                                    index,
+                                    style,
+                                    language,
+                                    (this.root.clone(), this.tex_settings.clone()),
+                                    cx,
+                                )
                             }))
                         }
                         Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {

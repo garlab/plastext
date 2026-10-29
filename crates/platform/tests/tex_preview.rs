@@ -152,8 +152,59 @@ fn main() {
         tex::compile(&config, &cancel).is_err(),
         "adding a sibling must not grant the whole parent folder"
     );
+    // Automatic preview discovers the repository boundary and sibling inputs.
+    fs::create_dir(project.path().join(".git")).unwrap();
+    fs::write(
+        &input,
+        "\\documentclass{article}\\begin{document}\\input{../shared/part}\\end{document}",
+    )
+    .unwrap();
+    let automatic = Config::automatic(&input, None, Engine::discover().unwrap()).unwrap();
+    assert_eq!(tex::compile(&automatic, &cancel).unwrap().info.pages, 1);
+    let (session, _events) = Session::start(automatic).unwrap();
+    let wait = |predicate: &dyn Fn(&tex::State) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let state = session.state();
+            if predicate(&state) {
+                return state;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Timed out: {} {:?}",
+                state.status,
+                state.error
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    };
+    wait(&|state| state.output.is_some());
+    fs::create_dir(project.path().join("later")).unwrap();
+    let later = project.path().join("later/part.tex");
+    fs::write(&later, "One\\newpage Two").unwrap();
+    fs::write(
+        &input,
+        "\\documentclass{article}\\begin{document}\\input{../later/part}\\end{document}",
+    )
+    .unwrap();
+    wait(&|state| state.output.as_ref().is_some_and(|out| out.info.pages == 2));
+    fs::write(&later, "One\\newpage Two\\newpage Three").unwrap();
+    let completed = wait(&|state| state.output.as_ref().is_some_and(|out| out.info.pages == 3));
+    fs::write(&later, "\\loop\\iftrue\\repeat").unwrap();
+    wait(&|state| state.started.is_some());
+    session.cancel_current();
+    std::thread::sleep(Duration::from_millis(900));
+    let stopped = session.state();
+    assert_eq!(stopped.status, "Preview cancelled");
+    assert!(stopped.started.is_none());
+    assert_eq!(
+        stopped.output.unwrap().document.id,
+        completed.output.unwrap().document.id
+    );
+    fs::write(&later, "Recovered").unwrap();
+    wait(&|state| state.output.as_ref().is_some_and(|out| out.info.pages == 1));
     println!(
-        "TeX integration: compile, job name, BibTeX, atomic saves, included inputs, latest revision, retained preview, pause/resume, cancellation, additional input confinement passed"
+        "TeX integration: compile, job name, BibTeX, atomic saves, included inputs, latest revision, retained preview, pause/resume, cancellation, additional input confinement, automatic discovery, new dependencies, recovery passed"
     );
 }
 #[cfg(not(target_os = "macos"))]

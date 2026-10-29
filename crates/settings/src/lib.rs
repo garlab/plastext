@@ -32,6 +32,24 @@ pub struct Settings {
     pub theme: Themes,
     pub markdown: Markdown,
     pub icons: icons::IconSettings,
+    pub tex: Tex,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tex {
+    /// Open TeX in preview; compilation still pauses when no preview is visible.
+    pub preview: bool,
+    /// Optional installed TeX Live pdfLaTeX executable. Never a project command.
+    pub compiler: Option<PathBuf>,
+}
+impl Default for Tex {
+    fn default() -> Self {
+        Self {
+            preview: true,
+            compiler: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -160,6 +178,9 @@ impl Settings {
                     .map_err(|err| LoadError::Parse(path.to_owned(), Box::new(err)))?;
                 let base = path.parent().unwrap_or(Path::new("."));
                 settings.icons.resolve_paths(base);
+                if let Some(compiler) = &mut settings.tex.compiler {
+                    *compiler = base.join(&*compiler);
+                }
                 for theme in [&mut settings.theme.light, &mut settings.theme.dark] {
                     if let Some(import) = &theme.import {
                         let mut imported =
@@ -237,5 +258,14 @@ mod tests {
         assert!(Settings::parse("[editor]\nfont_size = \"big\"").is_err());
         assert!(Settings::parse("[files]\nshow_ignored = \"sometimes\"").is_err());
         assert!(Settings::parse("[limits]\nblock_cache = \"lots\"").is_err());
+        assert!(Settings::default().tex.preview);
+        let settings =
+            Settings::parse("[tex]\npreview = false\ncompiler = '/opt/tex/bin/pdflatex'").unwrap();
+        assert!(!settings.tex.preview);
+        assert_eq!(
+            settings.tex.compiler,
+            Some(PathBuf::from("/opt/tex/bin/pdflatex"))
+        );
+        assert!(Settings::parse("[tex]\ncommand = 'make'").is_err());
     }
 }

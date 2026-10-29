@@ -9,7 +9,7 @@ PDF files open in Preview, with a persistent Preview/Binary switch and
 Cmd+Shift+V shortcut. Binary uses the existing hex reader. Each mode retains its
 position. Preview failure must never prevent inspecting the file's bytes.
 
-TeX files offer Source/Preview. Preview compiles a document to PDF locally;
+TeX files open in Preview and offer a Source/Preview switch. Preview compiles a document to PDF locally;
 formula rendering alone cannot reproduce a complete LaTeX document.
 
 ## Performance and isolation
@@ -54,8 +54,8 @@ Keep the backend boundary independent of the UI. Linux and Windows can use a
 maintained PDFium build, with JavaScript and XFA disabled. These platforms need
 their own dependency, deployment and security validation.
 
-TeX compilation is optional. Initially use an explicitly selected installed
-engine with the packages/fonts required by the document. Tectonic is another
+TeX compilation uses an automatically detected installed engine, with an
+advanced override. Its packages/fonts must already be installed. Tectonic is another
 optional engine, not a universal replacement for pdfLaTeX, XeLaTeX or LuaLaTeX.
 
 ## Rebuild scheduling
@@ -75,13 +75,13 @@ discovered during the build.
 Publish only a complete PDF whose inputs still match the current revision.
 Keep the last successful PDF visible during rebuilding and errors, with a
 small status indicator. Preserve zoom and reading position. Continuous editing
-must not cause blank previews or an unbounded cancel/restart loop. Manual
-refresh/pause remains available for expensive projects.
+must not cause blank previews or an unbounded cancel/restart loop. Hiding all
+previews stops compilation. Slow builds offer cancellation; failures offer retry.
 
 ## Privacy and security
 
-PDF viewing and compilation are offline by default. Local compilation is
-enabled explicitly per project. Never automatically execute project Makefiles,
+PDF viewing and compilation are offline by default. Opening a visible TeX
+preview starts confined local compilation automatically. Never automatically execute project Makefiles,
 latexmk configuration, shell commands or document-selected executables. Disable
 shell escape and restrict reads to authorized document inputs and installed TeX
 resources; writes belong in the private build directory.
@@ -183,7 +183,7 @@ remain available for system PDF/font services. This PDF-only profile is separate
 from the stricter compiler profile below. Seatbelt is deprecated; a signed-helper
 confinement strategy and oldest-OS validation remain future work. Running inside
 an existing OS sandbox can prevent the worker from starting. PDF viewing never
-executes TeX or downloads packages; compilation requires separate enablement.
+executes TeX or downloads packages; compilation starts only for a visible TeX preview.
 
 Native tests generate their own PDFs and cover rotation, clipping, Retina
 enlargement, BGRA/row orientation, page 10,000, malformed inputs and protocol
@@ -206,25 +206,61 @@ certification. The accepted M1/M2 performance baseline is unchanged.
 
 ## Local TeX increment
 
-Open a `.tex` file in Source, then choose **Preview** (Cmd+Shift+V). Select
-**Enable pdfLaTeX** to authorize its document folder for this application
-session. MacTeX/BasicTeX's installed pdfLaTeX is offered when available;
-**Choose pdfLaTeX…** selects another TeX Live installation. Nothing is installed
-or downloaded. Opening a source tab alone starts no compiler discovery, watcher,
-or compilation. TeX compilation currently requires macOS and an installed TeX
-Live distribution containing the document's packages and fonts.
+Open a `.tex` file to see its preview automatically. Plastext detects an installed
+MacTeX/BasicTeX pdfLaTeX, the root document and local inputs. There is no enable or
+build button in the normal workflow. Nothing is installed or downloaded; macOS
+and a TeX Live installation with the document's packages/fonts are required.
+A missing compiler leaves Source available and explains the dependency.
 
-**Root…** chooses the main `.tex` document when viewing an included file. Inputs
-come from that document's folder and its subdirectories. **Add input folder…**
-explicitly authorizes a sibling folder for shared sources, figures or listings.
-Relative paths are preserved in the private snapshot; adding one sibling does
-not grant access to their entire parent. Up to eight folders share the same
-input budget. Changing the root to a different folder requires its own enable
-action.
+Use **Source/Preview** (Cmd+Shift+V) to switch modes. For source and preview side
+by side, split with Cmd+D or Cmd+Shift+D and switch either pane to Source. Splits
+share a compiler session; modes and reading positions are independent. Hiding
+all previews stops compilation automatically. After ten seconds of active work,
+**Cancel** appears. Cancelling preserves the last PDF and stops that revision;
+the next save resumes updates. Errors and cancellation offer **Retry**. Cmd+R
+also retries and reloads advanced settings. The hard compiler deadline remains
+60 seconds.
 
-**Rebuild** (Cmd+R) rebuilds and resumes automatic updates; **Pause** stops them.
-Switching to Source or hiding every preview pauses compilation. Split views of
-the same tab share a compiler session and its result.
+Root detection honors `% !TeX root = main.tex`, accepts a document containing
+`\documentclass`, or finds an unambiguous parent document through literal
+`\input`/`\include` references in the current and ancestor folders. It does not
+scan the entire repository. Ambiguous roots require an override.
+
+The project boundary is the nearest Git root, otherwise the containing workspace
+folder, otherwise the opened file's folder. Discovery follows local includes
+and literal relative paths, including simple directory macros such as
+`\newcommand{\figures}{../figures}`. Referenced sibling folders inside the project
+are copied automatically. This is bounded text inspection, not TeX execution or
+complete macro expansion: root search inspects at most 512 directory entries and
+16 MiB of candidate/include text; input discovery inspects at most 128 files,
+2 MiB per file and approximately 16 MiB total. Each scan also caps path lookups
+at 2,048 and bounds its pending file list. Complex/dynamic paths may need
+explicit configuration. Inputs are rediscovered after saves, and newly added
+folders join the watcher. Unrelated sibling folders are not copied implicitly.
+
+**Settings…** contains root, compiler and additional-input overrides for the
+current tab and its splits. Project defaults can be saved in `.plastext/tex.toml`
+in the document folder or an ancestor inside the project:
+
+```toml
+root = "paper/main.tex"
+input_folders = ["figures", "shared"]
+```
+
+Paths are relative to the folder containing `.plastext`. The nearest file wins.
+Project configuration can only name paths inside the project, and cannot choose
+executables or shell commands. Inputs outside the project require the explicit
+**Add input folder…** picker. Up to eight folders share the existing input budget;
+relative paths are preserved in private copies. Configuration changes take effect
+on Retry/Cmd+R or reopening the tab. Picker overrides last for the tab session.
+
+Personal defaults belong in Plastext's usual `config.toml` (restart to apply):
+
+```toml
+[tex]
+preview = true # false opens Source first, with no compilation until Preview
+# compiler = "/path/to/texlive/bin/pdflatex"
+```
 
 The native filesystem watcher coalesces saves for at least 500 ms, increasing
 the delay up to two seconds after slow builds. It watches the authorized folders
@@ -266,9 +302,10 @@ not certification for arbitrary large documents.
 
 Tests cover private snapshots, same-length input changes, symlink rejection,
 outside-file/network/subprocess denial, read-only cached fonts, explicitly added
-input folders, atomic saves, included-file updates,
-save bursts, pause/resume, cancellation and retaining a successful PDF after an
-error. The headless smoke test exercises the same compiler and PDF worker:
+input folders, automatic root/input discovery, project boundaries, atomic saves,
+included-file updates, new dependencies, save bursts, pause/resume, cancellation,
+recovery on the next save and retaining a successful PDF after an error. The
+headless smoke test exercises the same compiler and PDF worker:
 
 ```sh
 cargo run -p plastext-platform --example tex_probe -- /path/to/main.tex
@@ -277,7 +314,7 @@ cargo run -p plastext-platform --example tex_probe -- /path/to/paper/main.tex --
 ```
 
 Still pending: XeLaTeX/LuaLaTeX, Biber and other generated-asset pipelines,
-Tectonic setup/downloads, persistent project permissions, unsaved-buffer overlays
+Tectonic setup/downloads, persistent external-input permissions, unsaved-buffer overlays
 once editing is implemented, SyncTeX, configurable limits and cleanup after
 crashes. Source is currently read-only;
 external editor saves drive automatic rebuilding. Sandbox validation on the

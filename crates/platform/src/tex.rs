@@ -1,5 +1,6 @@
-//! Opt-in local compilation. No discovery, watchers or processes run at startup.
+//! Automatic offline compilation, active only while a TeX preview is visible.
 mod compiler;
+mod discovery;
 mod snapshot;
 
 pub use crate::pdf::Cancel;
@@ -40,6 +41,8 @@ pub struct Config {
     pub engine: Engine,
     pub input_folders: Vec<PathBuf>,
     base: PathBuf,
+    automatic: Option<PathBuf>,
+    extra_inputs: Vec<PathBuf>,
 }
 impl Config {
     pub fn new(input: &Path, engine: Engine) -> Result<Self, String> {
@@ -91,6 +94,8 @@ impl Config {
             engine,
             input_folders,
             base,
+            automatic: None,
+            extra_inputs: additional.to_vec(),
         })
     }
 }
@@ -101,6 +106,7 @@ pub struct State {
     pub error: Option<String>,
     pub output: Option<Arc<Compiled>>,
     pub revision: u64,
+    pub started: Option<Instant>,
 }
 struct Work {
     revision: u64,
@@ -108,6 +114,7 @@ struct Work {
     paused: bool,
     stopped: bool,
     busy: bool,
+    cancelled: bool,
     cancel: Cancel,
     state: State,
 }
@@ -120,6 +127,7 @@ impl Shared {
     fn changed(&self) {
         let mut work = self.work.lock().unwrap();
         work.revision += 1;
+        work.cancelled = false;
         work.changed = Instant::now();
         work.cancel.store(true, Ordering::Relaxed);
         if !work.paused {
@@ -152,26 +160,29 @@ impl Session {
                 paused: false,
                 stopped: false,
                 busy: false,
+                cancelled: false,
                 cancel: Arc::new(AtomicBool::new(false)),
                 state: State {
                     status: "Waiting for saves…".into(),
                     error: None,
                     output: None,
                     revision: 0,
+                    started: None,
                 },
             }),
             wake,
             updates,
         });
         let changed = shared.clone();
-        let roots = config.input_folders.clone();
+        let roots = Arc::new(Mutex::new(config.input_folders.clone()));
+        let observed_roots = roots.clone();
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
                 Ok(event)
                     if !matches!(event.kind, notify::EventKind::Access(_))
                         && (event.need_rescan()
                             || event.paths.iter().any(|path| {
-                                roots.iter().any(|root| {
+                                observed_roots.lock().unwrap().iter().any(|root| {
                                     path.strip_prefix(root)
                                         .is_ok_and(|p| !snapshot::excluded(p))
                                 })
@@ -183,6 +194,7 @@ impl Session {
                     let mut work = changed.work.lock().unwrap();
                     work.cancel.store(true, Ordering::Relaxed);
                     work.paused = true;
+                    work.state.started = None;
                     work.state.status = "Automatic rebuild paused".into();
                     work.state.error = Some(format!(
                         "File watcher failed: {error}. Retry Preview to resume."
@@ -201,7 +213,7 @@ impl Session {
         std::thread::Builder::new()
             .name("tex-preview".into())
             .spawn(move || {
-                let _watcher = watcher;
+                let mut watcher = watcher;
                 let mut built = 0;
                 let mut delay = Duration::from_millis(500);
                 loop {
@@ -210,7 +222,7 @@ impl Session {
                         if work.stopped {
                             break;
                         }
-                        if work.paused || built == work.revision {
+                        if work.paused || work.cancelled || built == work.revision {
                             (None, None)
                         } else {
                             (
@@ -231,23 +243,48 @@ impl Session {
                     }
                     let cancel = {
                         let mut work = worker.work.lock().unwrap();
-                        if work.paused || work.stopped || work.revision != revision {
+                        if work.paused
+                            || work.cancelled
+                            || work.stopped
+                            || work.revision != revision
+                        {
                             continue;
                         }
                         work.cancel = Arc::new(AtomicBool::new(false));
                         work.busy = true;
+                        work.state.started = Some(Instant::now());
                         work.state.status = "Building PDF…".into();
                         work.state.error = None;
                         worker.notify();
                         work.cancel.clone()
                     };
                     let start = Instant::now();
-                    let result = compile(&config, &cancel);
+                    let result = (|| {
+                        let refreshed = config.refresh_inputs()?;
+                        {
+                            let previous = roots.lock().unwrap().clone();
+                            for root in &refreshed.input_folders {
+                                if !previous.contains(root) {
+                                    watcher
+                                        .watch(root, RecursiveMode::Recursive)
+                                        .map_err(|e| e.to_string())?;
+                                }
+                            }
+                            for root in &previous {
+                                if !refreshed.input_folders.contains(root) {
+                                    let _ = watcher.unwatch(root);
+                                }
+                            }
+                            *roots.lock().unwrap() = refreshed.input_folders.clone();
+                        }
+                        compile(&refreshed, &cancel)
+                    })();
                     delay = (start.elapsed() / 4)
                         .clamp(Duration::from_millis(500), Duration::from_secs(2));
                     let mut work = worker.work.lock().unwrap();
                     work.busy = false;
-                    if work.revision != revision || work.paused || work.stopped {
+                    work.state.started = None;
+                    if work.revision != revision || work.paused || work.cancelled || work.stopped {
                         continue;
                     }
                     built = revision;
@@ -285,12 +322,25 @@ impl Session {
     pub fn refresh(&self) {
         self.shared.changed();
     }
+    /// Cancel this revision; the next save or explicit retry resumes normally.
+    pub fn cancel_current(&self) {
+        let mut work = self.shared.work.lock().unwrap();
+        work.cancelled = true;
+        work.cancel.store(true, Ordering::Relaxed);
+        work.state.started = None;
+        work.state.status = "Preview cancelled".into();
+        self.shared.notify();
+        let _ = self.shared.wake.try_send(());
+    }
     pub fn set_paused(&self, paused: bool) {
         let mut work = self.shared.work.lock().unwrap();
         if work.paused == paused {
             return;
         }
         work.paused = paused;
+        if paused {
+            work.state.started = None;
+        }
         work.cancel.store(true, Ordering::Relaxed);
         if paused && work.busy {
             work.revision += 1;
@@ -298,6 +348,8 @@ impl Session {
         work.changed = Instant::now();
         work.state.status = if paused {
             "Paused"
+        } else if work.cancelled {
+            "Preview cancelled"
         } else if work.state.error.is_some() {
             if work.state.output.is_some() {
                 "Build failed · previous preview retained"

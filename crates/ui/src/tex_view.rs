@@ -10,7 +10,7 @@ use plastext_editor::{TextStyle, TextView, Theme};
 use plastext_syntax::{Language, Symbol};
 use std::{path::PathBuf, sync::Arc};
 
-actions!(tex_view, [ToggleSource, Rebuild, Pause]);
+actions!(tex_view, [ToggleSource, Rebuild]);
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Tex")),
@@ -39,6 +39,7 @@ pub struct TexView {
     old_focus: Option<FocusHandle>,
     error: Option<SharedString>,
     details: bool,
+    settings_open: bool,
 }
 impl TexView {
     pub fn new(
@@ -47,11 +48,15 @@ impl TexView {
         index: Arc<LineIndex>,
         style: TextStyle,
         language: Option<&'static Language>,
+        config: (Option<PathBuf>, plastext_settings::Tex),
         cx: &mut Context<Self>,
     ) -> Self {
         let source = cx.new(|cx| TextView::new(source, index, style.clone(), language, cx));
-        let model = cx.new(|cx| Model::new(path.clone(), cx));
-        Self::with_model(path, source, model, style, cx)
+        let preview = config.1.preview;
+        let model = cx.new(|_| Model::new(path.clone(), config.0, config.1));
+        let mut view = Self::with_model(path, source, model, style, cx);
+        view.preview = preview;
+        view
     }
     fn with_model(
         path: PathBuf,
@@ -93,6 +98,7 @@ impl TexView {
             old_focus: None,
             error: None,
             details: false,
+            settings_open: false,
         }
     }
     pub fn duplicate(&self, cx: &mut Context<Self>) -> Entity<Self> {
@@ -120,8 +126,12 @@ impl TexView {
         self.visible = visible;
         let active = visible && self.preview;
         let owner = cx.entity_id();
-        self.model
-            .update(cx, |model, _| model.visible(owner, active));
+        self.model.update(cx, |model, cx| {
+            model.visible(owner, active);
+            if active {
+                model.setup(cx);
+            }
+        });
         if let Some(pdf) = &self.pdf {
             pdf.update(cx, |pdf, cx| pdf.set_visible(active, cx));
         }
@@ -349,7 +359,7 @@ impl TexView {
                 if root {
                     "Choose TeX root document"
                 } else {
-                    "Enable folder with pdfLaTeX"
+                    "Choose pdfLaTeX"
                 }
                 .into(),
             ),
@@ -427,33 +437,59 @@ impl Render for TexView {
         }
         let theme = Theme::get(window, cx);
         let model = self.model.read(cx);
-        let enabled = model.enabled;
-        let paused = model.paused;
-        let engine = model.engine.clone();
         let input = model.input.clone();
         let status = model.state.status.clone();
+        let slow = model.slow();
+        let cancelled = status == "Preview cancelled";
         let error = self.notice(cx);
         let body = if !self.preview {
             self.source.clone().into_any_element()
         } else {
-            div().relative().size_full().track_focus(&self.focus)
-                    .when_some(self.staging.clone(), |d, staged| d.child(div().absolute().inset_0().opacity(if self.pdf.is_some() { 0. } else { 1. }).child(staged)))
-                    .when_some(self.pdf.clone(), |d, pdf| d.child(div().relative().size_full().occlude().child(pdf)))
-                    .when(!enabled || (self.pdf.is_none() && self.staging.is_none()), |d| d.child(
-                        div().p_6().flex().flex_col().gap_3().text_color(theme.text).when(!enabled, |d| d.absolute().inset_0().bg(theme.background))
-                            .child(if enabled { status.clone() } else { "Enable offline TeX preview for this folder".into() })
-                            .when(!enabled, |d| d
-                                .child(format!("Inputs: {}. Builds use private copies; no project files are changed.", input.parent().unwrap_or(&input).display()))
-                                .child("Requires installed TeX Live packages. Shell escape and networking are disabled.")
-                                .when_some(engine.clone(), |d, engine| d.child(div().id("tex-enable").cursor_pointer().text_color(theme.text)
-                                    .child(format!("Enable pdfLaTeX · {}", engine.executable.display()))
-                                    .on_click(cx.listener(|this, _, window, cx| { this.model.update(cx, |model, cx| model.enable(cx)); this.focus_handle(cx).focus(window); }))))
-                                .child(div().id("tex-engine").cursor_pointer().text_color(theme.text).child("Choose pdfLaTeX…")
-                                    .on_click(cx.listener(|this, _, window, cx| this.pick(false, window, cx)))))
-                    ))
-                    .when_some(error.clone().filter(|_| self.details || !enabled), |d, error| d.child(
-                        div().id("tex-error").absolute().bottom_0().left_0().right_0().max_h(px(170.)).overflow_y_scroll().p_3().bg(theme.surface).text_color(theme.text).text_sm().child(error)
-                    )).into_any_element()
+            div()
+                .relative()
+                .size_full()
+                .track_focus(&self.focus)
+                .when_some(self.staging.clone(), |d, staged| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .opacity(if self.pdf.is_some() { 0. } else { 1. })
+                            .child(staged),
+                    )
+                })
+                .when_some(self.pdf.clone(), |d, pdf| {
+                    d.child(div().relative().size_full().occlude().child(pdf))
+                })
+                .when(self.pdf.is_none() && self.staging.is_none(), |d| {
+                    d.child(
+                        div()
+                            .p_6()
+                            .text_color(theme.text_muted)
+                            .child(status.clone()),
+                    )
+                })
+                .when_some(
+                    error.clone().filter(|_| self.details || self.pdf.is_none()),
+                    |d, error| {
+                        d.child(
+                            div()
+                                .id("tex-error")
+                                .absolute()
+                                .bottom_0()
+                                .left_0()
+                                .right_0()
+                                .max_h(px(170.))
+                                .overflow_y_scroll()
+                                .p_3()
+                                .bg(theme.surface)
+                                .text_color(theme.text)
+                                .text_sm()
+                                .child(error),
+                        )
+                    },
+                )
+                .into_any_element()
         };
         div()
             .key_context("Tex")
@@ -463,9 +499,6 @@ impl Render for TexView {
             .on_action(cx.listener(Self::toggle))
             .on_action(cx.listener(|this, _: &Rebuild, _, cx| {
                 this.model.update(cx, |model, cx| model.rebuild(cx))
-            }))
-            .on_action(cx.listener(|this, _: &Pause, _, cx| {
-                this.model.update(cx, |model, cx| model.pause(cx))
             }))
             .child(
                 div()
@@ -483,53 +516,38 @@ impl Render for TexView {
                     .text_color(theme.text_muted)
                     .text_xs()
                     .child("TeX")
-                    .when(self.preview, |bar| {
-                        bar.child(div().flex_1().min_w(px(120.)).truncate().child(format!(
-                            "{} · {}",
-                            input.file_name().unwrap_or_default().to_string_lossy(),
-                            status
-                        )))
-                        .child(
+                    .child(div().flex_1().min_w_0().truncate().child(if self.preview {
+                        status
+                    } else {
+                        String::new()
+                    }))
+                    .when(self.preview && slow, |bar| {
+                        bar.child(
                             div()
-                                .id("tex-root")
+                                .id("tex-cancel")
                                 .cursor_pointer()
-                                .child("Root…")
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.pick(true, window, cx)),
-                                ),
-                        )
-                        .when(enabled, |bar| {
-                            bar.child(
-                                div()
-                                    .id("tex-rebuild")
-                                    .cursor_pointer()
-                                    .child("Rebuild")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.model.update(cx, |model, cx| model.rebuild(cx));
-                                        this.focus_handle(cx).focus(window);
-                                    })),
-                            )
-                            .child(
-                                div()
-                                    .id("tex-pause")
-                                    .cursor_pointer()
-                                    .child(if paused { "Resume" } else { "Pause" })
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.model.update(cx, |model, cx| model.pause(cx));
-                                        this.focus_handle(cx).focus(window);
-                                    })),
-                            )
-                        })
-                        .child(
-                            div()
-                                .id("tex-inputs")
-                                .cursor_pointer()
-                                .child("Add input folder…")
+                                .child("Cancel")
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.add_input_folder(window, cx)
+                                    this.model.update(cx, |model, _| model.cancel());
+                                    this.focus_handle(cx).focus(window);
                                 })),
                         )
-                        .when(error.is_some(), |bar| {
+                    })
+                    .when(self.preview && (error.is_some() || cancelled), |bar| {
+                        bar.child(
+                            div()
+                                .id("tex-retry")
+                                .cursor_pointer()
+                                .child("Retry")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.model.update(cx, |model, cx| model.rebuild(cx));
+                                    this.focus_handle(cx).focus(window);
+                                })),
+                        )
+                    })
+                    .when(
+                        self.preview && error.is_some() && self.pdf.is_some(),
+                        |bar| {
                             bar.child(
                                 div()
                                     .id("tex-details")
@@ -540,9 +558,20 @@ impl Render for TexView {
                                         cx.notify();
                                     })),
                             )
-                        })
+                        },
+                    )
+                    .when(self.preview, |bar| {
+                        bar.child(
+                            div()
+                                .id("tex-settings")
+                                .cursor_pointer()
+                                .child("Settings…")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.settings_open = !this.settings_open;
+                                    cx.notify();
+                                })),
+                        )
                     })
-                    .when(!self.preview, |bar| bar.child(div().flex_1()))
                     .child(
                         div()
                             .id("tex-toggle")
@@ -557,6 +586,66 @@ impl Render for TexView {
                             })),
                     ),
             )
+            .when(self.preview && self.settings_open, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .p_3()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .bg(theme.surface)
+                        .text_color(theme.text_muted)
+                        .text_sm()
+                        .child(format!("Root: {}", input.display()))
+                        .child(
+                            "Project overrides: .plastext/tex.toml. Retry after changing settings.",
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .id("tex-root")
+                                        .cursor_pointer()
+                                        .child("Choose root…")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.pick(true, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id("tex-engine")
+                                        .cursor_pointer()
+                                        .child("Choose pdfLaTeX…")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.pick(false, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id("tex-inputs")
+                                        .cursor_pointer()
+                                        .child("Add input folder…")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.add_input_folder(window, cx)
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id("tex-settings-retry")
+                                        .cursor_pointer()
+                                        .child("Retry")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.model.update(cx, |model, cx| model.rebuild(cx));
+                                            this.focus_handle(cx).focus(window);
+                                        })),
+                                ),
+                        ),
+                )
+            })
             .child(div().flex_1().min_h_0().child(body))
     }
 }

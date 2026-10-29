@@ -29,8 +29,9 @@ fn main() -> Result<(), String> {
     }
     let engine = Engine::discover()?;
     for path in paths {
-        let config = Config::with_inputs(&path, engine.clone(), &inputs)?;
         let start = Instant::now();
+        let config =
+            Config::automatic(&path, None, engine.clone())?.with_additional_inputs(&inputs)?;
         let result = tex::compile(&config, &Arc::new(AtomicBool::new(false)))?;
         println!(
             "{}",
