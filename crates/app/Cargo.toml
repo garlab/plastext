@@ -27,6 +27,8 @@ plastext-ui.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+serde_json = "1"
+libc = "0.2"
 
 [lints]
 workspace = true

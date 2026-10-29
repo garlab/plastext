@@ -5147,12 +5147,14 @@ dependencies = [
  "clap",
  "futures",
  "gpui",
+ "libc",
  "plastext-cli",
  "plastext-editor",
  "plastext-math",
  "plastext-platform",
  "plastext-settings",
  "plastext-ui",
+ "serde_json",
  "tempfile",
 ]
 
@@ -5262,9 +5264,14 @@ dependencies = [
 name = "plastext-platform"
 version = "0.1.0"
 dependencies = [
+ "core-graphics 0.24.0",
+ "foreign-types",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 
@@ -5338,6 +5345,7 @@ dependencies = [
  "plastext-editor",
  "plastext-markdown",
  "plastext-math",
+ "plastext-platform",
  "plastext-project",
  "plastext-search",
  "plastext-settings",

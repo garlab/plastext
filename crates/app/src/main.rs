@@ -41,6 +41,16 @@ struct StartupProfile {
 impl Global for StartupProfile {}
 
 fn main() -> ExitCode {
+    // The renderer never initializes GPUI, AppKit, settings or single-instance IPC.
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--pdf-worker")) {
+        return match plastext_platform::pdf::worker_main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("PDF worker: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let start = Instant::now();
     #[cfg(feature = "math-spike")]
     if let Some(fonts) = env::var_os("PLASTEXT_MATH_PROBE") {

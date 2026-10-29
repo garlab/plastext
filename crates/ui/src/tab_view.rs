@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::csv_view::CsvView;
 use crate::image_view::ImageView;
 use crate::markdown_view::MarkdownView;
+use crate::pdf_view::PdfView;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription};
 use plastext_editor::{HexView, HexViewStatus, TextView, TextViewStatus};
 use plastext_syntax::Symbol;
@@ -15,6 +16,7 @@ pub(crate) enum TabView {
     Markdown(Entity<MarkdownView>),
     Image(Entity<ImageView>),
     Csv(Entity<CsvView>),
+    Pdf(Entity<PdfView>),
 }
 
 pub(crate) enum TabStatus {
@@ -27,6 +29,11 @@ pub(crate) enum TabStatus {
 }
 
 impl TabView {
+    pub fn set_visible(&self, visible: bool, cx: &mut App) {
+        if let Self::Pdf(view) = self {
+            view.update(cx, |view, cx| view.set_visible(visible, cx));
+        }
+    }
     pub fn set_zoom(&self, factor: f32, base_font_size: gpui::Pixels, cx: &mut App) {
         let font_size = base_font_size * factor;
         match self {
@@ -37,6 +44,7 @@ impl TabView {
             }
             Self::Csv(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Image(view) => view.update(cx, |view, cx| view.set_zoom(factor, cx)),
+            Self::Pdf(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
         }
     }
 
@@ -47,6 +55,7 @@ impl TabView {
             Self::Markdown(view) => view.focus_handle(cx),
             Self::Image(view) => view.focus_handle(cx),
             Self::Csv(view) => view.focus_handle(cx),
+            Self::Pdf(view) => view.focus_handle(cx),
         }
     }
 
@@ -58,6 +67,7 @@ impl TabView {
             Self::Markdown(view) => Self::Markdown(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Image(view) => Self::Image(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Csv(view) => Self::Csv(view.update(cx, |view, cx| view.duplicate(cx))),
+            Self::Pdf(view) => Self::Pdf(view.update(cx, |view, cx| view.duplicate(cx))),
         }
     }
 
@@ -71,6 +81,9 @@ impl TabView {
         }
         if let Self::Csv(view) = self {
             view.update(cx, |view, cx| view.scroll_to_line(line, cx));
+        }
+        if let Self::Pdf(view) = self {
+            view.update(cx, |view, cx| view.scroll_to_offset(line, cx));
         }
     }
 
@@ -89,10 +102,11 @@ impl TabView {
             Self::Markdown(view) => Some(view.read(cx).symbols()),
             Self::Image(_) => None,
             Self::Csv(_) => None,
+            Self::Pdf(_) => None,
         }
     }
 
-    /// The byte offset at the top of the view.
+    /// Navigation position: a byte offset, or a 1-based page number for PDF.
     pub fn position(&self, cx: &App) -> u64 {
         match self {
             Self::Text(view) => view.read(cx).position(),
@@ -100,6 +114,7 @@ impl TabView {
             Self::Markdown(view) => view.read(cx).position(cx),
             Self::Image(_) => 0,
             Self::Csv(view) => view.read(cx).position(cx),
+            Self::Pdf(view) => view.read(cx).position(),
         }
     }
 
@@ -110,6 +125,7 @@ impl TabView {
             Self::Markdown(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Image(_) => {}
             Self::Csv(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+            Self::Pdf(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
         }
     }
 
@@ -117,6 +133,10 @@ impl TabView {
         match self {
             Self::Text(view) => TabStatus::Text(view.read(cx).status()),
             Self::Hex(view) => TabStatus::Hex(view.read(cx).status()),
+            Self::Pdf(view) => TabStatus::Preview {
+                notice: view.read(cx).notice(),
+                summary: view.read(cx).summary(cx),
+            },
             Self::Markdown(view) => TabStatus::Preview {
                 notice: view.read(cx).notice(),
                 summary: view.read(cx).summary(),
@@ -140,6 +160,7 @@ impl TabView {
             Self::Markdown(view) => cx.observe(view, |_, _, cx| cx.notify()),
             Self::Image(view) => cx.observe(view, |_, _, cx| cx.notify()),
             Self::Csv(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Pdf(view) => cx.observe(view, |_, _, cx| cx.notify()),
         }
     }
 
@@ -150,6 +171,7 @@ impl TabView {
             Self::Markdown(view) => view.clone().into(),
             Self::Image(view) => view.clone().into(),
             Self::Csv(view) => view.clone().into(),
+            Self::Pdf(view) => view.clone().into(),
         }
     }
 }

@@ -23,6 +23,7 @@ plastext-editor.workspace = true
 plastext-markdown.workspace = true
 plastext-math.workspace = true
 plastext-project.workspace = true
+plastext-platform.workspace = true
 plastext-search.workspace = true
 plastext-settings.workspace = true
 plastext-syntax.workspace = true

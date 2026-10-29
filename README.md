@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. Math renders natively, inline and display (KaTeX via katex-rs); large-image tiling is still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
+> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. PDFs have an isolated, tiled page preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs); large-image tiling is still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
 
 ## Building
 
@@ -43,6 +43,10 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘D` / `⇧⌘D` | Split right / down |
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
+| `⇧⌘V` in PDF | Toggle Preview / Binary, preserving each position |
+| `←` / `→`, `Home` / `End` in PDF preview | Previous / next page, first / last page |
+| `⌃G` in PDF preview | Jump to a page number |
+| `⌘R` in PDF preview | Reload the file from disk |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.

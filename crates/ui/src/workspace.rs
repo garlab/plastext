@@ -25,6 +25,7 @@ use crate::{
     image_view::ImageView,
     layout::{Axis, Layout, Resize},
     markdown_view::{MarkdownEvent, MarkdownView},
+    pdf_view::PdfView,
     picker::{Picker, PickerEvent, PickerItem},
     quick_open::{QuickOpen, QuickOpenEvent},
     search_panel::{SearchPanel, SearchPanelEvent},
@@ -68,6 +69,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
     crate::markdown_view::init(cx);
+    crate::pdf_view::init(cx);
     crate::quick_open::init(cx);
     crate::picker::init(cx);
     let context = Some(KEY_CONTEXT);
@@ -360,8 +362,22 @@ impl Workspace {
                 if plastext_assets::is_image(&path) {
                     return Ok(Opened::Image(plastext_assets::load_local(&path)));
                 }
+                if plastext_platform::pdf::is_pdf(&path, b"") {
+                    // Keep even small PDFs file-backed; preview owns no full-file buffer.
+                    let source = Arc::new(FileSource::open(
+                        &path,
+                        OpenOptions {
+                            large_file_threshold: 0,
+                            block_cache: 8 * 1024 * 1024,
+                        },
+                    )?);
+                    return Ok(Opened::Pdf(source));
+                }
                 let source = Arc::new(FileSource::open(&path, options)?);
                 let head = source.head(plastext_buffer::SNIFF_LEN)?;
+                if plastext_platform::pdf::is_pdf(&path, &head) {
+                    return Ok(Opened::Pdf(source));
+                }
                 if plastext_buffer::looks_binary(&head) {
                     return Ok(Opened::Binary(source));
                 }
@@ -375,6 +391,9 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| match opened {
                 Ok(opened) => {
                     let view = match opened {
+                        Opened::Pdf(source) => {
+                            TabView::Pdf(cx.new(|cx| PdfView::new(path.clone(), source, style, cx)))
+                        }
                         Opened::Text(source, index, _)
                             if path.extension().is_some_and(|s| {
                                 s.eq_ignore_ascii_case("csv") || s.eq_ignore_ascii_case("tsv")
@@ -1448,6 +1467,7 @@ fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
 
 /// A file opened in the background, ready for a view.
 enum Opened {
+    Pdf(Arc<FileSource>),
     Image(Result<plastext_assets::Preview, String>),
     Text(
         Arc<FileSource>,
@@ -1465,6 +1485,11 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        for pane in self.panes.values() {
+            for (index, tab) in pane.tabs.iter().enumerate() {
+                tab.view.set_visible(pane.active == Some(index), cx);
+            }
+        }
         let theme = Theme::get(window, cx);
         let sidebar_width =
             clamp_sidebar_width(self.sidebar_width, self.sidebar_available_width(window));

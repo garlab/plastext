@@ -7,6 +7,7 @@ mod icon_themes;
 mod image_view;
 mod layout;
 mod markdown_view;
+mod pdf_view;
 mod picker;
 mod quick_open;
 mod search_panel;

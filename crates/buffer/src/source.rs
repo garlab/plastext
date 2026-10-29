@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, Read as _},
+    io::{self, Read as _, Seek as _},
     ops::{ControlFlow, Range},
     path::Path,
     sync::{
@@ -94,8 +94,15 @@ impl FileSource {
     /// Opens `path`, reading it whole if it's small. Blocks: call it off the main thread.
     pub fn open(path: &Path, options: OpenOptions) -> io::Result<Self> {
         let file = File::open(path)?;
+        Self::from_file(file, options)
+    }
+
+    /// Opens an already owned file, including an immutable anonymous snapshot.
+    /// Blocks: call off the main thread, like [`Self::open`].
+    pub fn from_file(mut file: File, options: OpenOptions) -> io::Result<Self> {
         let len = file.metadata()?.len();
         if len <= options.large_file_threshold {
+            file.rewind()?;
             let mut contents = Vec::with_capacity(len as usize);
             file.take(len).read_to_end(&mut contents)?;
             return Ok(Self::from_bytes(contents));

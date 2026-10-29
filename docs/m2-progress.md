@@ -254,6 +254,11 @@ Draw/submit p99 was **8.77 ms**, above the 8 ms target (`complete: true`, `passe
 
 ## Remaining M2 work
 
+PDF viewing has an initial isolated, tiled page viewer with Preview/Binary
+switching. Its implemented controls, resource limits and remaining validation
+are recorded in [PDF and TeX preview design](pdf-and-tex-preview.md#first-pdf-increment).
+TeX compilation is not implemented yet.
+
 - Inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
