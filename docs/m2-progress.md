@@ -213,13 +213,13 @@ Layout, including parsing, takes 0.1 ms per formula at the median and under 1 ms
 
 KaTeX's font files all claim to be upright regular faces; only the bold ones set a heavier weight. A font system that trusts those flags draws `KaTeX_Main` Italic for Regular. katex-native therefore lists each face's real style for renderers to register it under, as KaTeX's `@font-face` rules do.
 
-Display math (`$$…$$` and `math` fences) now renders on the `math-katex` branch. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails.
+Display math (`$$…$$` and `math` fences) renders natively. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails.
 
 Inline math (`$…$`) renders the same way. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Headings still show inline TeX, since they use larger text.
 
 Display math puts `\tag`s and automatic equation numbers (`equation`, `gather`, `align`, `alignat`, `multline`) against the right edge of the column, on the formula's baseline. Numbers count up through the whole document, as on a web page. The background indexing pass counts each numbering formula's equations and records its starting number. Layout remains limited to nearby formulas. Numbered formulas show their TeX until the index is ready.
 
-The branch depends on `../katex-native` by path, so it must not be merged until that crate is published ([upstream](upstream.md)).
+`katex-native` is consumed from crates.io; builds do not require a sibling checkout ([shared libraries](upstream.md#shared-libraries)).
 
 ### Retained memory — 2026-10-28
 
