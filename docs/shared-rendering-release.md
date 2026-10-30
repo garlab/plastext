@@ -1,9 +1,10 @@
 # Shared rendering release checks
 
-`document-graphics` is maintained in its own repository and distributed through
-crates.io. Its first release, 0.1.0, is pending. Plastext uses
-the [local override](local-development.md#shared-rendering-libraries) during review;
-`katex-native` 0.1.0 already comes from the registry.
+`document-graphics` is maintained in its own repository and published on
+crates.io from version tags. Plastext pins a released version; review library
+changes before a release with the
+[local override](local-development.md#shared-rendering-libraries). `katex-native`
+also comes from the registry.
 
 ## Review and automated checks
 
@@ -76,28 +77,21 @@ Automated pixel comparisons and worker tests do not replace these interaction
 checks. OS sandbox and memory enforcement outside macOS remain documented limits
 in the shared crate's README.
 
-## Manual publication
+## Updating to a new release
 
-After review, publish from the **document-graphics root** using the maintainer's crates.io
-credentials:
-
-```sh
-cargo publish --locked
-```
-
-After 0.1.0 is available, remove only the `document-graphics` entry from Plastext's
-local `[patch.crates-io]` configuration. From the **Plastext root**:
+document-graphics publishes from version tags through its release workflow; see
+its [release checks](https://github.com/garlab/document-graphics/blob/main/docs/releasing.md).
+After a release, remove the `document-graphics` entry from Plastext's local
+`[patch.crates-io]` configuration if present, set the new version pin in the root
+`Cargo.toml`, then from the **Plastext root**:
 
 ```sh
-cargo update -p document-graphics --precise 0.1.0
+cargo update -p document-graphics --precise X.Y.Z
 cargo check --locked -p plastext-app
 cargo test --locked -p plastext-platform --test mermaid_preview
 cargo test --locked -p plastext-ui markdown_view::mermaid
 ```
 
-Review and commit the resulting `Cargo.lock` registry source/checksum, remove the
-pending-release notices in the README and development/upstream docs, and verify
-a clean checkout without local overrides. Repeat the override removal and
-registry lockfile update in mdviewer, then rerun its integration tests. Both apps
-use versioned registry dependencies. Future releases must update their version
-pins explicitly; the library has its own version and release cycle.
+Review and commit the `Cargo.lock` registry source and checksum. Do the same in
+mdviewer and rerun its integration tests. Both apps pin the library's version
+explicitly; it has its own version and release cycle.

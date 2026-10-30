@@ -8,9 +8,6 @@ A fast, native, read-first viewer and light editor for code, Markdown and assets
 
 You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The Xcode Command Line Tools are enough; full Xcode isn't required.
 
-Until `document-graphics` 0.1.0 is published, builds also need its standalone checkout
-and [local dependency override](docs/local-development.md#shared-rendering-libraries).
-
 ```sh
 cargo run -p plastext-app -- .   # open the current folder
 cargo test --workspace

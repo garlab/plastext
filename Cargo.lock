@@ -1880,6 +1880,8 @@ dependencies = [
 [[package]]
 name = "document-graphics"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31c462e5bc9b2b382ef5ac8c95273c8bd4fd466cbb9cb953f2049ea018bd2787"
 dependencies = [
  "katex-native",
  "libc",
