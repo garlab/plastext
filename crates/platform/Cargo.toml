@@ -15,7 +15,7 @@ async-channel = "2"
 notify = "8.2"
 sha2 = "0.10"
 toml.workspace = true
-plastext-assets.workspace = true
+document-graphics.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

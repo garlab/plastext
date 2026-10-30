@@ -223,7 +223,7 @@ impl MarkdownView {
             if self.parsing {
                 None
             } else if !complete_fence(&self.document, ix)
-                || !plastext_assets::mermaid::admissible(&block.text)
+                || !document_graphics::mermaid::admissible(&block.text)
             {
                 Some(Err(
                     "Preview unavailable for this diagram · showing source".into()
@@ -252,7 +252,16 @@ impl MarkdownView {
                                 })
                                 .map(|preview| {
                                     let bytes = preview.rgba.len() * 2;
-                                    (crate::image_view::render_image(preview), bytes)
+                                    (
+                                        crate::image_view::render_image(plastext_assets::Preview {
+                                            width: preview.width,
+                                            height: preview.height,
+                                            original_width: preview.original_width,
+                                            original_height: preview.original_height,
+                                            rgba: preview.rgba,
+                                        }),
+                                        bytes,
+                                    )
                                 })
                         }
                     });

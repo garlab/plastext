@@ -52,3 +52,34 @@ cargo run -p plastext-app -- .
 ```
 
 Use this command from the repository root for subsequent development launches. Development settings are read from `target/dev-config/plastext/config.toml`; a missing file uses the defaults. This directory is ignored by Git. The installed app continues to use its normal settings, by default `~/.config/plastext/config.toml`.
+
+## Shared rendering libraries
+
+Math uses the published `katex-native` crate. Mermaid/SVG rendering and worker
+supervision use one shared library, [document-graphics](https://github.com/garlab/document-graphics),
+maintained in its own repository. Plastext retains its own queue, cache and UI code; shared renderer
+and protocol tests belong in that library.
+
+`document-graphics` 0.1.0 is awaiting its first crates.io release. For now, place the
+document-graphics checkout beside Plastext and add the following to an untracked
+`.cargo/config.toml` in the Plastext checkout. Merge it into any existing
+`[patch.crates-io]` table rather than replacing other local settings:
+
+```toml
+[patch.crates-io]
+document-graphics = { path = "../document-graphics" }
+```
+
+Adapt the relative path if the checkouts are elsewhere. Keep this checkout
+outside `target/` so `cargo clean` cannot remove the dependency. Run Cargo from
+the Plastext root so it reads the local override.
+
+The current lockfile resolves this unpublished crate locally. After publication,
+remove only its override and update the lockfile to record the registry source
+and checksum. See [shared rendering release checks](shared-rendering-release.md)
+for review, validation and publication commands.
+
+The same override is useful for later library development. Once the registry
+version is in use, keep temporary path-resolution changes to `Cargo.lock` out of
+commits. Each app selects raster fitting, cache size and worker lifetime; shared
+renderer changes should preserve those policies unless explicitly intended.

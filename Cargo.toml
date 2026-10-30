@@ -18,8 +18,8 @@ plastext-editor = { path = "crates/editor", default-features = false }
 plastext-git = { path = "crates/git" }
 plastext-markdown = { path = "crates/markdown" }
 plastext-math = { path = "crates/math" }
-# Developed alongside plastext for upstreaming to katex-rs (docs/upstream.md).
-katex-native = { path = "../katex-native", features = ["raster"] }
+katex-native = { version = "=0.1.0", features = ["raster"] }
+document-graphics = "=0.1.0"
 plastext-platform = { path = "crates/platform" }
 plastext-project = { path = "crates/project" }
 plastext-search = { path = "crates/search" }

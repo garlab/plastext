@@ -61,7 +61,7 @@ fn main() {
                 .expect(name);
             let elapsed = start.elapsed().as_secs_f64() * 1000.;
             times.push(elapsed);
-            assert!(p.width as usize * p.height as usize <= plastext_assets::mermaid::MAX_PIXELS);
+            assert!(p.width as usize * p.height as usize <= document_graphics::MAX_PIXELS);
             assert_eq!(p.rgba.len(), (p.width * p.height * 4) as usize);
             assert!(p.rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 0));
             if let Some(dir) = &output {

@@ -36,7 +36,6 @@ Preflight limits include 128 nodes, 256 edges, 16 subgraphs, 32 levels of lexica
 Tests cover all supported families in both appearances, source fallback, oversized and external content, generated-SVG restrictions, bounded worker messages, cancellation, timeout/reaping, and worker recycling. The native integration test uses the same worker entry point as the app, without opening a window:
 
 ```sh
-cargo test -p plastext-assets mermaid
 cargo test -p plastext-platform --test mermaid_preview
 cargo test -p plastext-ui markdown_view::mermaid
 ```
@@ -49,4 +48,9 @@ cargo test -p plastext-platform --test mermaid_preview -- --render-dir target/me
 
 These checks do not certify native scrolling or UI interaction performance; the accepted M1/M2 performance baselines remain unchanged.
 
-The bounded rendering adapter and worker protocol are adapted from mdviewer (MIT, Copyright © 2026 Anthony GARCIA). The renderer's license is included in [third-party notices](../THIRD_PARTY_NOTICES.md).
+Rendering, restricted SVG/font handling and worker supervision come from the
+`document-graphics` crate, maintained in its own repository. Plastext owns the
+app-wide queue, idle retirement and GUI image cache. `katex-native` also comes from
+crates.io. Shared renderer/protocol tests live with the library; this repository
+retains app integration tests. See [shared-library development](local-development.md#shared-rendering-libraries)
+and [third-party notices](../THIRD_PARTY_NOTICES.md).

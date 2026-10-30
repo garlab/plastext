@@ -1878,6 +1878,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-graphics"
+version = "0.1.0"
+dependencies = [
+ "katex-native",
+ "libc",
+ "mermaid-rs-renderer",
+ "resvg",
+ "roxmltree 0.20.0",
+]
+
+[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3880,6 +3891,8 @@ dependencies = [
 [[package]]
 name = "katex-native"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c87896c9650d0dd2e502432ef0e0eb4857bda16e275a29498a2f85d675059911"
 dependencies = [
  "katex-rs",
  "resvg",
@@ -5272,12 +5285,9 @@ dependencies = [
  "csv",
  "flate2",
  "image",
- "katex-native",
- "mermaid-rs-renderer",
  "percent-encoding",
  "plastext-buffer",
  "resvg",
- "roxmltree 0.20.0",
  "tempfile",
  "ttf-parser 0.25.1",
 ]
@@ -5375,6 +5385,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
  "core-graphics 0.24.0",
+ "document-graphics",
  "foreign-types",
  "image",
  "libc",
@@ -5382,7 +5393,6 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
- "plastext-assets",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5451,6 +5461,7 @@ name = "plastext-ui"
 version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
+ "document-graphics",
  "futures",
  "gpui",
  "image",

@@ -6,3 +6,8 @@
 *.bench-raw.log
 __pycache__/
 
+# Machine-local dependency overrides and registry credentials.
+/.cargo/config
+/.cargo/config.toml
+/.cargo/credentials
+/.cargo/credentials.toml
