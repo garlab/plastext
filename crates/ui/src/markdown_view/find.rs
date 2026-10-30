@@ -50,6 +50,12 @@ impl Drop for FindState {
 }
 
 impl MarkdownView {
+    pub(super) fn find_matches_text(&self, text: &str) -> bool {
+        self.find
+            .as_ref()
+            .is_some_and(|f| !f.query.is_empty() && text.contains(&f.query))
+    }
+
     pub(super) fn find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
         if self.find.is_none() {
             let input = cx.new(|cx| TextInput::new("Find rendered text (case sensitive)", cx));
@@ -74,6 +80,7 @@ impl MarkdownView {
     }
 
     pub(super) fn search(&mut self, cx: &mut Context<Self>) {
+        self.remeasure_diagrams();
         let Some(find) = &mut self.find else { return };
         find.reset();
         find.cancel = Arc::new(AtomicBool::new(false));
@@ -190,6 +197,7 @@ impl MarkdownView {
     }
     pub(super) fn close_find(&mut self, _: &Close, window: &mut Window, cx: &mut Context<Self>) {
         self.find = None;
+        self.remeasure_diagrams();
         self.focus.focus(window);
         cx.notify();
     }

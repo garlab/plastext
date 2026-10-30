@@ -15,6 +15,7 @@ async-channel = "2"
 notify = "8.2"
 sha2 = "0.10"
 toml.workspace = true
+plastext-assets.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -27,6 +28,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
 [dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile.workspace = true
 
 [lints]
@@ -34,4 +36,8 @@ workspace = true
 
 [[test]]
 name = "tex_preview"
+harness = false
+
+[[test]]
+name = "mermaid_preview"
 harness = false

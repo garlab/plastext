@@ -17,6 +17,10 @@ csv = "1.4"
 flate2 = "1"
 ttf-parser = "0.25"
 
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
+roxmltree = "0.20"
+katex-native.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

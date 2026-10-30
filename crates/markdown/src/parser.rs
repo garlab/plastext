@@ -505,11 +505,23 @@ impl<'a> Builder<'a> {
             while !value.is_char_boundary(take) {
                 take -= 1;
             }
-            // Keep individual code items short even when a fence is huge.
+            // Diagram fences need their complete bounded source for layout.
+            // Ordinary code remains split into short, virtualized items.
+            let code_lines = match &block.kind {
+                BlockKind::Code { language, .. }
+                    if language
+                        .split_whitespace()
+                        .next()
+                        .is_some_and(|s| s.eq_ignore_ascii_case("mermaid")) =>
+                {
+                    256
+                }
+                _ => 32,
+            };
             if matches!(
                 block.kind,
                 BlockKind::Code { .. } | BlockKind::FrontMatterSource { .. }
-            ) && let Some((end, _)) = value[..take].match_indices('\n').nth(31)
+            ) && let Some((end, _)) = value[..take].match_indices('\n').nth(code_lines - 1)
             {
                 take = end + 1;
             }

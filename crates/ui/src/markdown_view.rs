@@ -22,6 +22,7 @@ use std::{
 use crate::tab_view::format_size;
 mod find;
 mod math;
+mod mermaid;
 mod metadata;
 mod profile;
 mod visibility;
@@ -101,6 +102,7 @@ pub struct MarkdownView {
     image_order: VecDeque<String>,
     image_rows: HashMap<String, Vec<usize>>,
     formulas: math::Formulas,
+    diagrams: mermaid::Diagrams,
     code_highlights: HashMap<usize, Option<CodeHighlights>>,
     cancel: Arc<AtomicBool>,
     _parse: Task<()>,
@@ -187,6 +189,9 @@ impl MarkdownView {
         list.set_scroll_handler(move |_, _, cx| {
             weak.update(cx, |_, cx| cx.notify()).ok();
         });
+        let owner = cx.entity_id();
+        cx.on_release(move |this, cx| this.diagrams.clear(owner, cx))
+            .detach();
         Self {
             path,
             source,
@@ -217,6 +222,7 @@ impl MarkdownView {
             image_order: VecDeque::new(),
             image_rows: HashMap::new(),
             formulas: math::Formulas::default(),
+            diagrams: mermaid::Diagrams::default(),
             code_highlights: HashMap::new(),
             cancel,
             _parse: parsing,
@@ -440,6 +446,9 @@ impl MarkdownView {
             self.focus.focus(window);
         }
         self.rendered = !self.rendered;
+        if !self.rendered {
+            self.diagrams.clear(cx.entity_id(), cx);
+        }
         cx.notify();
     }
     fn reveal_metadata(&mut self, block: usize) {
@@ -1014,38 +1023,7 @@ impl MarkdownView {
                     )
                     .into_any_element()
             }
-            BlockKind::Code { language, first } => {
-                let text = self.code_text(block.clone(), ix, language, theme, cx);
-                div()
-                    .p_3()
-                    .rounded_md()
-                    .bg(theme.surface)
-                    .text_size(px(13. * self.zoom))
-                    .when(*first, |d| {
-                        d.child(
-                            div()
-                                .flex()
-                                .justify_between()
-                                .mb_2()
-                                .text_size(px(12. * self.zoom))
-                                .text_color(theme.text_muted)
-                                .child(language.clone())
-                                .child(
-                                    div()
-                                        .id(("md-copy", ix))
-                                        .cursor_pointer()
-                                        .child(if self.parsing { "Loading…" } else { "Copy" })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            if !this.parsing {
-                                                this.copy_fence(ix, cx);
-                                            }
-                                        })),
-                                ),
-                        )
-                    })
-                    .child(text)
-                    .into_any_element()
-            }
+            BlockKind::Code { .. } => self.code_block(block.clone(), ix, theme, window, cx),
             BlockKind::FrontMatter { .. }
             | BlockKind::FrontMatterRow { .. }
             | BlockKind::FrontMatterSource { .. } => self.metadata_block(&block, ix, theme, cx),
@@ -1224,6 +1202,16 @@ impl Focusable for MarkdownView {
 }
 impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.diagrams.begin_frame(cx.entity_id(), cx) {
+            let view = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    if this.diagrams.finish_frame() {
+                        cx.notify();
+                    }
+                });
+            });
+        }
         if self.prose_width.is_none() {
             let width = match self.settings.max_width {
                 plastext_settings::ProseWidth::Pixels(width) => px(width * self.zoom),

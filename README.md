@@ -2,7 +2,7 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. PDFs have an isolated, tiled page preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs); large-image tiling is still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
+> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown now opens in a virtualized native preview with headings, links, code fences, [Mermaid diagrams](docs/mermaid.md) and rendered-text find; local images/SVGs and paged CSV/TSV tables have dedicated views. PDFs have an isolated, tiled page preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs); large-image tiling is still pending. Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
 
 ## Building
 
@@ -92,6 +92,7 @@ Markdown typography can be configured in `config.toml` (restart to apply):
 [markdown]
 prose_font = "system" # or an installed family, e.g. "Georgia"
 max_width = "80ch"   # zero-glyph widths in the prose font; "720px" also works
+mermaid = true      # false keeps diagram fences as source
 ```
 
 Code and inline code use `editor.font` independently of the prose font.

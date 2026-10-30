@@ -32,6 +32,9 @@ pub(crate) enum TabStatus {
 
 impl TabView {
     pub fn set_visible(&self, visible: bool, cx: &mut App) {
+        if let Self::Markdown(view) = self {
+            view.update(cx, |view, cx| view.set_visible(visible, cx));
+        }
         if let Self::Pdf(view) = self {
             view.update(cx, |view, cx| view.set_visible(visible, cx));
         }

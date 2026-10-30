@@ -4,6 +4,7 @@ use serde::{Deserialize, Deserializer, de};
 #[serde(default)]
 pub struct Markdown {
     pub prose_font: String,
+    pub mermaid: bool,
     pub max_width: ProseWidth,
 }
 
@@ -11,6 +12,7 @@ impl Default for Markdown {
     fn default() -> Self {
         Self {
             prose_font: "system".into(),
+            mermaid: true,
             max_width: ProseWidth::Chars(80.),
         }
     }
@@ -54,6 +56,13 @@ mod tests {
         let settings =
             crate::Settings::parse("[markdown]\nprose_font='Georgia'\nmax_width='720px'").unwrap();
         assert_eq!(settings.markdown.prose_font, "Georgia");
+        assert!(settings.markdown.mermaid);
+        assert!(
+            !crate::Settings::parse("[markdown]\nmermaid=false")
+                .unwrap()
+                .markdown
+                .mermaid
+        );
         assert_eq!(settings.markdown.max_width, ProseWidth::Pixels(720.));
         assert_eq!(
             crate::Settings::parse("").unwrap().markdown.max_width,

@@ -51,6 +51,15 @@ fn main() -> ExitCode {
             }
         };
     }
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--mermaid-worker")) {
+        return match plastext_platform::mermaid::worker_main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Diagram worker: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let start = Instant::now();
     #[cfg(feature = "math-spike")]
     if let Some(fonts) = env::var_os("PLASTEXT_MATH_PROBE") {
