@@ -12,8 +12,9 @@ use std::{
 };
 
 use gpui::{
-    Context, Entity, EventEmitter, Focusable, HighlightStyle, SharedString, StyledText,
-    Subscription, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
+    Context, CursorStyle, Entity, EventEmitter, Focusable, HighlightStyle, MouseButton,
+    SharedString, StyledText, Subscription, Task, UniformListScrollHandle, Window, div, prelude::*,
+    px, uniform_list,
 };
 use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::TreeOptions;
@@ -242,6 +243,7 @@ impl Render for SearchPanel {
                 .px_1()
                 .rounded_sm()
                 .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .text_xs()
                 .tooltip(move |_, cx| cx.new(|_| SearchTooltip(help)).into())
                 .when(on, |toggle| {
@@ -265,6 +267,11 @@ impl Render for SearchPanel {
             .border_1()
             .border_color(theme.border)
             .rounded_md()
+            .cursor(CursorStyle::IBeam)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.input.focus_handle(cx).focus(window)),
+            )
             .child(div().flex_1().min_w_0().child(self.input.clone()))
             .child(
                 toggle(
