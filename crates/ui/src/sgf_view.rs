@@ -1,13 +1,14 @@
 mod model;
+mod viewport;
 
 use document_graphics::{
     RasterOptions,
     sgf::{self, Collection, Color, NodeId, Position, RenderOptions},
 };
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton, Pixels,
-    RenderImage, SharedString, Subscription, Task, Window, WindowAppearance, actions, div, img,
-    prelude::*, px, relative,
+    AnyElement, App, ContentMask, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
+    Pixels, RenderImage, SharedString, Subscription, Task, Window, WindowAppearance, actions,
+    canvas, div, prelude::*, px, relative,
 };
 use model::{Cursor, Positions};
 use plastext_buffer::{ByteSource, FileSource, LineIndex};
@@ -436,6 +437,10 @@ impl SgfView {
         let cursor = self.cursor.as_ref();
         let ready = cursor.is_some();
         let mut controls = div()
+            .id("sgf-controls")
+            .flex_none()
+            .max_h(relative(0.25))
+            .overflow_y_scroll()
             .flex()
             .flex_wrap()
             .items_center()
@@ -532,6 +537,10 @@ impl SgfView {
                 ));
         }
         let mut details = div()
+            .id("sgf-details")
+            .flex_none()
+            .max_h(relative(0.35))
+            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_1()
@@ -635,15 +644,25 @@ impl SgfView {
                 .child(format!("{error}\nSource is available above."))
                 .into_any_element()
         } else if let Some(image) = &self.image {
-            div()
-                .w(relative(self.zoom))
-                .h(relative(self.zoom))
-                .child(
-                    img(image.clone())
-                        .size_full()
-                        .object_fit(gpui::ObjectFit::Contain),
-                )
-                .into_any_element()
+            let image = image.clone();
+            let image_size = image.size(0).map(|p| px(p.0 as f32));
+            // Paint into the space allocated by flex layout. An image element's
+            // intrinsic size must not determine the board viewport's height.
+            canvas(
+                move |bounds, _, _| viewport::fit(bounds, image_size),
+                move |bounds, fitted, window, _| {
+                    if let Some(fitted) = fitted {
+                        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                            let _ = window.paint_image(fitted, Default::default(), image, 0, false);
+                        });
+                    }
+                },
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .into_any_element()
         } else {
             div()
                 .p_4()
@@ -659,6 +678,9 @@ impl SgfView {
             .key_context("SgfPreview")
             .track_focus(&self.focus)
             .size_full()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
             .flex()
             .flex_col()
             .on_mouse_down(
@@ -669,13 +691,11 @@ impl SgfView {
             .child(
                 div()
                     .id("sgf-board")
-                    .when(self.zoom <= 1., |d| {
-                        d.flex().items_center().justify_center()
-                    })
+                    .relative()
                     .flex_1()
-                    .min_h(px(100.))
-                    .overflow_scroll()
-                    .p_3()
+                    .min_h_0()
+                    .min_w_0()
+                    .overflow_hidden()
                     .child(board),
             )
             .child(details)

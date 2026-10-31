@@ -16,7 +16,8 @@ cargo run -p plastext-app -- . docs/fixtures/sample.sgf
 - **Up / Down:** cycle sibling variations. Branch buttons also select continuations.
 - **Numbers:** show surviving stones' move numbers.
 - **Shift–Command–V:** switch between Preview and Source at the selected node.
-- **Command–plus / minus:** zoom. Split panes keep independent navigation positions.
+- **Command–plus / minus:** scale controls and text. The full board always fits
+  its pane. Split panes keep independent navigation positions.
 
 Collections with multiple games have Previous game / Next game controls. Player
 names, result, komi, date, capture counts and node comments appear below the board.
@@ -49,7 +50,9 @@ Parsing and rendering run off the UI thread. Navigation permits one active job
 per pane, cancels obsolete work and coalesces rapid input to the latest request.
 Only 32 compact board positions and one displayed raster are retained per pane;
 rasters have at most one million pixels. Hidden previews release their images and
-position caches, including GPU atlas entries. Resizing uses the existing raster.
+position caches, including GPU atlas entries. Resizing uses the existing raster,
+fits both dimensions and preserves the board's proportions. Long comments and
+controls scroll separately, leaving space for the complete board.
 
 ## Developing the shared backend
 
