@@ -57,6 +57,12 @@ See [Local development](docs/local-development.md) to open other projects, insta
 
 Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
 
+Project search has separate **Aa** (Match Case), **ab** (Match Whole Word) and
+**`.*`** (Regular Expression) toggles, with hover descriptions. Case matching is off
+by default, including for uppercase queries. Results are grouped alphabetically
+by folder and filename, with matches in line order. Search stops at 10,000
+matching lines; the files included at that limit can vary with parallel scan order.
+
 Right-click a tab for **Close Others**, **Close Right**, or **Close Left**. These actions apply only to that pane and keep the clicked tab open.
 
 TeX opens in preview with an installed TeX Live pdfLaTeX. Roots and local inputs

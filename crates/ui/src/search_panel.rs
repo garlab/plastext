@@ -1,5 +1,7 @@
 //! Project search (spec NAV-2), shown in the sidebar.
 
+mod results;
+
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -9,7 +11,6 @@ use std::{
     time::Duration,
 };
 
-use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
     Context, Entity, EventEmitter, Focusable, HighlightStyle, SharedString, StyledText,
     Subscription, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
@@ -17,22 +18,18 @@ use gpui::{
 use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::TreeOptions;
 use plastext_search::{FileMatches, ProjectQuery, SearchOptions, search_project};
+use results::{Results, Row};
 
 /// Searches stop after this many matching lines.
 const LIMIT: usize = 10_000;
 /// Typing pauses this long before a search starts.
 const DEBOUNCE: Duration = Duration::from_millis(200);
+const UPDATE_INTERVAL: Duration = Duration::from_millis(16);
+const RESULT_BATCH: usize = 256;
 const ROW_HEIGHT: f32 = 24.;
 
 pub enum SearchPanelEvent {
     Open { path: PathBuf, line: u64 },
-}
-
-/// A row of the flattened results: a file, or one of its matching lines.
-#[derive(Clone, Copy)]
-enum Row {
-    File(usize),
-    Line(usize, usize),
 }
 
 enum Progress {
@@ -47,9 +44,7 @@ pub struct SearchPanel {
     tree_options: TreeOptions,
     input: Entity<TextInput>,
     options: SearchOptions,
-    files: Vec<FileMatches>,
-    rows: Vec<Row>,
-    lines: usize,
+    results: Results,
     progress: Progress,
     cancel: Arc<AtomicBool>,
     search: Option<Task<()>>,
@@ -70,9 +65,7 @@ impl SearchPanel {
             tree_options,
             input,
             options: SearchOptions::default(),
-            files: Vec::new(),
-            rows: Vec::new(),
-            lines: 0,
+            results: Results::default(),
             progress: Progress::Idle,
             cancel: Arc::new(AtomicBool::new(false)),
             search: None,
@@ -87,6 +80,8 @@ impl SearchPanel {
     }
 
     fn schedule_search(&mut self, cx: &mut Context<Self>) {
+        // Stop obsolete work immediately, including during the typing debounce.
+        self.cancel.store(true, Ordering::Relaxed);
         self.search = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DEBOUNCE).await;
             this.update(cx, |this, cx| this.start_search(cx)).ok();
@@ -101,9 +96,7 @@ impl SearchPanel {
     /// Replaces the results with a fresh search for the current query.
     fn start_search(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
-        self.files.clear();
-        self.rows.clear();
-        self.lines = 0;
+        self.results = Results::default();
         self.search = None;
         let text = self.input.read(cx).text().to_owned();
         if text.is_empty() {
@@ -122,24 +115,53 @@ impl SearchPanel {
         self.progress = Progress::Searching;
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
-        let (files, mut received) = mpsc::unbounded();
+        let (files, received) = async_channel::bounded(RESULT_BATCH);
         let root = self.root.clone();
         let tree_options = self.tree_options.clone();
+        let worker_cancel = cancel.clone();
         let searching = cx.background_executor().spawn(async move {
-            search_project(&root, &tree_options, &query, LIMIT, &cancel, |found| {
-                files.unbounded_send(found).ok();
-            });
+            search_project(
+                &root,
+                &tree_options,
+                &query,
+                LIMIT,
+                &worker_cancel,
+                |found| {
+                    if files.send_blocking(found).is_err() {
+                        worker_cancel.store(true, Ordering::Relaxed);
+                    }
+                },
+            );
         });
         self.search = Some(cx.spawn(async move |this, cx| {
-            while let Some(file) = received.next().await {
-                if this.update(cx, |this, cx| this.add_file(file, cx)).is_err() {
+            while let Ok(file) = received.recv().await {
+                if cancel.load(Ordering::Relaxed) {
                     return;
                 }
+                let mut batch = vec![file];
+                while batch.len() < RESULT_BATCH {
+                    let Ok(file) = received.try_recv() else { break };
+                    batch.push(file);
+                }
+                if this
+                    .update(cx, |this, cx| {
+                        if Arc::ptr_eq(&cancel, &this.cancel) && !cancel.load(Ordering::Relaxed) {
+                            this.add_files(batch, cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                // First results publish immediately; subsequent bursts share an update.
+                cx.background_executor().timer(UPDATE_INTERVAL).await;
             }
             searching.await;
             this.update(cx, |this, cx| {
-                this.progress = Progress::Done;
-                cx.notify();
+                if Arc::ptr_eq(&cancel, &this.cancel) && !cancel.load(Ordering::Relaxed) {
+                    this.progress = Progress::Done;
+                    cx.notify();
+                }
             })
             .ok();
         }));
@@ -148,18 +170,29 @@ impl SearchPanel {
         cx.notify();
     }
 
-    fn add_file(&mut self, file: FileMatches, cx: &mut Context<Self>) {
-        let index = self.files.len();
-        self.rows.push(Row::File(index));
-        self.rows
-            .extend((0..file.lines.len()).map(|line| Row::Line(index, line)));
-        self.lines += file.lines.len();
-        self.files.push(file);
+    fn add_files(&mut self, files: Vec<FileMatches>, cx: &mut Context<Self>) {
+        let scroll = self.scroll_handle.0.borrow().base_handle.clone();
+        let offset = scroll.offset();
+        let top = (f32::from(-offset.y) / ROW_HEIGHT).floor().max(0.) as usize;
+        let anchor = self.results.rows.get(top).copied();
+        self.results.extend(files);
+        // If the reader scrolled down, hold the same match at the same pixel
+        // position when alphabetically earlier files arrive. At the top, show
+        // the new first result instead.
+        if offset.y < px(0.)
+            && let Some(anchor) = anchor
+            && let Some(next) = self.results.rows.iter().position(|row| *row == anchor)
+        {
+            scroll.set_offset(gpui::point(
+                offset.x,
+                offset.y - px((next as f32 - top as f32) * ROW_HEIGHT),
+            ));
+        }
         cx.notify();
     }
 
     fn open(&mut self, file: usize, line: usize, cx: &mut Context<Self>) {
-        let file = &self.files[file];
+        let file = &self.results.files[file];
         cx.emit(SearchPanelEvent::Open {
             path: self.root.join(&file.path),
             line: file.lines[line].line,
@@ -167,17 +200,19 @@ impl SearchPanel {
     }
 
     fn summary(&self) -> String {
-        let files = self.files.len();
+        let files = self.results.files.len();
         let found = format!(
             "{} in {files} {}",
-            plural(self.lines, "result"),
+            plural(self.results.lines, "result"),
             if files == 1 { "file" } else { "files" }
         );
         match &self.progress {
             Progress::Idle => String::new(),
             Progress::Searching => format!("Searching… {found}"),
-            Progress::Done if self.lines >= LIMIT => format!("{found} (stopped at {LIMIT})"),
-            Progress::Done if self.lines == 0 => "No results".to_owned(),
+            Progress::Done if self.results.lines >= LIMIT => {
+                format!("{found} (stopped at {LIMIT})")
+            }
+            Progress::Done if self.results.lines == 0 => "No results".to_owned(),
             Progress::Done => found,
             Progress::Failed(err) => err.clone(),
         }
@@ -201,13 +236,14 @@ fn plural(count: usize, noun: &str) -> String {
 impl Render for SearchPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
-        let toggle = |id: &'static str, label: &'static str, on: bool| {
+        let toggle = |id: &'static str, label: &'static str, help: &'static str, on: bool| {
             div()
                 .id(id)
                 .px_1()
                 .rounded_sm()
                 .cursor_pointer()
                 .text_xs()
+                .tooltip(move |_, cx| cx.new(|_| SearchTooltip(help)).into())
                 .when(on, |toggle| {
                     toggle.bg(theme.selection).text_color(theme.text)
                 })
@@ -231,13 +267,32 @@ impl Render for SearchPanel {
             .rounded_md()
             .child(div().flex_1().min_w_0().child(self.input.clone()))
             .child(
-                toggle("whole-word", "ab", self.options.whole_word).on_click(cx.listener(
-                    |this, _, _, cx| this.toggle(|options| options.whole_word ^= true, cx),
-                )),
+                toggle(
+                    "match-case",
+                    "Aa",
+                    "Match Case",
+                    self.options.case_sensitive,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle(|options| options.case_sensitive ^= true, cx)
+                })),
             )
-            .child(toggle("regex", ".*", self.options.regex).on_click(
-                cx.listener(|this, _, _, cx| this.toggle(|options| options.regex ^= true, cx)),
-            ));
+            .child(
+                toggle(
+                    "whole-word",
+                    "ab",
+                    "Match Whole Word",
+                    self.options.whole_word,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle(|options| options.whole_word ^= true, cx)
+                })),
+            )
+            .child(
+                toggle("regex", ".*", "Use Regular Expression", self.options.regex).on_click(
+                    cx.listener(|this, _, _, cx| this.toggle(|options| options.regex ^= true, cx)),
+                ),
+            );
 
         let highlight = HighlightStyle {
             background_color: Some(theme.find_match.into()),
@@ -245,15 +300,16 @@ impl Render for SearchPanel {
         };
         let results = uniform_list(
             "search-results",
-            self.rows.len(),
+            self.results.rows.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
-                    .map(|index| match this.rows[index] {
+                    .map(|index| match this.results.rows[index] {
                         Row::File(file) => {
-                            let file = &this.files[file];
+                            let file_id = file;
+                            let file = &this.results.files[file];
                             let (dir, name) = split_path(&file.path);
                             div()
-                                .id(index)
+                                .id(("search-file", file_id))
                                 .h(px(ROW_HEIGHT))
                                 .px_2()
                                 .flex()
@@ -279,12 +335,12 @@ impl Render for SearchPanel {
                                 )
                         }
                         Row::Line(file, line) => {
-                            let found = &this.files[file].lines[line];
+                            let found = &this.results.files[file].lines[line];
                             let text = StyledText::new(found.text.clone()).with_highlights(
                                 found.matches.iter().map(|range| (range.clone(), highlight)),
                             );
                             div()
-                                .id(index)
+                                .id(SharedString::from(format!("search-line-{file}-{line}")))
                                 .h(px(ROW_HEIGHT))
                                 .pl_4()
                                 .pr_2()
@@ -334,6 +390,20 @@ impl Render for SearchPanel {
                     .child(self.summary()),
             )
             .child(results)
+    }
+}
+
+struct SearchTooltip(&'static str);
+impl Render for SearchTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::get(window, cx);
+        div()
+            .p_2()
+            .rounded_sm()
+            .bg(theme.surface)
+            .text_color(theme.text)
+            .text_xs()
+            .child(self.0)
     }
 }
 
