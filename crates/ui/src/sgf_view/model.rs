@@ -41,20 +41,25 @@ impl Cursor {
         self.selected = node;
         let mut child = node;
         while let Some(parent) = self.document.nodes()[child].parent {
-            if self.document.nodes()[parent]
-                .first_child
-                .is_some_and(|id| self.document.nodes()[id].next_sibling.is_some())
-            {
+            if self.is_fork(parent) {
                 self.choices.insert(parent, child);
             }
             child = parent;
         }
     }
     pub fn next(&self) -> Option<NodeId> {
+        self.next_from(self.selected)
+    }
+    fn next_from(&self, node: NodeId) -> Option<NodeId> {
         self.choices
-            .get(&self.selected)
+            .get(&node)
             .copied()
-            .or(self.document.nodes()[self.selected].first_child)
+            .or(self.document.nodes()[node].first_child)
+    }
+    fn is_fork(&self, node: NodeId) -> bool {
+        self.document.nodes()[node]
+            .first_child
+            .is_some_and(|id| self.document.nodes()[id].next_sibling.is_some())
     }
     pub fn previous(&self) -> Option<NodeId> {
         self.document.nodes()[self.selected].parent
@@ -67,22 +72,33 @@ impl Cursor {
     }
     pub fn last(&self) -> NodeId {
         let mut node = self.selected;
-        while let Some(next) = self
-            .choices
-            .get(&node)
-            .copied()
-            .or(self.document.nodes()[node].first_child)
-        {
+        while let Some(next) = self.next_from(node) {
             node = next;
         }
         node
     }
-    pub fn sibling(&self, direction: i32) -> Option<NodeId> {
-        let siblings: Vec<_> = self.document.children(self.previous()?).collect();
-        let index = siblings.iter().position(|&n| n == self.selected)? as i32;
-        siblings
-            .get((index + direction).rem_euclid(siblings.len() as i32) as usize)
-            .copied()
+    pub fn variation(&self, direction: i32) -> NodeId {
+        self.tree.variation(self.game(), self.selected, direction)
+    }
+    pub fn previous_fork(&self) -> Option<NodeId> {
+        let mut node = self.previous()?;
+        while !self.is_fork(node) {
+            let Some(parent) = self.document.nodes()[node].parent else {
+                break;
+            };
+            node = parent;
+        }
+        Some(node)
+    }
+    pub fn next_fork(&self) -> Option<NodeId> {
+        let mut node = self.next()?;
+        while !self.is_fork(node) {
+            let Some(next) = self.next_from(node) else {
+                break;
+            };
+            node = next;
+        }
+        Some(node)
     }
 }
 
@@ -132,7 +148,7 @@ mod tests {
         let mut cursor = Cursor::new(document());
         assert_eq!(cursor.last(), 3);
         cursor.select(4);
-        assert_eq!(cursor.sibling(-1), Some(2));
+        assert_eq!(cursor.variation(-1), 2);
         let split = cursor.clone();
         cursor.select(cursor.previous().unwrap());
         assert_eq!(cursor.next(), Some(4));
@@ -145,6 +161,50 @@ mod tests {
         cursor.select(6);
         assert_eq!(cursor.first(), 6);
         assert_eq!(cursor.next(), None);
+    }
+    #[test]
+    fn fork_navigation_skips_current_fork_and_remembers_the_chosen_line() {
+        let doc = Collection::parse(
+            Arc::from(
+                &b"(;SZ[9];B[aa](;W[bb];B[cc])(;W[dd];B[ee](;W[ff])(;W[gg];B[hh])))(;SZ[13])"[..],
+            ),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let mut cursor = Cursor::new(Arc::new(doc));
+        assert_eq!(cursor.previous_fork(), None);
+        assert_eq!(cursor.next_fork(), Some(1));
+        cursor.select(1);
+        assert_eq!(cursor.previous_fork(), Some(0));
+        assert_eq!(cursor.next_fork(), Some(3)); // Main line ends without another fork.
+        cursor.select(3);
+        assert_eq!(cursor.next_fork(), None);
+        assert_eq!(cursor.previous_fork(), Some(1));
+        cursor.select(8); // Select the second branch at both forks.
+        assert_eq!(cursor.previous_fork(), Some(5));
+        cursor.select(5);
+        assert_eq!(cursor.previous_fork(), Some(1));
+        assert_eq!(cursor.next_fork(), Some(8));
+        cursor.select(1);
+        assert_eq!(cursor.next_fork(), Some(5));
+        assert_eq!(cursor.last(), 8);
+        cursor.select(9); // Another game must remain independent.
+        assert_eq!(cursor.previous_fork(), None);
+        assert_eq!(cursor.next_fork(), None);
+    }
+    #[test]
+    fn horizontal_navigation_follows_tree_rows_and_remembers_the_new_branch() {
+        let mut cursor = Cursor::new(document());
+        cursor.select(3);
+        assert_eq!(cursor.variation(1), 5); // Different parents, same depth.
+        cursor.select(cursor.variation(1));
+        assert_eq!(cursor.variation(1), 3); // Wrap at the end of the row.
+        assert_eq!(cursor.variation(-1), 3);
+        cursor.select(cursor.first());
+        assert_eq!(cursor.last(), 5);
+        assert_eq!(cursor.variation(1), 0); // Don't enter another game's root.
+        cursor.select(6);
+        assert_eq!(cursor.variation(-1), 6);
     }
     #[test]
     fn cached_branch_positions_are_isolated_and_bounded() {

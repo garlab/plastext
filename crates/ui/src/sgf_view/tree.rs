@@ -117,6 +117,16 @@ impl Tree {
             .first()
             .copied()
     }
+    /// Cycle horizontally at the same depth without scanning or allocating a row.
+    pub fn variation(&self, game: usize, node: NodeId, direction: i32) -> NodeId {
+        let selected = self.nodes[node];
+        let sorted = &self.by_row[self.games[game].range.clone()];
+        let begin = sorted.partition_point(|&id| self.nodes[id].row < selected.row);
+        let end = sorted.partition_point(|&id| self.nodes[id].row <= selected.row);
+        let row = &sorted[begin..end];
+        let index = row.partition_point(|&id| self.nodes[id].column < selected.column);
+        row[(index as i32 + direction).rem_euclid(row.len() as i32) as usize]
+    }
 }
 
 #[cfg(test)]
@@ -163,5 +173,8 @@ mod tests {
             tree.visible(0, 1..2, 5000..5004),
             vec![5001, 5002, 5003, 5004]
         );
+        assert_eq!(tree.variation(0, 5001, 1), 5002);
+        assert_eq!(tree.variation(0, 1, -1), 10_000);
+        assert_eq!(tree.variation(0, 10_000, 1), 1);
     }
 }

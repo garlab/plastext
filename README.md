@@ -44,8 +44,9 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
 | `⇧⌘V` in SGF | Toggle board preview / source |
-| `←` / `→`, `Home` / `End` in SGF | Previous / next node, start / end of selected line |
-| `↑` / `↓` in SGF | Cycle sibling variations |
+| `↑` / `↓`, `Home` / `End` in SGF | Previous / next node, start / end of selected line |
+| `←` / `→` in SGF | Cycle variations at the same tree depth |
+| `⌘↑` / `⌘↓` in SGF | Previous / next fork (or start / end) |
 | `⇧⌘V` in PDF | Toggle Preview / Binary, preserving each position |
 | `⇧⌘V` in TeX | Toggle Source / Preview; preview opens automatically with installed pdfLaTeX |
 | `⌘R` in TeX | Retry preview and reload advanced TeX settings |

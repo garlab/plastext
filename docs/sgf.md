@@ -11,9 +11,16 @@ Try the [small board study](fixtures/sample.sgf):
 cargo run -p plastext-app -- . docs/fixtures/sample.sgf
 ```
 
-- **Left / Right:** previous / next node along the selected variation.
-- **Home / End:** start / end of that line.
-- **Up / Down:** cycle sibling variations. Click any move in the game tree to jump to it.
+Navigation follows [Sabaki's shortcuts](https://github.com/SabakiHQ/Sabaki/blob/master/src/menu.js):
+
+- **Up / Down:** previous / next node along the selected variation.
+- **Left / Right:** cycle variations at the same depth in the tree, wrapping at
+  either edge. Click any move in the game tree to jump to it.
+- **Home / End:** start / end of the selected line. On a Mac keyboard without
+  these keys, use **Fn–Left / Fn–Right**.
+- **Command–Up / Command–Down:** previous / next fork, or the start / end if
+  there is no further fork. These skip the current node and follow the selected
+  variation.
 - **Numbers:** show surviving stones' move numbers.
 - **Shift–Command–V:** switch between Preview and Source at the selected node.
 - **Command–plus / minus:** scale controls and text. The full board always fits

@@ -135,7 +135,7 @@ impl SgfView {
                             .flex_none()
                             .text_size(px(11. * self.zoom))
                             .text_color(theme.text_muted)
-                            .child("Click a move · scroll to explore"),
+                            .child("↑↓ moves · ←→ variations"),
                     ),
             )
             .into_any_element()

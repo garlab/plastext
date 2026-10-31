@@ -29,18 +29,22 @@ actions!(
         First,
         Last,
         NextVariation,
-        PreviousVariation
+        PreviousVariation,
+        NextFork,
+        PreviousFork
     ]
 );
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Sgf")),
-        KeyBinding::new("right", Next, Some("SgfPreview")),
-        KeyBinding::new("left", Previous, Some("SgfPreview")),
+        KeyBinding::new("down", Next, Some("SgfPreview")),
+        KeyBinding::new("up", Previous, Some("SgfPreview")),
         KeyBinding::new("home", First, Some("SgfPreview")),
         KeyBinding::new("end", Last, Some("SgfPreview")),
-        KeyBinding::new("down", NextVariation, Some("SgfPreview")),
-        KeyBinding::new("up", PreviousVariation, Some("SgfPreview")),
+        KeyBinding::new("right", NextVariation, Some("SgfPreview")),
+        KeyBinding::new("left", PreviousVariation, Some("SgfPreview")),
+        KeyBinding::new("cmd-down", NextFork, Some("SgfPreview")),
+        KeyBinding::new("cmd-up", PreviousFork, Some("SgfPreview")),
     ]);
 }
 
@@ -273,7 +277,9 @@ impl SgfView {
             Motion::Previous => c.previous(),
             Motion::Next => c.next(),
             Motion::Last => Some(c.last()),
-            Motion::Sibling(direction) => c.sibling(direction),
+            Motion::Variation(direction) => Some(c.variation(direction)),
+            Motion::PreviousFork => c.previous_fork(),
+            Motion::NextFork => c.next_fork(),
             Motion::Game(direction) => {
                 let index = (c.game() as i32 + direction)
                     .rem_euclid(c.document.games().len() as i32)
@@ -464,7 +470,7 @@ impl SgfView {
             .text_size(px(13. * self.zoom))
             .child(self.button(
                 "sgf-first",
-                "|‹",
+                "Start",
                 Motion::First,
                 cursor.is_some_and(|c| c.previous().is_some()),
                 theme,
@@ -472,7 +478,7 @@ impl SgfView {
             ))
             .child(self.button(
                 "sgf-previous",
-                "‹",
+                "↑",
                 Motion::Previous,
                 cursor.is_some_and(|c| c.previous().is_some()),
                 theme,
@@ -480,7 +486,7 @@ impl SgfView {
             ))
             .child(self.button(
                 "sgf-next",
-                "›",
+                "↓",
                 Motion::Next,
                 cursor.is_some_and(|c| c.next().is_some()),
                 theme,
@@ -488,7 +494,7 @@ impl SgfView {
             ))
             .child(self.button(
                 "sgf-last",
-                "›|",
+                "End",
                 Motion::Last,
                 cursor.is_some_and(|c| c.next().is_some()),
                 theme,
@@ -635,7 +641,9 @@ enum Motion {
     Previous,
     Next,
     Last,
-    Sibling(i32),
+    Variation(i32),
+    PreviousFork,
+    NextFork,
     Game(i32),
 }
 fn clipped(s: String, max: usize) -> String {
@@ -690,10 +698,16 @@ impl Render for SgfView {
                 cx.listener(|this, _: &Last, window, cx| this.navigate(Motion::Last, window, cx)),
             )
             .on_action(cx.listener(|this, _: &NextVariation, window, cx| {
-                this.navigate(Motion::Sibling(1), window, cx)
+                this.navigate(Motion::Variation(1), window, cx)
             }))
             .on_action(cx.listener(|this, _: &PreviousVariation, window, cx| {
-                this.navigate(Motion::Sibling(-1), window, cx)
+                this.navigate(Motion::Variation(-1), window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NextFork, window, cx| {
+                this.navigate(Motion::NextFork, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &PreviousFork, window, cx| {
+                this.navigate(Motion::PreviousFork, window, cx)
             }))
             .child(
                 div()
