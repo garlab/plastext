@@ -255,6 +255,8 @@ Draw/submit p99 was **8.77 ms**, above the 8 ms target (`complete: true`, `passe
 
 ## Remaining M2 work
 
+See the [current roadmap](roadmap.md) for priorities and additional preview candidates.
+
 PDF viewing has an initial isolated, tiled page viewer with Preview/Binary
 switching. Its implemented controls, resource limits and remaining validation
 are recorded in [PDF and TeX preview design](pdf-and-tex-preview.md#first-pdf-increment).
