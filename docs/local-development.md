@@ -55,11 +55,14 @@ Use this command from the repository root for subsequent development launches. D
 
 ## Shared rendering libraries
 
-Math uses the published `katex-native` crate. Mermaid/SVG rendering and worker
-supervision use the published [document-graphics](https://crates.io/crates/document-graphics)
+Math uses the published `katex-native` crate. Mermaid/SVG/SGF rendering and worker
+supervision use the [document-graphics](https://crates.io/crates/document-graphics)
 crate, maintained in [its own repository](https://github.com/garlab/document-graphics).
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
+
+The SGF preview branch requires the unreleased 0.1.1 `sgf` feature and the local
+override below until that library release is published.
 
 To work on document-graphics alongside Plastext, place its checkout beside
 Plastext and add the following to an untracked `.cargo/config.toml` in the

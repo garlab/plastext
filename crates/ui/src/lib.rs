@@ -11,6 +11,7 @@ mod pdf_view;
 mod picker;
 mod quick_open;
 mod search_panel;
+mod sgf_view;
 mod tab_view;
 mod tex_view;
 mod workspace;

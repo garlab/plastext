@@ -74,6 +74,7 @@ pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
     crate::markdown_view::init(cx);
     crate::pdf_view::init(cx);
+    crate::sgf_view::init(cx);
     crate::tex_view::init(cx);
     crate::quick_open::init(cx);
     crate::picker::init(cx);
@@ -382,12 +383,23 @@ impl Workspace {
                     )?);
                     return Ok(Opened::Pdf(source));
                 }
+                let sgf = path
+                    .extension()
+                    .is_some_and(|s| s.eq_ignore_ascii_case("sgf"));
+                let options = if sgf {
+                    OpenOptions {
+                        large_file_threshold: 0,
+                        block_cache: 8 * 1024 * 1024,
+                    }
+                } else {
+                    options
+                };
                 let source = Arc::new(FileSource::open(&path, options)?);
                 let head = source.head(plastext_buffer::SNIFF_LEN)?;
                 if plastext_platform::pdf::is_pdf(&path, &head) {
                     return Ok(Opened::Pdf(source));
                 }
-                if plastext_buffer::looks_binary(&head) {
+                if !sgf && plastext_buffer::looks_binary(&head) {
                     return Ok(Opened::Binary(source));
                 }
                 let index = LineIndex::for_source(source.clone())?;
@@ -402,6 +414,17 @@ impl Workspace {
                     let view = match opened {
                         Opened::Pdf(source) => {
                             TabView::Pdf(cx.new(|cx| PdfView::new(path.clone(), source, style, cx)))
+                        }
+                        Opened::Text(source, index, _)
+                            if path
+                                .extension()
+                                .is_some_and(|s| s.eq_ignore_ascii_case("sgf")) =>
+                        {
+                            TabView::Sgf(
+                                cx.new(|cx| {
+                                    crate::sgf_view::SgfView::new(source, index, style, cx)
+                                }),
+                            )
                         }
                         Opened::Text(source, index, _)
                             if path.extension().is_some_and(|s| {

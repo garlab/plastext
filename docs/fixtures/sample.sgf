@@ -1,0 +1,6 @@
+(;FF[4]GM[1]CA[UTF-8]SZ[9]GN[Small board study]PB[Black]PW[White]KM[6.5]
+C[Use the arrow keys to step through the record. The white stone at B8 can be captured.]
+AB[ba][ab][cb]AW[bb]TR[bb]LB[bc:A]
+;B[bc]C[Black captures at B7. Choose a continuation below.]
+(;W[ee]N[Center];B[de];W[ed]TR[ed]C[The triangle marks the current move.];B[]C[Black passes.])
+(;W[gg]N[Corner];B[gf];W[fg]LB[ff:A]AR[ff:ee]C[The label and arrow show an alternative idea.]))

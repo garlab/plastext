@@ -1,0 +1,64 @@
+# SGF preview
+
+Go records (`.sgf`, case-insensitive) open as a native board preview. No network,
+external engine, JavaScript runtime or additional system installation is needed.
+The reusable parser and renderer live in `document-graphics`; Plastext owns the
+navigation, background jobs and caches.
+
+Try the [small board study](fixtures/sample.sgf):
+
+```sh
+cargo run -p plastext-app -- . docs/fixtures/sample.sgf
+```
+
+- **Left / Right:** previous / next node along the selected variation.
+- **Home / End:** start / end of that line.
+- **Up / Down:** cycle sibling variations. Branch buttons also select continuations.
+- **Numbers:** show surviving stones' move numbers.
+- **Shift–Command–V:** switch between Preview and Source at the selected node.
+- **Command–plus / minus:** zoom. Split panes keep independent navigation positions.
+
+Collections with multiple games have Previous game / Next game controls. Player
+names, result, komi, date, capture counts and node comments appear below the board.
+The original source remains available when a file or position cannot be previewed.
+This is a record viewer, without move editing, scoring or engine analysis.
+
+## Supported records and limits
+
+The parser supports Go (`GM[1]`) records, sequences and variations, setup and
+handicap stones, captures, passes and rectangular boards from 1 to 52 intersections
+per side. It reconstructs recorded positions without enforcing competitive move
+legality, ko or alternating turns. `HA` alone does not create handicap stones;
+`AB` supplies their positions.
+
+UTF-8 and ISO-8859-1 are supported. Files without `CA` use UTF-8 when valid and
+otherwise ISO-8859-1. Other declared encodings require Source mode. Common shapes,
+labels, arrows, lines, dimming and territory marks render on the board. Unknown
+properties remain in the source; presentation hints such as `VW` cropping and
+legacy markup are not interpreted. Board labels use the renderer's bundled fonts;
+comments use the application's normal Unicode text rendering.
+
+Preview limits are 8 MiB of source, 100,000 nodes, 1,024 games, 256 nested variations,
+128 KiB per property value, and 512 marks / 512 lines per position. Labels are
+limited to 32 characters. SVG output also obeys `document-graphics`' geometry,
+text, element and source limits, so particularly dense annotated boards may need
+Source mode. Comments display up to 16,384 characters and metadata is abbreviated;
+the complete text remains in Source.
+
+Parsing and rendering run off the UI thread. Navigation permits one active job
+per pane, cancels obsolete work and coalesces rapid input to the latest request.
+Only 32 compact board positions and one displayed raster are retained per pane;
+rasters have at most one million pixels. Hidden previews release their images and
+position caches, including GPU atlas entries. Resizing uses the existing raster.
+
+## Developing the shared backend
+
+This branch uses the unreleased `document-graphics` 0.1.1 `sgf` feature. Until that
+version is published, use the sibling checkout and ignored local Cargo override
+from [local development](local-development.md#shared-rendering-libraries).
+The library's `sgf_probe` example checks every node and renders root
+and leaf positions in a directory without modifying its inputs:
+
+```sh
+cargo run --release --features sgf --example sgf_probe -- path/to/sgf-directory
+```
