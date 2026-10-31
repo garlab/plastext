@@ -1,3 +1,4 @@
+use super::tree::Tree;
 use document_graphics::sgf::{Collection, Error, NodeId, Position};
 use std::{
     collections::{HashMap, VecDeque},
@@ -10,16 +11,33 @@ pub(super) struct Cursor {
     pub document: Arc<Collection>,
     pub selected: NodeId,
     choices: HashMap<NodeId, NodeId>,
+    pub tree: Arc<Tree>,
+    pub path: Arc<Vec<bool>>,
 }
 impl Cursor {
     pub fn new(document: Arc<Collection>) -> Self {
+        let mut path = vec![false; document.nodes().len()];
+        path[document.games()[0].root] = true;
         Self {
+            tree: Arc::new(Tree::new(&document)),
+            path: Arc::new(path),
             selected: document.games()[0].root,
             document,
             choices: HashMap::new(),
         }
     }
     pub fn select(&mut self, node: NodeId) {
+        let path = Arc::make_mut(&mut self.path);
+        let mut old = Some(self.selected);
+        while let Some(id) = old {
+            path[id] = false;
+            old = self.document.nodes()[id].parent;
+        }
+        let mut current = Some(node);
+        while let Some(id) = current {
+            path[id] = true;
+            current = self.document.nodes()[id].parent;
+        }
         self.selected = node;
         let mut child = node;
         while let Some(parent) = self.document.nodes()[child].parent {
@@ -120,6 +138,10 @@ mod tests {
         assert_eq!(cursor.next(), Some(4));
         assert_eq!(cursor.last(), 5);
         assert_eq!(split.selected, 4);
+        assert!(Arc::ptr_eq(&split.tree, &cursor.tree));
+        assert!(split.path[4]);
+        assert!(!cursor.path[4]);
+        assert!(cursor.path[0] && cursor.path[1]);
         cursor.select(6);
         assert_eq!(cursor.first(), 6);
         assert_eq!(cursor.next(), None);

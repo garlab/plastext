@@ -13,14 +13,19 @@ cargo run -p plastext-app -- . docs/fixtures/sample.sgf
 
 - **Left / Right:** previous / next node along the selected variation.
 - **Home / End:** start / end of that line.
-- **Up / Down:** cycle sibling variations. Branch buttons also select continuations.
+- **Up / Down:** cycle sibling variations. Click any move in the game tree to jump to it.
 - **Numbers:** show surviving stones' move numbers.
 - **Shift–Command–V:** switch between Preview and Source at the selected node.
 - **Command–plus / minus:** scale controls and text. The full board always fits
   its pane. Split panes keep independent navigation positions.
 
 Collections with multiple games have Previous game / Next game controls. Player
-names, result, komi, date, capture counts and node comments appear below the board.
+names, result, komi, date, capture counts and node comments appear in a persistent
+side panel. Comments scroll independently, so changing moves does not resize the
+board. The game tree shows branches side by side, highlights the current move and
+its ancestors, and follows keyboard navigation. Numbered black and white circles
+represent moves; squares represent setup or annotation nodes. A gold dot marks a
+comment. Scroll the tree in either direction to explore distant branches.
 The original source remains available when a file or position cannot be previewed.
 This is a record viewer, without move editing, scoring or engine analysis.
 
@@ -51,8 +56,10 @@ per pane, cancels obsolete work and coalesces rapid input to the latest request.
 Only 32 compact board positions and one displayed raster are retained per pane;
 rasters have at most one million pixels. Hidden previews release their images and
 position caches, including GPU atlas entries. Resizing uses the existing raster,
-fits both dimensions and preserves the board's proportions. Long comments and
-controls scroll separately, leaving space for the complete board.
+fits both dimensions and preserves the board's proportions. Comments and the tree
+have their own scrolling areas; the toolbar keeps a fixed height. The compact tree
+index is built in the background and shared between split panes. Only visible
+nodes and connectors are drawn, without reconstructing their board positions.
 
 ## Developing the shared backend
 

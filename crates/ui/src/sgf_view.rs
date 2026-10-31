@@ -1,4 +1,6 @@
 mod model;
+mod side_panel;
+mod tree;
 mod viewport;
 
 use document_graphics::{
@@ -7,8 +9,8 @@ use document_graphics::{
 };
 use gpui::{
     AnyElement, App, ContentMask, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
-    Pixels, RenderImage, SharedString, Subscription, Task, Window, WindowAppearance, actions,
-    canvas, div, prelude::*, px, relative,
+    Pixels, Point, RenderImage, ScrollHandle, SharedString, Subscription, Task, Window,
+    WindowAppearance, actions, canvas, div, prelude::*, px, relative,
 };
 use model::{Cursor, Positions};
 use plastext_buffer::{ByteSource, FileSource, LineIndex};
@@ -78,6 +80,10 @@ pub struct SgfView {
     pending_offset: u64,
     numbers: bool,
     error: Option<SharedString>,
+    tree_scroll: ScrollHandle,
+    comment_scroll: ScrollHandle,
+    tree_origin: Point<Pixels>,
+    reveal_tree: bool,
 }
 impl SgfView {
     pub fn new(
@@ -106,6 +112,10 @@ impl SgfView {
             pending_offset: 0,
             numbers: false,
             error: None,
+            tree_scroll: ScrollHandle::new(),
+            comment_scroll: ScrollHandle::new(),
+            tree_origin: Point::default(),
+            reveal_tree: true,
         }
     }
     fn request(&mut self, dark: bool, cx: &mut Context<Self>) {
@@ -207,7 +217,7 @@ impl SgfView {
                     .head(sgf::MAX_SOURCE as u64)
                     .map_err(|e| e.to_string())?;
                 Collection::parse(Arc::from(bytes.as_ref()), &token)
-                    .map(Arc::new)
+                    .map(|document| Cursor::new(Arc::new(document)))
                     .map_err(|e| e.to_string())
             });
             cx.spawn(async move |this, cx| {
@@ -220,14 +230,14 @@ impl SgfView {
                     this.pending = None;
                     if !cancelled {
                         match result {
-                            Ok(document) => {
-                                let mut cursor = Cursor::new(document);
+                            Ok(mut cursor) => {
                                 cursor.select(
                                     cursor
                                         .document
                                         .node_for_offset(this.pending_offset as usize),
                                 );
                                 this.cursor = Some(cursor);
+                                this.reveal_tree = true;
                             }
                             Err(error) => this.error = Some(error.into()),
                         }
@@ -248,6 +258,8 @@ impl SgfView {
             && cursor.selected != node
         {
             cursor.select(node);
+            self.reveal_tree = true;
+            self.comment_scroll.set_offset(Point::default());
             self.error = None;
             if let Some(pending) = &self.pending {
                 pending.cancel.store(true, Ordering::Relaxed);
@@ -342,6 +354,7 @@ impl SgfView {
     }
     pub fn set_zoom(&mut self, factor: f32, font_size: Pixels, cx: &mut Context<Self>) {
         self.zoom = factor;
+        self.reveal_tree = true;
         self.style.font_size = font_size;
         if let Some(raw) = &self.raw {
             raw.update(cx, |v, cx| v.set_font_size(font_size, cx));
@@ -418,6 +431,7 @@ impl SgfView {
             .id(id)
             .px_2()
             .py_1()
+            .flex_none()
             .rounded_sm()
             .child(label)
             .text_color(if enabled {
@@ -439,10 +453,10 @@ impl SgfView {
         let mut controls = div()
             .id("sgf-controls")
             .flex_none()
-            .max_h(relative(0.25))
-            .overflow_y_scroll()
+            .h(px(36. * self.zoom))
+            .overflow_x_scroll()
+            .whitespace_nowrap()
             .flex()
-            .flex_wrap()
             .items_center()
             .gap_1()
             .px_3()
@@ -496,11 +510,17 @@ impl SgfView {
                     )
                 })
                 .unwrap_or_default();
-            controls = controls.child(div().px_2().child(format!("Move {}{last}", p.move_number)));
+            controls = controls.child(
+                div()
+                    .flex_none()
+                    .px_2()
+                    .child(format!("Move {}{last}", p.move_number)),
+            );
         }
         controls = controls.child(
             div()
                 .id("sgf-numbers")
+                .flex_none()
                 .px_2()
                 .py_1()
                 .rounded_sm()
@@ -535,108 +555,6 @@ impl SgfView {
                     theme,
                     cx,
                 ));
-        }
-        let mut details = div()
-            .id("sgf-details")
-            .flex_none()
-            .max_h(relative(0.35))
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_4()
-            .py_2()
-            .text_size(px(13. * self.zoom));
-        if let Some(c) = cursor {
-            // Keep annotations paired with the displayed board while a new frame is pending.
-            let node = self.presented.as_ref().map_or(c.selected, |p| p.node());
-            let game = &c.document.games()[c.document.nodes()[node].game];
-            let text = |key| clipped(c.document.text(game.root, key).unwrap_or_default(), 256);
-            details = details.child(div().font_weight(gpui::FontWeight::BOLD).child(clipped(
-                c.document.title(c.document.nodes()[node].game),
-                256,
-            )));
-            let mut info = vec![];
-            for (label, key) in [
-                ("Black", "PB"),
-                ("White", "PW"),
-                ("Result", "RE"),
-                ("Komi", "KM"),
-                ("Date", "DT"),
-            ] {
-                let value = text(key);
-                if !value.is_empty() {
-                    info.push(format!("{label}: {value}"));
-                }
-            }
-            if let Some(p) = &self.presented {
-                info.push(format!(
-                    "Captures: Black {} · White {}",
-                    p.captures[0], p.captures[1]
-                ));
-            }
-            details = details.child(div().text_color(theme.text_muted).child(info.join("    ")));
-            let comment = c.document.text(node, "C").or_else(|| {
-                if node == game.root {
-                    c.document.text(node, "GC")
-                } else {
-                    None
-                }
-            });
-            if let Some(comment) = comment.filter(|s| !s.is_empty()) {
-                details = details.child(
-                    div()
-                        .id("sgf-comment")
-                        .max_h(px(128. * self.zoom))
-                        .overflow_y_scroll()
-                        .child(clipped(comment, 16_384)),
-                );
-            }
-            let parent = c.previous();
-            let siblings = parent.map(|p| c.document.children(p).count()).unwrap_or(0);
-            let (label, branch) = if c.document.children(c.selected).count() > 1 {
-                ("Continue:", Some(c.selected))
-            } else if siblings > 1 {
-                ("Variation:", parent)
-            } else {
-                ("", None)
-            };
-            if let Some(branch) = branch {
-                let count = c.document.children(branch).count();
-                let selected_index = c
-                    .document
-                    .children(branch)
-                    .position(|n| n == c.selected)
-                    .unwrap_or(0);
-                // Keep even adversarial records from creating unbounded UI elements.
-                let start = selected_index.saturating_sub(6);
-                let mut variations = div().flex().flex_wrap().gap_2().items_center().child(label);
-                for (index, node) in c.document.children(branch).enumerate().skip(start).take(12) {
-                    let name = c
-                        .document
-                        .text(node, "N")
-                        .unwrap_or_else(|| format!("{}", index + 1));
-                    variations = variations.child(
-                        div()
-                            .id(("sgf-variation", node))
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .when(c.selected == node, |d| d.bg(theme.selection))
-                            .hover(|d| d.bg(theme.selection))
-                            .child(clipped(name, 48))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.select(Some(node), cx);
-                                this.focus.focus(window);
-                            })),
-                    );
-                }
-                if count > 12 {
-                    variations = variations.child(format!("{count} variations · ↑/↓ to cycle"));
-                }
-                details = details.child(variations);
-            }
         }
         let board = if let Some(error) = &self.error {
             div()
@@ -690,15 +608,24 @@ impl SgfView {
             .child(controls)
             .child(
                 div()
-                    .id("sgf-board")
-                    .relative()
+                    .flex()
                     .flex_1()
                     .min_h_0()
                     .min_w_0()
                     .overflow_hidden()
-                    .child(board),
+                    .child(
+                        div()
+                            .id("sgf-board")
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(board),
+                    )
+                    .child(self.side_panel(theme, cx)),
             )
-            .child(details)
             .into_any_element()
     }
 }
