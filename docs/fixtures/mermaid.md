@@ -63,25 +63,90 @@ erDiagram
 >     end
 > ```
 
-## Source fallback
-
-Diagram types outside the initial native subset retain their complete code:
+## Unicode labels
 
 ```mermaid
-pie title Contents
+flowchart LR
+    A[Café déjà vu] --> B[Ελληνικά Русский]
+```
+
+## Attribute tables
+
+```mermaid
+erDiagram
+    BOOK {
+        int identifier PK,FK,UK
+        varchar title "display name"
+        decimal price
+    }
+    BOOK ||--o{ PAGE : contains
+    PAGE {
+        int identifier PK
+        int book_id FK
+    }
+```
+
+## Pie chart
+
+```mermaid
+pie showData
+    title Contents
     "Prose" : 60
     "Code" : 25
     "Math" : 15
 ```
 
-ER attribute tables also retain their source in this version:
+## Mind map
 
 ```mermaid
-erDiagram
-    BLOCK {
-        string kind
-        int position
-    }
+mindmap
+  root((Reading))
+    Notes
+      Ideas
+    Diagrams
 ```
 
-Use **Source** or **Preview** above a diagram to switch modes. **Copy** copies the original fence. Search for a label with `⌘F` to reveal its source.
+## Timeline
+
+```mermaid
+timeline
+    title History
+    2020 : Launch : Learn
+    2021 : Grow
+```
+
+## User journey
+
+```mermaid
+journey
+    title Reading
+    section Start
+    Open file: 5: Reader
+    Read: 4: Reader, Editor
+```
+
+## Quadrants
+
+```mermaid
+quadrantChart
+    title Work
+    x-axis Low effort --> High effort
+    y-axis Low value --> High value
+    Task A: [0.2, 0.8]
+    Task B: [0.8, 0.3]
+```
+
+## Source fallback
+
+Unsupported families and unavailable glyphs retain complete source:
+
+```mermaid
+gantt
+    title Release
+    Work: 2026-01-01, 1d
+```
+
+```mermaid
+flowchart LR
+    A[中文] --> B[Text fallback]
+```

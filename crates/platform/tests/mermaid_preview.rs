@@ -36,6 +36,34 @@ fn main() {
             "subgraph",
             "flowchart LR\n subgraph Input\n A[File] --> B[Parser]\n end\n subgraph Output\n C[Diagram] --> D[Preview]\n end\n B --> C\n",
         ),
+        (
+            "unicode",
+            "flowchart LR\n A[Café déjà vu] --> B[Ελληνικά Русский]",
+        ),
+        (
+            "attributes",
+            "erDiagram\n BOOK {\n int identifier PK,FK,UK\n varchar title \"display name\"\n decimal price\n }\n BOOK ||--o{ PAGE : contains\n PAGE {\n int identifier PK\n int book_id FK\n }",
+        ),
+        (
+            "pie",
+            "pie showData\n title Café\n \"Thé\": 3\n \"Café\": 7",
+        ),
+        (
+            "mindmap",
+            "mindmap\n root((Reading))\n   Notes\n     Ideas\n   Diagrams",
+        ),
+        (
+            "timeline",
+            "timeline\n title History\n 2020 : Launch : Learn\n 2021 : Grow",
+        ),
+        (
+            "journey",
+            "journey\n title Reading\n section Start\n Open file: 5: Reader\n Read: 4: Reader, Editor",
+        ),
+        (
+            "quadrant",
+            "quadrantChart\n title Work\n x-axis Low effort --> High effort\n y-axis Low value --> High value\n Task A: [0.2, 0.8]\n Task B: [0.8, 0.3]",
+        ),
     ];
     let output = (std::env::args().nth(1).as_deref() == Some("--render-dir"))
         .then(|| std::env::args_os().nth(2).map(std::path::PathBuf::from))
@@ -82,12 +110,12 @@ fn main() {
         }
     }
     assert!(
-        mermaid::render("pie\n\"A\":1\n", false, &cancel)
+        mermaid::render("gantt\nTask: 2025-01-01, 1d\n", false, &cancel)
             .unwrap()
             .is_none()
     );
     assert!(
-        mermaid::render("erDiagram\n BOOK {\n string title\n }\n", false, &cancel)
+        mermaid::render("flowchart LR\n A[中文]-->B\n", false, &cancel)
             .unwrap()
             .is_none()
     );

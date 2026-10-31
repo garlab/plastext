@@ -17,9 +17,9 @@ mermaid = false
 
 ## Supported syntax
 
-The initial native subset covers flowcharts (`flowchart` / `graph`), sequence diagrams, class diagrams, state diagrams and ER relationships, including simple flowchart subgraphs. It uses [mermaid-rs-renderer 0.3.1](https://github.com/1jehuang/mermaid-rs-renderer), with bundled KaTeX fonts and resvg. No browser, Node installation, external command, download or network access is needed.
+The native subset covers flowcharts (`flowchart` / `graph`), sequence, class and state diagrams, ER relationships and attribute tables, pie charts, mind maps, timelines without sections, user journeys and quadrant charts. The shared document-graphics library carries a small patch to [mermaid-rs-renderer 0.3.1](https://github.com/1jehuang/mermaid-rs-renderer) for embedded-font metrics and chart correctness, with bundled KaTeX/Noto Sans fonts and resvg. No browser, Node installation, external command, download or network access is needed.
 
-This is partial Mermaid compatibility. Labels currently require ASCII. ER attribute tables, other diagram families, embedded icons, clickable nodes, front matter, initialization directives, invalid syntax and oversized diagrams retain their complete source. Layout can differ from Mermaid.js. The source is never rewritten.
+This is partial Mermaid compatibility. Labels support Latin (including accents), Greek and Cyrillic. Missing glyphs such as CJK/emoji, timeline sections, other diagram families, embedded icons, clickable nodes, front matter, initialization directives, invalid syntax and oversized diagrams retain their complete source. Layout can differ from Mermaid.js. The source is never rewritten.
 
 ## Resource bounds
 
