@@ -199,11 +199,14 @@ fn complete_fence(document: &DocumentIndex, ix: usize) -> bool {
             .is_none_or(|b| b.kind != plastext_markdown::BlockType::Code || b.code_first)
 }
 
-fn preview_rejection(document: &DocumentIndex, ix: usize, source: &str) -> Option<&'static str> {
+fn preview_rejection(document: &DocumentIndex, ix: usize, source: &str) -> Option<String> {
     if !complete_fence(document, ix) {
-        Some("Diagram exceeds the preview limit (256 lines or 16 KiB) · showing source")
+        Some(format!(
+            "Diagram exceeds the preview limit ({} lines or 16 KiB) · showing source",
+            plastext_markdown::MERMAID_LINE_LIMIT
+        ))
     } else if !document_graphics::mermaid::admissible(source) {
-        Some("Unsupported diagram syntax or preview limits exceeded · showing source")
+        Some("Unsupported diagram syntax or preview limits exceeded · showing source".into())
     } else {
         None
     }
@@ -243,7 +246,7 @@ impl MarkdownView {
             if self.parsing {
                 None
             } else if let Some(reason) = preview_rejection(&self.document, ix, &block.text) {
-                Some(Err(reason.into()))
+                Some(Err(reason))
             } else {
                 let result = Cache::get(key, cx);
                 if result.is_none()
@@ -423,7 +426,7 @@ impl MarkdownView {
 mod tests {
     use super::*;
     #[test]
-    fn large_tree_reports_the_fence_limit_without_losing_source() {
+    fn large_tree_stays_whole_and_oversized_fences_keep_all_source() {
         let mut source = String::from("graph TD\n");
         for node in 1..384 {
             source.push_str(&format!(" {} --> {node}\n", (node - 1) / 2));
@@ -431,9 +434,20 @@ mod tests {
         assert!(source.len() < plastext_markdown::BLOCK_TEXT_LIMIT);
         let document = parse(&format!("```mermaid\n{source}```\n"));
         let index = DocumentIndex::initial(&document, 0);
+        assert_eq!(index.blocks.len(), 1);
+        assert!(complete_fence(&index, 0));
+        assert_eq!(document.blocks[0].text, source);
+
+        let source = format!(
+            "graph TD\n{}",
+            "%% comment\n".repeat(plastext_markdown::MERMAID_LINE_LIMIT)
+        );
+        assert!(source.len() < plastext_markdown::BLOCK_TEXT_LIMIT);
+        let document = parse(&format!("```mermaid\n{source}```\n"));
+        let index = DocumentIndex::initial(&document, 0);
         assert_eq!(index.blocks.len(), 2);
         let reason = preview_rejection(&index, 0, &document.blocks[0].text).unwrap();
-        assert!(reason.contains("256 lines"));
+        assert!(reason.contains("1024 lines"));
         assert_eq!(
             document
                 .blocks

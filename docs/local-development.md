@@ -81,5 +81,19 @@ it writes to `Cargo.lock` out of commits. See
 [shared rendering release checks](shared-rendering-release.md) for review and
 validation commands.
 
+For code-only changes with unchanged package versions and dependency graphs,
+Cargo's `paths` override keeps `Cargo.lock` on its published versions. To test
+both the shared library and its Mermaid backend, use this top-level setting
+instead of the patch table above:
+
+```toml
+paths = ["../document-graphics", "../mermaid-rs-renderer"]
+```
+
+The backend checkout's package name is `document-graphics-mermaid`. Keep these
+paths in the ignored `.cargo/config.toml`. This override does not support adding
+or changing dependencies; use `[patch.crates-io]` in that case. Remove the local
+overrides when verifying a published release.
+
 Each app selects raster fitting, cache size and worker lifetime; shared renderer
 changes should preserve those policies unless explicitly intended.

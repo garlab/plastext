@@ -22,6 +22,8 @@ pub use search::{RenderedMatch, find_rendered};
 
 /// Bounds the work needed to lay out any one virtualized item.
 pub const BLOCK_TEXT_LIMIT: usize = 16 * 1024;
+/// Complete Mermaid fences stay together up to the renderer's line budget.
+pub const MERMAID_LINE_LIMIT: usize = 1024;
 
 pub fn is_markdown(path: &Path) -> bool {
     path.extension().and_then(|s| s.to_str()).is_some_and(|s| {

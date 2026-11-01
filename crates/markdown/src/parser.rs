@@ -520,7 +520,7 @@ impl<'a> Builder<'a> {
                         .next()
                         .is_some_and(|s| s.eq_ignore_ascii_case("mermaid")) =>
                 {
-                    256
+                    crate::MERMAID_LINE_LIMIT
                 }
                 _ => 32,
             };

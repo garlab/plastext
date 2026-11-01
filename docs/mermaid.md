@@ -23,15 +23,22 @@ This is partial Mermaid compatibility. Labels support Latin (including accents),
 
 ## Resource bounds
 
-The Markdown parser keeps diagram fences whole up to 16 KiB / 256 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.
+The expanded limits below require the unreleased routing fix in
+`document-graphics-mermaid` and the corresponding `document-graphics` changes.
+For development, use both sibling checkouts through the
+[local overrides](local-development.md#shared-rendering-libraries). Registry-only
+builds still use the published renderer's 128-node / 256-edge limits until the
+libraries are released and Plastext's dependency pin is updated.
 
-A valid Mermaid diagram can exceed these limits. The preview reports the fence-size limit when source has been split into chunks. A compact diagram can also exceed the renderer's 128-node or 256-edge limits, or its layout, SVG and raster budgets. Removing newlines does not bypass those checks.
+The Markdown parser keeps diagram fences whole up to 16 KiB / 1,024 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.
+
+A valid Mermaid diagram can exceed these limits. The preview reports the fence-size limit when source has been split into chunks. A compact diagram can also exceed the renderer’s 512-node or 1,024-edge limits, or its layout, SVG and raster budgets. Removing newlines does not bypass those checks.
 
 Only viewport and list-overdraw blocks request diagrams, with at most two requests per view. One lazy worker serializes rendering across all windows, through an eight-request queue. Scrolling away cancels pending work; hiding or closing a tab, or switching the whole document to source, also releases its diagram images. A diagram's own Source toggle cancels pending work but keeps a successful image in the bounded cache, available for eviction while source is shown. The worker exits after five idle seconds and recycles after 32 requests. Documents without diagrams never start it.
 
 Each request has a two-second rendering deadline. On macOS, the parent samples worker resident memory and stops it above 256 MiB. The worker's sandbox denies file-data reads, writes, networking and child processes; fonts are embedded. Unix workers also have an eight-second cumulative CPU backstop and disabled core dumps. No document path or inherited environment is sent to the worker. A failed, cancelled or timed-out worker is killed and reaped before replacement. The Rust rendering path is portable; the macOS sandbox and resident-memory guard require platform equivalents before offering the same guarantees elsewhere.
 
-Preflight limits include 128 nodes, 256 edges, 16 subgraphs, 32 levels of lexical nesting and a 256 KiB generated SVG. SVG permits bounded geometry, text and simple arrow markers; external resources, reuse, filters and foreign content are rejected. Raster output is capped at one million pixels and an 8,192-pixel edge, normally at 2× logical resolution. The application shares a 32 MiB diagram cache across tabs and panes, charging both CPU pixels and GPU image storage, with at most 128 entries. Visible diagrams are protected from eviction; insufficient cache space leaves source available. Source → Preview retries a failed preview.
+Preflight limits include 512 nodes, 1,024 edges, 16 subgraphs, 32 levels of lexical nesting and a 1 MiB generated SVG. Generated SVG is limited to 16,384 XML nodes, 256 KiB of geometry, a 32,768-unit logical edge and 64 million logical square units; these dimensions do not allocate a full-size bitmap. Local SVG preview keeps its existing limits. SVG permits bounded geometry, text and simple arrow markers; external resources, reuse, filters and foreign content are rejected. Raster output is capped at one million pixels and an 8,192-pixel edge, normally at 2× logical resolution. The application shares a 32 MiB diagram cache across tabs and panes, charging both CPU pixels and GPU image storage, with at most 128 entries. Visible diagrams are protected from eviction; insufficient cache space leaves source available. Source → Preview retries a failed preview.
 
 ## Validation
 
