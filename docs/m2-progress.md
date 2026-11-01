@@ -29,6 +29,10 @@ Image decoding limits encoded input to 32 MiB and raster images to 16 megapixels
 
 CSV stores a record offset every 512 records and reads pages of 64 rows on background workers. It retains eight recent pages plus the header page, with at most four page jobs active. Column sizing runs with the first page read, measures at most 256 displayed characters per cell, and caps initial widths at 560 logical pixels at 100% zoom. Later pages do not resample existing columns. Records above 64 KiB or 128 columns show a Source fallback message. LF and CRLF are supported; bare-CR record separators are not yet supported.
 
+In CSV/TSV tables, drag to select text across cells, double-click a word, or triple-click to select a complete cell (including text hidden by ellipsis). Click a row number to select the row; drag row numbers or Shift-click to extend the range, and ⌘-click to add or remove individual rows. Shift-click also extends text selections. ⌘A or the `#` header selects the whole table, including column names; Escape or clicking empty table space clears the selection. Dragging beyond the table viewport scrolls to extend the selection.
+
+⌘C copies selected cell text verbatim. Multiple cells or rows are copied as tab-separated fields, with quotes around embedded tabs, newlines and quotes, for pasting into spreadsheets. Row numbers and visual newline markers are not copied. Copying reads records on a background worker and is capped at 64 MB; an oversized or malformed selection reports an error without replacing the clipboard. A new selection or switching to Source cancels a pending copy. Selections survive scrolling, column resizing, zoom and Source/Table toggles; split panes have independent selections.
+
 ### Front-matter tables
 
 YAML scalars (including quoted and folded text) display their decoded text; nested collections stay readable as YAML in the value cell. Aliases remain literal references and are never expanded. TOML tables flatten to dotted field paths, with array-of-table indices such as `links[0].url`; rows stay in source order. Empty collections are retained. See the [YAML](fixtures/m2.md) and [TOML](fixtures/m2-toml.md) demos.

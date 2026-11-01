@@ -1,8 +1,8 @@
 use gpui::{
     AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
-    FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollStrategy,
-    SharedString, Subscription, Task, UniformListScrollHandle, Window, canvas, div, prelude::*, px,
-    uniform_list,
+    FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollHandle,
+    ScrollStrategy, SharedString, Subscription, Task, UniformListScrollHandle, Window, canvas, div,
+    prelude::*, px, uniform_list,
 };
 use plastext_assets::csv::{CsvIndex, CsvRow};
 use plastext_buffer::{FileSource, LineIndex};
@@ -16,7 +16,13 @@ use std::{
     },
 };
 mod columns;
-use columns::{ColumnDrag, Columns, FONT_SIZE, display_chars, sample_widths};
+mod copy;
+mod interaction;
+mod selection;
+use columns::{ColumnDrag, Columns, FONT_SIZE, sample_widths};
+pub(crate) use interaction::init;
+use interaction::{ClearSelection, FrameHits};
+use selection::{Drag, Selection};
 
 const PAGE: u64 = 64;
 const HEIGHT: f32 = 28.;
@@ -34,6 +40,11 @@ pub struct CsvView {
     loading: HashSet<u64>,
     columns: Columns,
     column_drag: Option<ColumnDrag>,
+    selection: Selection,
+    selection_drag: Option<Drag>,
+    horizontal_scroll: ScrollHandle,
+    copy_cancel: Arc<AtomicBool>,
+    _copy: Option<Task<()>>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     first_row: u64,
@@ -100,6 +111,11 @@ impl CsvView {
             loading: HashSet::new(),
             columns: Columns::default(),
             column_drag: None,
+            selection: Selection::None,
+            selection_drag: None,
+            horizontal_scroll: ScrollHandle::new(),
+            copy_cancel: Arc::new(AtomicBool::new(false)),
+            _copy: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             first_row: 0,
@@ -185,6 +201,7 @@ impl CsvView {
         number: u64,
         header: bool,
         theme: Theme,
+        hits: FrameHits,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -193,6 +210,7 @@ impl CsvView {
             .pages
             .get(&(number / PAGE))
             .and_then(|rows| rows.get((number % PAGE) as usize));
+        let selectable = record.is_some_and(|row| row.cells.is_ok());
         let mut cells = match record {
             Some(CsvRow {
                 cells: Ok(cells), ..
@@ -205,6 +223,7 @@ impl CsvView {
         // Ragged records still need a header divider and aligned empty cells.
         cells.resize(cells.len().max(self.columns.len()), String::new());
         div()
+            .id(("csv-row", number as usize))
             .h(px(HEIGHT * self.zoom))
             .flex_none()
             .text_size(px(FONT_SIZE * self.zoom))
@@ -216,8 +235,22 @@ impl CsvView {
             .when(header, |d| {
                 d.bg(theme.surface).font_weight(FontWeight::BOLD)
             })
+            .when(self.selection.row_selected(number), |row| {
+                row.bg(theme.selection)
+            })
             .child(
                 div()
+                    .id("row-number")
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .cursor_pointer()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                            this.select_row(number, event, window, cx);
+                        }),
+                    )
                     .w(px(56. * self.zoom))
                     .flex_none()
                     .pl(px(8. * self.zoom))
@@ -229,57 +262,8 @@ impl CsvView {
                     }),
             )
             .children(cells.into_iter().enumerate().map(|(i, cell)| {
-                div()
-                    .relative()
-                    .w(px(self.columns.width(i) * self.zoom))
-                    .h_full()
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .px(px(8. * self.zoom))
-                    .border_l_1()
-                    .border_color(theme.border)
-                    .child(
-                        div()
-                            .w_full()
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(display_chars(&cell).collect::<String>()),
-                    )
-                    .when(header, |cell| {
-                        cell.child(
-                            div()
-                                .id(("csv-column-divider", i))
-                                .absolute()
-                                .top_0()
-                                .right_0()
-                                .w(px(7.))
-                                .h_full()
-                                .cursor(CursorStyle::ResizeLeftRight)
-                                .border_r_1()
-                                .border_color(theme.border)
-                                .hover(|style| style.bg(theme.border))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                                        this.focus.focus(window);
-                                        if event.click_count == 2 {
-                                            this.columns.reset(i);
-                                            this.column_drag = None;
-                                        } else {
-                                            this.column_drag = Some(ColumnDrag {
-                                                column: i,
-                                                start_x: event.position.x.into(),
-                                                start_width: this.columns.width(i),
-                                            });
-                                        }
-                                        cx.stop_propagation();
-                                        cx.notify();
-                                    }),
-                                ),
-                        )
-                    })
+                self.render_cell(number, i, cell, selectable, theme, hits.clone(), cx)
+                    .into_any_element()
             }))
             .into_any_element()
     }
@@ -403,6 +387,7 @@ impl CsvView {
             raw.update(cx, |view, cx| view.set_font_size(font_size, cx));
         }
         if self.zoom != factor {
+            self.selection_drag = None;
             self.column_drag = None;
             self.zoom = factor;
             self.scroll
@@ -425,6 +410,7 @@ impl CsvView {
         cx.new(|cx| {
             let mut view = Self::new(path, source, lines, style, cx);
             view.columns = self.columns.clone();
+            view.selection = self.selection.clone();
             view.zoom = self.zoom;
             view.first_row = first;
             view.show_raw = show_raw;
@@ -439,6 +425,8 @@ impl CsvView {
     }
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.column_drag = None;
+        self.selection_drag = None;
+        self.selection_changed(cx);
         if !self.show_raw {
             let offset = self.position(cx);
             let raw = self.raw.get_or_insert_with(|| {
@@ -470,6 +458,7 @@ impl CsvView {
 impl Drop for CsvView {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
+        self.copy_cancel.store(true, Ordering::Relaxed);
     }
 }
 impl Focusable for CsvView {
@@ -488,7 +477,9 @@ impl Render for CsvView {
         let theme = Theme::get(window, cx);
         self.request(0, window, cx);
         let count = self.index.progress().rows.saturating_sub(1) as usize;
-        let header = self.row(0, true, theme, window, cx);
+        let hits = FrameHits::default();
+        let list_hits = hits.clone();
+        let header = self.row(0, true, theme, hits.clone(), window, cx);
         let width = (self.columns.total_width() + 56.).max(640.) * self.zoom;
         let body = if self.show_raw {
             self.raw.as_ref().unwrap().clone().into_any_element()
@@ -497,6 +488,7 @@ impl Render for CsvView {
                 .id("csv-horizontal")
                 .size_full()
                 .overflow_x_scroll()
+                .track_scroll(&self.horizontal_scroll)
                 .child(
                     div()
                         .h_full()
@@ -513,7 +505,14 @@ impl Render for CsvView {
                                         this.first_row = range.start as u64;
                                         range
                                             .map(|i| {
-                                                this.row(i as u64 + 1, false, theme, window, cx)
+                                                this.row(
+                                                    i as u64 + 1,
+                                                    false,
+                                                    theme,
+                                                    list_hits.clone(),
+                                                    window,
+                                                    cx,
+                                                )
                                             })
                                             .collect()
                                     },
@@ -528,6 +527,12 @@ impl Render for CsvView {
         div()
             .relative()
             .track_focus(&self.focus)
+            .when(!self.show_raw, |view| {
+                view.key_context("CsvTable")
+                    .on_action(cx.listener(Self::copy))
+                    .on_action(cx.listener(Self::select_all))
+                    .on_action(cx.listener(Self::clear_selection))
+            })
             .size_full()
             .flex()
             .flex_col()
@@ -544,7 +549,11 @@ impl Render for CsvView {
                     .bg(theme.surface)
                     .text_color(theme.text_muted)
                     .text_xs()
-                    .child(self.summary())
+                    .child(if self._copy.is_some() {
+                        format!("{}    Copying…", self.summary())
+                    } else {
+                        self.summary()
+                    })
                     .child(
                         div()
                             .id("csv-raw")
@@ -553,7 +562,23 @@ impl Render for CsvView {
                             .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx))),
                     ),
             )
-            .child(div().flex_1().min_h_0().child(body))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(body)
+                    .when(!self.show_raw, |body| {
+                        body.on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| {
+                                this.focus.focus(window);
+                                this.clear_selection(&ClearSelection, window, cx);
+                            }),
+                        )
+                        .child(self.selection_layer(hits, cx))
+                    }),
+            )
             .when(self.column_drag.is_some(), |view| {
                 view.child(self.resize_overlay(cx))
             })

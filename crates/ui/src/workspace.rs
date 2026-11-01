@@ -76,6 +76,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.;
 /// Registers the workspace's and its views' key bindings.
 pub fn init(cx: &mut App) {
     plastext_editor::init(cx);
+    crate::csv_view::init(cx);
     crate::markdown_view::init(cx);
     crate::pdf_view::init(cx);
     crate::sgf_view::init(cx);
