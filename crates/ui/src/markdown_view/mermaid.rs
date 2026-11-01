@@ -199,6 +199,16 @@ fn complete_fence(document: &DocumentIndex, ix: usize) -> bool {
             .is_none_or(|b| b.kind != plastext_markdown::BlockType::Code || b.code_first)
 }
 
+fn preview_rejection(document: &DocumentIndex, ix: usize, source: &str) -> Option<&'static str> {
+    if !complete_fence(document, ix) {
+        Some("Diagram exceeds the preview limit (256 lines or 16 KiB) · showing source")
+    } else if !document_graphics::mermaid::admissible(source) {
+        Some("Unsupported diagram syntax or preview limits exceeded · showing source")
+    } else {
+        None
+    }
+}
+
 impl MarkdownView {
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.diagrams.hidden = !visible;
@@ -232,12 +242,8 @@ impl MarkdownView {
         let result = if mermaid && !source {
             if self.parsing {
                 None
-            } else if !complete_fence(&self.document, ix)
-                || !document_graphics::mermaid::admissible(&block.text)
-            {
-                Some(Err(
-                    "Preview unavailable for this diagram · showing source".into()
-                ))
+            } else if let Some(reason) = preview_rejection(&self.document, ix, &block.text) {
+                Some(Err(reason.into()))
             } else {
                 let result = Cache::get(key, cx);
                 if result.is_none()
@@ -256,7 +262,7 @@ impl MarkdownView {
                                 .map_err(|e| e.to_string())
                                 .and_then(|p| {
                                     p.ok_or_else(|| {
-                                        "Preview unavailable for this diagram · showing source"
+                                        "Unsupported diagram content or preview limits exceeded · showing source"
                                             .into()
                                     })
                                 })
@@ -416,6 +422,29 @@ impl MarkdownView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn large_tree_reports_the_fence_limit_without_losing_source() {
+        let mut source = String::from("graph TD\n");
+        for node in 1..384 {
+            source.push_str(&format!(" {} --> {node}\n", (node - 1) / 2));
+        }
+        assert!(source.len() < plastext_markdown::BLOCK_TEXT_LIMIT);
+        let document = parse(&format!("```mermaid\n{source}```\n"));
+        let index = DocumentIndex::initial(&document, 0);
+        assert_eq!(index.blocks.len(), 2);
+        let reason = preview_rejection(&index, 0, &document.blocks[0].text).unwrap();
+        assert!(reason.contains("256 lines"));
+        assert_eq!(
+            document
+                .blocks
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<String>(),
+            source,
+            "all edges remain readable across the virtualized source blocks"
+        );
+    }
+
     #[test]
     fn only_whole_mermaid_fences_are_rendered() {
         assert!(is_mermaid("Mermaid title"));

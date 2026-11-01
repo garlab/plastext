@@ -19,6 +19,13 @@ implemented features, measured limits and remaining exit checks. The accepted
 4. Validate large Markdown, CSV, PDF and TeX workloads. M2 still needs a passing
    10,000-frame Markdown run within the 8 ms p99 budget and reference-M1 checks.
 
+Larger Mermaid graphs need work in the shared renderer before increasing the
+current 128-node / 256-edge limits: faster bounded layout, appropriate generated
+SVG and logical-dimension budgets, and explicit rejection reasons. Large tree
+fixtures should retain every node, edge and class style within the worker's time
+and memory budgets. Plastext also needs diagram zoom/pan or tiled rendering so
+large graphs remain readable without retaining an oversized raster.
+
 These precede M3 editing (undo/redo, reliable saves, external changes and a
 synchronized Markdown source/preview), then M4 Git review and M5 release
 hardening and packaging.
