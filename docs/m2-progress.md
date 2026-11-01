@@ -217,9 +217,9 @@ Layout, including parsing, takes 0.1 ms per formula at the median and under 1 ms
 
 KaTeX's font files all claim to be upright regular faces; only the bold ones set a heavier weight. A font system that trusts those flags draws `KaTeX_Main` Italic for Regular. katex-native therefore lists each face's real style for renderers to register it under, as KaTeX's `@font-face` rules do.
 
-Display math (`$$…$$` and `math` fences) renders natively. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails.
+Display math (`$$…$$` and `math` fences) renders natively. Standalone `$$` blocks can contain blank lines, including inside `aligned` environments; source offsets and page boundaries remain intact. Empty formulas stay blank. Formulas are rasterized off the UI thread at the window's pixel density, cached like images, and drawn centered with horizontal scrolling when too wide. The TeX shows while a formula renders, and with the error message when it fails.
 
-Inline math (`$…$`) renders the same way. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Headings still show inline TeX, since they use larger text.
+Inline math (`$…$`) renders the same way, including in headings at their corresponding text sizes. Each formula's TeX gives way to a run of transparent `l`s about as wide as the formula. GPUI wraps such a run like a word, never inside it. The formula is then painted over the run, on the text's baseline. The run rounds the formula's width to whole characters, so a formula may sit up to half a character off; it is centered in its run. A paragraph containing a formula taller than the line gets taller lines throughout. Link ranges and find highlights are mapped around the runs, and find can't match a run. Formula caches include font size, zoom and display density. See the [heading and multiline math fixture](fixtures/math-headings.md).
 
 Display math puts `\tag`s and automatic equation numbers (`equation`, `gather`, `align`, `alignat`, `multline`) against the right edge of the column, on the formula's baseline. Numbers count up through the whole document, as on a web page. The background indexing pass counts each numbering formula's equations and records its starting number. Layout remains limited to nearby formulas. Numbered formulas show their TeX until the index is ready.
 
@@ -269,7 +269,7 @@ save batching, cancellation, private build inputs and retention of the last succ
 downloads and large-project certification remain pending; see the
 [local TeX increment](pdf-and-tex-preview.md#local-tex-increment).
 
-- Inline math in headings, document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
+- Document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
 - Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
 - Huge-image subsampling/tiles, sharp deep zoom, animated GIF/WebP, AVIF/HEIC, checkerboard/pixel grid and SVG source mode.
 - Validate memory and scrolling on the reference M1 Air, run native 20M-row CSV scrolling tests, and visually review light/dark themes and anchoring. The 8 ms scrolling budget still needs a passing 10,000-frame run.

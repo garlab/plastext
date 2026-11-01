@@ -4,6 +4,7 @@ mod index;
 #[cfg(test)]
 mod index_tests;
 mod links;
+mod math_blocks;
 mod metadata;
 mod parser;
 mod search;

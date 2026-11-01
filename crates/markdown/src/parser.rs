@@ -101,8 +101,9 @@ pub(crate) fn parse_context(
         let (url, title) = references?.get(&unicase::UniCase::new(link.reference.into_string()))?;
         Some((url.to_string().into(), title.to_string().into()))
     };
+    let prepared = crate::math_blocks::prepare(text, metadata, false);
     for (event, range) in
-        Parser::new_with_broken_link_callback(text, options(metadata), Some(callback))
+        Parser::new_with_broken_link_callback(&prepared, options(metadata), Some(callback))
             .into_offset_iter()
     {
         if range.start >= source_window.end {
@@ -333,8 +334,13 @@ pub(crate) fn parse_context(
                 builder.append(&value, range, &math);
             }
             Event::DisplayMath(value) => {
+                // Restore blank lines hidden from Markdown's paragraph parser.
+                let original = (text[range.clone()] != prepared[range.clone()])
+                    .then(|| &text[range.clone()])
+                    .and_then(|raw| raw.strip_prefix("$$"))
+                    .and_then(|body| body.strip_suffix("$$"));
                 builder.start(BlockKind::Math, range.clone());
-                builder.append(&value, range, &style);
+                builder.append(original.unwrap_or(&value), range, &style);
                 builder.flush();
             }
             Event::SoftBreak => builder.append(" ", range, &style),

@@ -110,4 +110,11 @@ mod tests {
         let rendered = render(gather, true, 5, 20., [0, 0, 0, 255]).unwrap();
         assert!(rendered.tag.is_some());
     }
+
+    #[test]
+    fn renders_blackboard_aliases_and_aligned_math_with_blank_lines() {
+        assert!(render(r"f: \Bbb N \to \Bbb N", false, 1, 29., [255; 4]).is_ok());
+        let tex = "\\begin{aligned}\nf(0) &= 0 \\\\\n\nf(1) &= 1\n\\end{aligned}";
+        assert!(render(tex, true, 1, 20., [255; 4]).is_ok());
+    }
 }

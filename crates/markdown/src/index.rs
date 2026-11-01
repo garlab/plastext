@@ -158,7 +158,8 @@ impl DocumentIndex {
             let raw = read(source, page.source.clone())?;
             let text = format!("{}{}", page.mode.prefix(), raw);
             if !matches!(page.mode, Mode::Source) {
-                let parser = Parser::new_ext(&text, options(page.source.start == 0));
+                let prepared = crate::math_blocks::prepare(&text, page.source.start == 0, false);
+                let parser = Parser::new_ext(&prepared, options(page.source.start == 0));
                 let mut definitions: Vec<_> = parser.reference_definitions().iter().collect();
                 definitions.sort_unstable_by_key(|(_, def)| def.span.start);
                 for (label, def) in definitions {
@@ -325,7 +326,8 @@ impl DocumentIndex {
         let mut prefix_len = prefix.len();
         // Use document-wide first-definition-wins semantics, including when a
         // later duplicate definition occurs in this page.
-        let ranges: Vec<_> = Parser::new_ext(&text, options(page.source.start == 0))
+        let prepared = crate::math_blocks::prepare(&text, page.source.start == 0, false);
+        let ranges: Vec<_> = Parser::new_ext(&prepared, options(page.source.start == 0))
             .reference_definitions()
             .iter()
             .map(|(_, def)| def.span.clone())
@@ -347,7 +349,8 @@ impl DocumentIndex {
         if !matches!(page.mode, Mode::Code { .. } | Mode::Metadata) && !self.footnotes.is_empty() {
             let mut added = HashSet::new();
             let mut definitions = String::new();
-            let local: HashSet<_> = Parser::new_ext(&text, options(page.source.start == 0))
+            let prepared = crate::math_blocks::prepare(&text, page.source.start == 0, false);
+            let local: HashSet<_> = Parser::new_ext(&prepared, options(page.source.start == 0))
                 .filter_map(|event| match event {
                     Event::Start(Tag::FootnoteDefinition(id)) => {
                         Some(UniCase::new(id.into_string()))
@@ -558,7 +561,8 @@ struct Unit {
     kind: UnitKind,
 }
 fn units(text: &str, metadata: bool) -> Vec<Unit> {
-    let parser = Parser::new_ext(text, options(metadata));
+    let prepared = crate::math_blocks::prepare(text, metadata, true);
+    let parser = Parser::new_ext(&prepared, options(metadata));
     let mut units: Vec<_> = parser
         .reference_definitions()
         .iter()

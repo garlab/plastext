@@ -26,7 +26,8 @@ pub(super) struct FormulaKey {
     color: [u8; 4],
     /// Device pixels per logical pixel, in thousandths.
     scale: u32,
-    zoom: u32,
+    /// Surrounding text size in logical pixels, in thousandths (including zoom).
+    font_size: u32,
 }
 
 /// A rendered piece of a formula, in logical pixels.
@@ -52,7 +53,7 @@ pub(super) struct Formulas {
     /// The list rows showing each formula, to re-measure when it arrives.
     rows: HashMap<FormulaKey, Vec<usize>>,
     /// Measured for the current window by [`MarkdownView::prepare_math`].
-    inline: Option<InlineMetrics>,
+    inline: HashMap<u32, InlineMetrics>,
     /// The first equation number of each display formula that numbers its
     /// equations, by block. `None` until the document has finished parsing.
     numbering: Option<Arc<HashMap<usize, u32>>>,
@@ -60,7 +61,7 @@ pub(super) struct Formulas {
 
 impl Formulas {
     pub(super) fn zoom_changed(&mut self) {
-        self.inline = None;
+        self.inline.clear();
         self.rows.clear();
     }
 
@@ -123,18 +124,24 @@ impl MarkdownView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        if !inline_math_shown(block) {
+            return;
+        }
         let scale = window.scale_factor();
+        let font_size = text_size(&block.kind) * self.zoom;
+        let size_key = scale_key(font_size);
         // The prose font only changes on restart.
         if !self
             .formulas
             .inline
+            .get(&size_key)
             .is_some_and(|metrics| metrics.scale == scale)
         {
             let font = text_run(1, false, false, false, theme.text, self).font;
             let text_system = window.text_system();
             let font_id = text_system.resolve_font(&font);
-            let size = px(BODY_SIZE * self.zoom);
-            self.formulas.inline =
+            let size = px(font_size);
+            if let Some(metrics) =
                 text_system
                     .advance(font_id, size, SLOT_CHAR)
                     .ok()
@@ -143,11 +150,14 @@ impl MarkdownView {
                         ascent: f32::from(text_system.ascent(font_id, size)),
                         // Font metrics give the descent as negative.
                         descent: f32::from(text_system.descent(font_id, size)).abs(),
-                        line_height: BODY_SIZE * self.zoom * LINE_HEIGHT,
+                        line_height: font_size * LINE_HEIGHT,
                         scale,
-                    });
+                    })
+            {
+                self.formulas.inline.insert(size_key, metrics);
+            }
         }
-        if self.formulas.inline.is_none() || !inline_math_shown(block) {
+        if !self.formulas.inline.contains_key(&size_key) {
             return;
         }
         for span in block.spans.iter().filter(|span| span.style.math) {
@@ -157,7 +167,7 @@ impl MarkdownView {
                 first_number: 0,
                 color: channels(inline_color(&span.style, theme)),
                 scale: scale_key(scale),
-                zoom: scale_key(self.zoom),
+                font_size: size_key,
             };
             self.request_formula(&key, ix, scale, cx);
         }
@@ -165,15 +175,21 @@ impl MarkdownView {
 
     /// The placeholder for an inline formula: how many [`SLOT_CHAR`]s, and
     /// how wide they are. `None` until the formula has rendered.
-    pub(super) fn inline_slot(&self, tex: &str, color: gpui::Rgba) -> Option<(usize, f32, Image)> {
-        let metrics = self.formulas.inline?;
+    pub(super) fn inline_slot(
+        &self,
+        block: &Block,
+        tex: &str,
+        color: gpui::Rgba,
+    ) -> Option<(usize, f32, Image)> {
+        let size_key = scale_key(text_size(&block.kind) * self.zoom);
+        let metrics = self.formulas.inline.get(&size_key)?;
         let key = FormulaKey {
             tex: tex.to_owned(),
             display: false,
             first_number: 0,
             color: channels(color),
             scale: scale_key(metrics.scale),
-            zoom: scale_key(self.zoom),
+            font_size: size_key,
         };
         let formula = &self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?.body;
         let count = ((formula.width / metrics.slot_char).round() as usize).max(1);
@@ -184,11 +200,18 @@ impl MarkdownView {
     /// with lines tall enough for the tallest one.
     pub(super) fn with_inline_math(
         &self,
+        block: &Block,
         text: InteractiveText,
         layout: TextLayout,
         slots: Vec<Slot>,
     ) -> AnyElement {
-        let Some(metrics) = self.formulas.inline.filter(|_| !slots.is_empty()) else {
+        let size_key = scale_key(text_size(&block.kind) * self.zoom);
+        let Some(&metrics) = self
+            .formulas
+            .inline
+            .get(&size_key)
+            .filter(|_| !slots.is_empty())
+        else {
             return text.into_any_element();
         };
         // GPUI centers glyphs in the line: the baseline sits
@@ -237,6 +260,9 @@ impl MarkdownView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if block.text.trim().is_empty() {
+            return div().into_any_element();
+        }
         let scale = window.scale_factor();
         // Numbered formulas wait until their first number is known.
         let first_number = if plastext_math::may_number(&block.text) {
@@ -253,7 +279,7 @@ impl MarkdownView {
             first_number,
             color: channels(theme.text),
             scale: scale_key(scale),
-            zoom: scale_key(self.zoom),
+            font_size: scale_key(BODY_SIZE * self.zoom),
         });
         if let Some(key) = &key {
             self.request_formula(key, ix, scale, cx);
@@ -308,7 +334,7 @@ impl MarkdownView {
         self.formulas.order.push_back(key.clone());
         let rendering = cx.background_executor().spawn({
             let key = key.clone();
-            let body_size = BODY_SIZE * self.zoom;
+            let body_size = key.font_size as f32 / 1000.;
             async move {
                 let px_per_em = body_size * plastext_math::SCALE * scale;
                 let rendered = plastext_math::render(
@@ -411,10 +437,20 @@ fn display_formula(formula: &Formula, ix: usize) -> AnyElement {
         .into_any_element()
 }
 
-/// Inline formulas are laid out at body size; headings and the TeX of
-/// display math keep their source.
+/// Display math already renders as a whole formula; its fallback stays source.
 pub(super) fn inline_math_shown(block: &Block) -> bool {
-    !matches!(block.kind, BlockKind::Heading { .. } | BlockKind::Math)
+    !matches!(block.kind, BlockKind::Math)
+}
+
+/// Shared by heading text, inline placeholders and formula rasterization.
+pub(super) fn text_size(kind: &BlockKind) -> f32 {
+    match kind {
+        BlockKind::Heading { level: 1, .. } => 30.,
+        BlockKind::Heading { level: 2, .. } => 24.,
+        BlockKind::Heading { level: 3, .. } => 20.,
+        BlockKind::Heading { .. } => 17.,
+        _ => BODY_SIZE,
+    }
 }
 
 impl Slot {
@@ -502,4 +538,31 @@ fn paint_slot(layout: &TextLayout, slot: &Slot, slot_char: f32, window: &mut Win
             false,
         )
         .ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn heading_math_uses_the_heading_size_and_a_separate_cache_entry() {
+        for (level, size) in [(1, 30.), (2, 24.), (3, 20.), (4, 17.), (5, 17.), (6, 17.)] {
+            let block = Block::new(
+                BlockKind::Heading {
+                    level,
+                    id: String::new(),
+                },
+                0..0,
+            );
+            assert!(inline_math_shown(&block));
+            assert_eq!(text_size(&block.kind), size);
+            for zoom in [0.5, 1., 2.] {
+                assert_ne!(
+                    scale_key(text_size(&block.kind) * zoom),
+                    scale_key(BODY_SIZE * zoom)
+                );
+            }
+        }
+        assert!(!inline_math_shown(&Block::new(BlockKind::Math, 0..0)));
+    }
 }

@@ -16,6 +16,7 @@ fn compact_records_and_small_document_parity() {
     assert_eq!(size_of::<BlockEntry>(), 32);
     for text in [
         include_str!("../../../docs/fixtures/tables.md"),
+        include_str!("../../../docs/fixtures/math-headings.md"),
         "# Title\n\n**Hello** *world* &amp; café\n\n> quote\n>\n> - nested\n>   - deeper\n\n---\n",
         "---\ntitle: café\nitems: [one, two]\n---\n# Body\n\n- [x] done\n- next\n\n```rust\nlet x = 42;\n```\n",
         "+++\nname = 'test'\n[table]\na = 1\n+++\n# Body\n\nTerm\n: definition\n",
@@ -29,6 +30,35 @@ fn compact_records_and_small_document_parity() {
         assert_eq!(blocks, eager.blocks, "{text}");
         assert_eq!(index.headings, eager.headings, "{text}");
     }
+}
+
+#[test]
+fn math_with_blank_lines_stays_whole_across_page_windows() {
+    let formula = format!(
+        "$$\n\\begin{{aligned}}\n{}\n\\end{{aligned}}\n$$",
+        "a &= b \\\\\n\n".repeat(800)
+    );
+    let text = format!(
+        "{}\n{formula}\n\n# After\n",
+        "padding\n\n".repeat(PAGE_BYTES / 9 - 40)
+    );
+    let eager = parse(&text);
+    let (index, blocks) = indexed(&text);
+    assert!(index.pages.len() > 1);
+    assert_eq!(blocks, eager.blocks);
+    assert_eq!(index.headings, eager.headings);
+    let math: Vec<_> = blocks
+        .iter()
+        .filter(|b| b.kind == BlockKind::Math)
+        .collect();
+    assert_eq!(math.len(), 1);
+    assert_eq!(&text[math[0].source.clone()], formula);
+    assert!(
+        index
+            .pages
+            .iter()
+            .all(|page| page.source.len() <= PARSE_WINDOW_BYTES)
+    );
 }
 
 #[test]

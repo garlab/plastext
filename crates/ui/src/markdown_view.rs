@@ -529,8 +529,11 @@ impl MarkdownView {
             if style.math
                 && inline_math
                 && span.range == (start..end)
-                && let Some((count, width, formula)) =
-                    self.inline_slot(&block.text[start..end], math::inline_color(style, theme))
+                && let Some((count, width, formula)) = self.inline_slot(
+                    block,
+                    &block.text[start..end],
+                    math::inline_color(style, theme),
+                )
             {
                 let slot = math::Slot::new(text.len(), count, width, formula);
                 if let Some(target) = &style.link {
@@ -614,7 +617,7 @@ impl MarkdownView {
                 let text: SharedString = tooltip_targets[link].to_string().into();
                 Some(cx.new(|_| LinkTooltip(text)).into())
             });
-        self.with_inline_math(text, layout, slots)
+        self.with_inline_math(block, text, layout, slots)
     }
     fn image(
         &mut self,
@@ -999,13 +1002,7 @@ impl MarkdownView {
                     .mt_3()
                     .pb_2()
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
-                    .text_size(px(self.zoom
-                        * match level {
-                            1 => 30.,
-                            2 => 24.,
-                            3 => 20.,
-                            _ => 17.,
-                        }))
+                    .text_size(px(math::text_size(&block.kind) * self.zoom))
                     .font_weight(FontWeight::BOLD)
                     .child(self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx))
                     .child(
