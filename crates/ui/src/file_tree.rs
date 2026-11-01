@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{
-    Context, Entity, EventEmitter, PathBuilder, SharedString, Subscription, Task,
+    ClickEvent, Context, Entity, EventEmitter, PathBuilder, SharedString, Subscription, Task,
     UniformListScrollHandle, Window, canvas, div, img, point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
@@ -14,7 +14,7 @@ const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
 
 pub enum FileTreeEvent {
-    Open(PathBuf),
+    Open { path: PathBuf, preview: bool },
 }
 
 /// The sidebar's file tree (spec PRJ-2): directories are read in the
@@ -80,7 +80,7 @@ impl FileTreeView {
         self.listings.insert(dir, task);
     }
 
-    fn click(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn click(&mut self, index: usize, click_count: usize, cx: &mut Context<Self>) {
         let Some(row) = self.tree.rows().get(index) else {
             return;
         };
@@ -91,7 +91,10 @@ impl FileTreeView {
                     self.list(entry.path.clone(), cx);
                 }
             }
-            EntryKind::File => cx.emit(FileTreeEvent::Open(entry.path.clone())),
+            EntryKind::File => cx.emit(FileTreeEvent::Open {
+                path: entry.path.clone(),
+                preview: click_count < 2,
+            }),
         }
         cx.notify();
     }
@@ -198,7 +201,9 @@ impl Render for FileTreeView {
                                         .text_ellipsis()
                                         .child(name),
                                 )
-                                .on_click(cx.listener(move |this, _, _, cx| this.click(index, cx))),
+                                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                                    this.click(index, event.click_count(), cx)
+                                })),
                         )
                     })
                     .collect()

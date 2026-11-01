@@ -8,10 +8,10 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
-    KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle, Window,
-    actions, canvas, div, prelude::*, px, relative, uniform_list,
+    AnyElement, App, ClickEvent, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
+    Focusable, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    NavigationDirection, Pixels, Point, ScrollStrategy, SharedString, Subscription,
+    UniformListScrollHandle, Window, actions, canvas, div, prelude::*, px, relative, uniform_list,
 };
 use plastext_buffer::{FileSource, LineIndex, OpenOptions};
 use plastext_editor::{HexView, TextStyle, TextView, Theme};
@@ -36,6 +36,8 @@ use crate::{
 
 mod tab_menu;
 use tab_menu::TabMenu;
+mod opening;
+use opening::{Destination, OpenKind, Openings, Placement};
 
 actions!(
     workspace,
@@ -215,12 +217,14 @@ fn clamp_sidebar_width(width: Pixels, available: Pixels) -> Pixels {
 struct Pane {
     tabs: Vec<Tab>,
     active: Option<usize>,
+    opening: Openings,
 }
 
 struct Tab {
     path: PathBuf,
     title: SharedString,
     view: TabView,
+    preview: bool,
     _status: Subscription,
     _links: Option<Subscription>,
 }
@@ -262,7 +266,20 @@ impl Workspace {
                 cx.new(|cx| FileTreeView::new(root, tree_options.clone(), icon_themes.clone(), cx));
             subscriptions.push(
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
-                    FileTreeEvent::Open(path) => this.open_file(path.clone(), None, window, cx),
+                    FileTreeEvent::Open { path, preview } => {
+                        this.record_jump(cx);
+                        this.open_with_kind(
+                            path.clone(),
+                            None,
+                            if *preview {
+                                OpenKind::Preview
+                            } else {
+                                OpenKind::Keep
+                            },
+                            window,
+                            cx,
+                        );
+                    }
                 }),
             );
             tree
@@ -351,17 +368,41 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_with_kind(path, target, OpenKind::Keep, window, cx);
+    }
+
+    fn open_with_kind(
+        &mut self,
+        path: PathBuf,
+        target: Option<Target>,
+        kind: OpenKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.active_pane;
         if let Some(index) = self.panes[&pane]
             .tabs
             .iter()
             .position(|tab| tab.path == path)
         {
+            let state = self.panes.get_mut(&pane).unwrap();
+            state.opening.select();
+            if kind == OpenKind::Keep {
+                state.tabs[index].preview = false;
+            }
             self.activate(pane, index, window, cx);
             let view = self.panes[&pane].tabs[index].view.clone();
             scroll_to(&view, target, cx);
             return;
         }
+        let pending = &mut self.panes.get_mut(&pane).unwrap().opening;
+        // A newer line/anchor destination must not reuse the older callback's target.
+        if target.is_some() {
+            pending.cancel(&path);
+        }
+        let Some(request) = pending.begin(&path, kind) else {
+            return;
+        };
         let options = self.open_options;
         let opening_started = Instant::now();
         let style = self.text_style.clone();
@@ -409,91 +450,113 @@ impl Workspace {
         });
         cx.spawn_in(window, async move |this, cx| {
             let opened = opening.await;
-            this.update_in(cx, |this, window, cx| match opened {
-                Ok(opened) => {
-                    let view = match opened {
-                        Opened::Pdf(source) => {
-                            TabView::Pdf(cx.new(|cx| PdfView::new(path.clone(), source, style, cx)))
-                        }
-                        Opened::Text(source, index, _)
-                            if path
-                                .extension()
-                                .is_some_and(|s| s.eq_ignore_ascii_case("sgf")) =>
-                        {
-                            TabView::Sgf(
-                                cx.new(|cx| {
+            this.update_in(cx, |this, window, cx| {
+                let Some((kind, activate)) = this
+                    .panes
+                    .get_mut(&pane)
+                    .and_then(|pane| pane.opening.finish(&path, request))
+                else {
+                    return;
+                };
+                match opened {
+                    Ok(opened) => {
+                        let view = match opened {
+                            Opened::Pdf(source) => TabView::Pdf(
+                                cx.new(|cx| PdfView::new(path.clone(), source, style, cx)),
+                            ),
+                            Opened::Text(source, index, _)
+                                if path
+                                    .extension()
+                                    .is_some_and(|s| s.eq_ignore_ascii_case("sgf")) =>
+                            {
+                                TabView::Sgf(cx.new(|cx| {
                                     crate::sgf_view::SgfView::new(source, index, style, cx)
-                                }),
-                            )
-                        }
-                        Opened::Text(source, index, _)
-                            if path.extension().is_some_and(|s| {
-                                s.eq_ignore_ascii_case("csv") || s.eq_ignore_ascii_case("tsv")
-                            }) =>
-                        {
-                            TabView::Csv(
-                                cx.new(|cx| CsvView::new(path.clone(), source, index, style, cx)),
-                            )
-                        }
-                        Opened::Image(preview) => {
-                            TabView::Image(cx.new(|cx| ImageView::new(path.clone(), preview, cx)))
-                        }
-                        Opened::Text(source, index, _) if plastext_markdown::is_markdown(&path) => {
-                            TabView::Markdown(cx.new(|cx| {
-                                let mut view = MarkdownView::new(
-                                    path.clone(),
-                                    source,
-                                    index,
-                                    style,
-                                    markdown_settings,
-                                    cx,
-                                );
+                                }))
+                            }
+                            Opened::Text(source, index, _)
+                                if path.extension().is_some_and(|s| {
+                                    s.eq_ignore_ascii_case("csv") || s.eq_ignore_ascii_case("tsv")
+                                }) =>
+                            {
+                                TabView::Csv(
+                                    cx.new(|cx| {
+                                        CsvView::new(path.clone(), source, index, style, cx)
+                                    }),
+                                )
+                            }
+                            Opened::Image(preview) => TabView::Image(
+                                cx.new(|cx| ImageView::new(path.clone(), preview, cx)),
+                            ),
+                            Opened::Text(source, index, _)
+                                if plastext_markdown::is_markdown(&path) =>
+                            {
+                                TabView::Markdown(cx.new(|cx| {
+                                    let mut view = MarkdownView::new(
+                                        path.clone(),
+                                        source,
+                                        index,
+                                        style,
+                                        markdown_settings,
+                                        cx,
+                                    );
+                                    if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
+                                        .ok()
+                                        .and_then(|v| v.parse::<usize>().ok())
+                                    {
+                                        view.profile_reading(opening_started, frames);
+                                    }
+                                    view
+                                }))
+                            }
+                            Opened::Text(source, index, language)
+                                if path
+                                    .extension()
+                                    .is_some_and(|s| s.eq_ignore_ascii_case("tex")) =>
+                            {
+                                TabView::Tex(cx.new(|cx| {
+                                    TexView::new(
+                                        path.clone(),
+                                        source,
+                                        index,
+                                        style,
+                                        language,
+                                        (this.root.clone(), this.tex_settings.clone()),
+                                        cx,
+                                    )
+                                }))
+                            }
+                            Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {
+                                let mut view = TextView::new(source, index, style, language, cx);
                                 if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
                                     .ok()
-                                    .and_then(|v| v.parse::<usize>().ok())
+                                    .and_then(|value| value.parse::<usize>().ok())
                                 {
-                                    view.profile_reading(opening_started, frames);
+                                    view.profile_reading(opening_started, frames.max(1));
                                 }
                                 view
-                            }))
-                        }
-                        Opened::Text(source, index, language)
-                            if path
-                                .extension()
-                                .is_some_and(|s| s.eq_ignore_ascii_case("tex")) =>
-                        {
-                            TabView::Tex(cx.new(|cx| {
-                                TexView::new(
-                                    path.clone(),
-                                    source,
-                                    index,
-                                    style,
-                                    language,
-                                    (this.root.clone(), this.tex_settings.clone()),
-                                    cx,
-                                )
-                            }))
-                        }
-                        Opened::Text(source, index, language) => TabView::Text(cx.new(|cx| {
-                            let mut view = TextView::new(source, index, style, language, cx);
-                            if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
-                                .ok()
-                                .and_then(|value| value.parse::<usize>().ok())
-                            {
-                                view.profile_reading(opening_started, frames.max(1));
+                            })),
+                            Opened::Binary(source) => {
+                                TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
                             }
-                            view
-                        })),
-                        Opened::Binary(source) => {
-                            TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
-                        }
-                    };
-                    scroll_to(&view, target, cx);
-                    this.add_tab(path, view, window, cx);
-                }
-                Err(err) => {
-                    this.notice = Some(format!("Couldn't open {}: {err}", path.display()).into());
-                    cx.notify();
+                        };
+                        scroll_to(&view, target, cx);
+                        this.add_tab(
+                            path,
+                            view,
+                            Destination {
+                                pane,
+                                kind,
+                                activate,
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(err) => {
+                        this.notice =
+                            Some(format!("Couldn't open {}: {err}", path.display()).into());
+                        cx.notify();
+                    }
                 }
             })
             .ok();
@@ -501,14 +564,34 @@ impl Workspace {
         .detach();
     }
 
-    /// Adds a tab to the active pane, or the first pane if that one is gone.
+    /// Adds a tab to its original pane. Replaced previews release their resources.
     fn add_tab(
         &mut self,
         path: PathBuf,
         view: TabView,
+        destination: Destination,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(pane) = self.panes.get(&destination.pane) else {
+            return;
+        };
+        let placement = destination.kind.placement(
+            &path,
+            pane.tabs
+                .iter()
+                .map(|tab| (tab.path.as_path(), tab.preview)),
+        );
+        if let Placement::Existing(index) = placement {
+            if destination.kind == OpenKind::Keep {
+                self.panes.get_mut(&destination.pane).unwrap().tabs[index].preview = false;
+            }
+            if destination.activate && self.active_pane == destination.pane {
+                self.activate(destination.pane, index, window, cx);
+            }
+            cx.notify();
+            return;
+        }
         view.set_zoom(self.zoom.factor(), self.text_style.font_size, cx);
         let title = path
             .file_name()
@@ -534,17 +617,36 @@ impl Workspace {
         } else {
             None
         };
-        let pane_id = self.active_pane;
-        let pane = self.panes.entry(pane_id).or_default();
-        pane.tabs.push(Tab {
+        let pane_id = destination.pane;
+        let pane = self.panes.get_mut(&pane_id).unwrap();
+        let tab = Tab {
             path,
             title,
             view,
+            preview: destination.kind == OpenKind::Preview,
             _status: status,
             _links: links,
-        });
-        let index = pane.tabs.len() - 1;
-        self.activate(pane_id, index, window, cx);
+        };
+        let index = match placement {
+            Placement::Replace(index) => {
+                pane.tabs[index].view.set_visible(false, cx);
+                pane.tabs[index] = tab;
+                index
+            }
+            Placement::Append => {
+                pane.tabs.push(tab);
+                pane.tabs.len() - 1
+            }
+            Placement::Existing(_) => unreachable!(),
+        };
+        if destination.activate || pane.active.is_none() {
+            pane.active = Some(index);
+        }
+        if destination.activate && self.active_pane == pane_id {
+            self.activate(pane_id, index, window, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     fn activate(&mut self, pane: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
@@ -599,7 +701,8 @@ impl Workspace {
         if index >= pane.tabs.len() {
             return;
         }
-        pane.tabs.remove(index);
+        pane.opening.select();
+        pane.tabs.remove(index).view.set_visible(false, cx);
         if !pane.tabs.is_empty() {
             let active = pane.active.unwrap_or(0);
             let next = if active >= index {
@@ -1230,7 +1333,17 @@ impl Workspace {
         self.panes.insert(new_pane, Pane::default());
         self.active_pane = new_pane;
         match duplicate {
-            Some((path, view)) => self.add_tab(path, view, window, cx),
+            Some((path, view)) => self.add_tab(
+                path,
+                view,
+                Destination {
+                    pane: new_pane,
+                    kind: OpenKind::Keep,
+                    activate: true,
+                },
+                window,
+                cx,
+            ),
             None => cx.notify(),
         }
     }
@@ -1405,7 +1518,11 @@ impl Workspace {
                     } else {
                         theme.text_muted
                     })
-                    .child(tab.title.clone())
+                    .child(
+                        div()
+                            .when(tab.preview, |title| title.italic())
+                            .child(tab.title.clone()),
+                    )
                     .child(
                         div()
                             .id(("close-tab", index))
@@ -1419,7 +1536,13 @@ impl Workspace {
                                 this.close_tab(pane_id, index, window, cx);
                             })),
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        if let Some(pane) = this.panes.get_mut(&pane_id) {
+                            pane.opening.select();
+                            if event.click_count() >= 2 {
+                                pane.tabs[index].preview = false;
+                            }
+                        }
                         this.activate(pane_id, index, window, cx)
                     }))
                     .on_mouse_down(

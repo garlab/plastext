@@ -65,6 +65,11 @@ matching lines; the files included at that limit can vary with parallel scan ord
 
 Right-click a tab for **Close Others**, **Close Right**, or **Close Left**. These actions apply only to that pane and keep the clicked tab open.
 
+Single-click a file in the navigation pane to open a temporary preview tab,
+shown with an italic title. Clicking another file reuses that tab. Double-click
+the file or its tab to keep it open; each split pane has its own preview tab.
+Files opened explicitly through Quick Open, search results or the CLI stay open.
+
 TeX opens in preview with an installed TeX Live pdfLaTeX. Roots and local inputs
 are detected automatically; external saves update the preview. Split with `⌘D`
 or `⇧⌘D`, then switch either pane to Source for side-by-side reading. Advanced

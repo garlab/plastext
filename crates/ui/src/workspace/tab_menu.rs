@@ -109,6 +109,7 @@ impl Workspace {
         let Some(plan) = action.plan(pane.tabs.len(), index, pane.active) else {
             return;
         };
+        pane.opening.select();
         let mut old_index = 0;
         pane.tabs.retain(|tab| {
             let keep = plan.keep.contains(&old_index);
