@@ -19,7 +19,7 @@ plastext-git = { path = "crates/git" }
 plastext-markdown = { path = "crates/markdown" }
 plastext-math = { path = "crates/math" }
 katex-native = { version = "=0.1.0", features = ["raster"] }
-document-graphics = { version = "=0.1.1", features = ["sgf"] }
+document-graphics = { version = "=0.1.2", features = ["sgf"] }
 plastext-platform = { path = "crates/platform" }
 plastext-project = { path = "crates/project" }
 plastext-search = { path = "crates/search" }

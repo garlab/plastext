@@ -81,9 +81,9 @@ in the shared crate's README.
 
 document-graphics publishes from version tags through its release workflow; see
 its [release checks](https://github.com/garlab/document-graphics/blob/main/docs/releasing.md).
-After a release, remove the `document-graphics` entry from Plastext's local
-`[patch.crates-io]` configuration if present, set the new version pin in the root
-`Cargo.toml`, then from the **Plastext root**:
+After a release, remove local `document-graphics` and `document-graphics-mermaid`
+overrides from Plastext's `paths` or `[patch.crates-io]` configuration if present,
+set the new version pin in the root `Cargo.toml`, then from the **Plastext root**:
 
 ```sh
 cargo update -p document-graphics --precise X.Y.Z

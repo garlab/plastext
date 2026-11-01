@@ -61,7 +61,7 @@ crate, maintained in [its own repository](https://github.com/garlab/document-gra
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
 
-Plastext uses the published `document-graphics` 0.1.1 release with its `sgf`
+Plastext uses the published `document-graphics` 0.1.2 release with its `sgf`
 feature. A sibling checkout is only needed when developing the library itself.
 
 To work on document-graphics alongside Plastext, place its checkout beside

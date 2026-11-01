@@ -17,18 +17,15 @@ mermaid = false
 
 ## Supported syntax
 
-The native subset covers flowcharts (`flowchart` / `graph`), sequence, class and state diagrams, ER relationships and attribute tables, pie charts, mind maps, timelines without sections, user journeys and quadrant charts. The shared document-graphics library carries a small patch to [mermaid-rs-renderer 0.3.1](https://github.com/1jehuang/mermaid-rs-renderer) for embedded-font metrics and chart correctness, with bundled KaTeX/Noto Sans fonts and resvg. No browser, Node installation, external command, download or network access is needed.
+The native subset covers flowcharts (`flowchart` / `graph`), sequence, class and state diagrams, ER relationships and attribute tables, pie charts, mind maps, timelines without sections, user journeys and quadrant charts. Rendering uses [document-graphics](https://crates.io/crates/document-graphics) and its [Mermaid renderer fork](https://crates.io/crates/document-graphics-mermaid), with bundled KaTeX/Noto Sans fonts and resvg. No browser, Node installation, external command, download or network access is needed.
 
 This is partial Mermaid compatibility. Labels support Latin (including accents), Greek and Cyrillic. Missing glyphs such as CJK/emoji, timeline sections, other diagram families, embedded icons, clickable nodes, front matter, initialization directives, invalid syntax and oversized diagrams retain their complete source. Layout can differ from Mermaid.js. The source is never rewritten.
 
 ## Resource bounds
 
-The expanded limits below require the unreleased routing fix in
-`document-graphics-mermaid` and the corresponding `document-graphics` changes.
-For development, use both sibling checkouts through the
-[local overrides](local-development.md#shared-rendering-libraries). Registry-only
-builds still use the published renderer's 128-node / 256-edge limits until the
-libraries are released and Plastext's dependency pin is updated.
+Plastext uses the published `document-graphics` 0.1.2 and
+`document-graphics-mermaid` 0.1.2 releases for the limits below. No local
+dependency overrides are needed.
 
 The Markdown parser keeps diagram fences whole up to 16 KiB / 1,024 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.
 

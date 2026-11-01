@@ -20,10 +20,9 @@ implemented features, measured limits and remaining exit checks. The accepted
    10,000-frame Markdown run within the 8 ms p99 budget and reference-M1 checks.
 
 The shared renderer now applies its fast-routing policy to large flowcharts.
-Local integration supports up to 512 nodes / 1,024 edges with bounded generated
+Published releases support up to 512 nodes / 1,024 edges with bounded generated
 SVG, while retaining the two-second deadline and one-million-pixel output cap.
-This still needs library releases and a registry dependency update; see
-[Mermaid resource bounds](mermaid.md#resource-bounds). Diagram zoom/pan or tiled
+See [Mermaid resource bounds](mermaid.md#resource-bounds). Diagram zoom/pan or tiled
 rendering remains necessary for reading large graphs at full detail. More
 specific renderer rejection reasons are also pending.
 
