@@ -91,8 +91,6 @@ pub(super) struct Slot {
     line_start: usize,
     /// How many [`SLOT_CHAR`]s it has.
     count: usize,
-    /// The placeholder's width.
-    width: f32,
     formula: Image,
 }
 
@@ -137,24 +135,26 @@ impl MarkdownView {
             .get(&size_key)
             .is_some_and(|metrics| metrics.scale == scale)
         {
-            let font = text_run(1, false, false, false, theme.text, self).font;
-            let text_system = window.text_system();
-            let font_id = text_system.resolve_font(&font);
-            let size = px(font_size);
-            if let Some(metrics) =
-                text_system
-                    .advance(font_id, size, SLOT_CHAR)
-                    .ok()
-                    .map(|slot_char| InlineMetrics {
-                        slot_char: f32::from(slot_char.width),
-                        ascent: f32::from(text_system.ascent(font_id, size)),
-                        // Font metrics give the descent as negative.
-                        descent: f32::from(text_system.descent(font_id, size)).abs(),
+            // Match the shaper used by StyledText. Scaling the font's design
+            // advance is not equivalent: system fonts can change optical size
+            // at different zoom levels, accumulating error over a long slot.
+            let line = window.text_system().shape_line(
+                SLOT_CHAR.to_string().into(),
+                px(font_size),
+                &[text_run(1, false, false, false, theme.text, self)],
+                None,
+            );
+            if line.width > px(0.) {
+                self.formulas.inline.insert(
+                    size_key,
+                    InlineMetrics {
+                        slot_char: line.width.into(),
+                        ascent: line.ascent.into(),
+                        descent: line.descent.into(),
                         line_height: font_size * LINE_HEIGHT,
                         scale,
-                    })
-            {
-                self.formulas.inline.insert(size_key, metrics);
+                    },
+                );
             }
         }
         if !self.formulas.inline.contains_key(&size_key) {
@@ -173,14 +173,14 @@ impl MarkdownView {
         }
     }
 
-    /// The placeholder for an inline formula: how many [`SLOT_CHAR`]s, and
-    /// how wide they are. `None` until the formula has rendered.
+    /// The placeholder length and rendered image for an inline formula.
+    /// `None` until the formula has rendered.
     pub(super) fn inline_slot(
         &self,
         block: &Block,
         tex: &str,
         color: gpui::Rgba,
-    ) -> Option<(usize, f32, Image)> {
+    ) -> Option<(usize, Image)> {
         let size_key = scale_key(text_size(&block.kind) * self.zoom);
         let metrics = self.formulas.inline.get(&size_key)?;
         let key = FormulaKey {
@@ -192,8 +192,8 @@ impl MarkdownView {
             font_size: size_key,
         };
         let formula = &self.formulas.cache.get(&key)?.as_ref()?.as_ref().ok()?.body;
-        let count = ((formula.width / metrics.slot_char).round() as usize).max(1);
-        Some((count, count as f32 * metrics.slot_char, formula.clone()))
+        let count = placeholder_count(formula.width, metrics.slot_char);
+        Some((count, formula.clone()))
     }
 
     /// `text` with its inline formulas painted over their placeholders,
@@ -232,7 +232,7 @@ impl MarkdownView {
                     |_, _, _| {},
                     move |_, _, window, _| {
                         for slot in &slots {
-                            paint_slot(&layout, slot, metrics.slot_char, window);
+                            paint_slot(&layout, slot, window);
                         }
                     },
                 )
@@ -454,12 +454,11 @@ pub(super) fn text_size(kind: &BlockKind) -> f32 {
 }
 
 impl Slot {
-    pub(super) fn new(start: usize, count: usize, width: f32, formula: Image) -> Self {
+    pub(super) fn new(start: usize, count: usize, formula: Image) -> Self {
         Self {
             start,
             line_start: 0,
             count,
-            width,
             formula,
         }
     }
@@ -482,7 +481,7 @@ impl Slot {
     }
 }
 
-fn paint_slot(layout: &TextLayout, slot: &Slot, slot_char: f32, window: &mut Window) {
+fn paint_slot(layout: &TextLayout, slot: &Slot, window: &mut Window) {
     // An index at a wrap is reported at the end of the previous row, so
     // locate the placeholder by its first character's end instead.
     let Some(after_first) = layout.position_for_index(slot.start + SLOT_CHAR.len_utf8()) else {
@@ -524,7 +523,13 @@ fn paint_slot(layout: &TextLayout, slot: &Slot, slot_char: f32, window: &mut Win
             spare
         }
     };
-    let left = after_first.x + offset - px(slot_char) + px((slot.width - slot.formula.width) / 2.);
+    let local_start = slot.start - slot.line_start;
+    let start_x = line_layout.x_for_index(local_start);
+    let first_advance = line_layout.x_for_index(local_start + SLOT_CHAR.len_utf8()) - start_x;
+    let slot_width =
+        line_layout.x_for_index(local_start + slot.count * SLOT_CHAR.len_utf8()) - start_x;
+    let left = after_first.x + offset - first_advance
+        + (slot_width - px(slot.formula.width)).max(px(0.)) / 2.;
     let bounds = Bounds::new(
         point(left, baseline - px(slot.formula.baseline)),
         size(px(slot.formula.width), px(slot.formula.height)),
@@ -538,6 +543,11 @@ fn paint_slot(layout: &TextLayout, slot: &Slot, slot_char: f32, window: &mut Win
             false,
         )
         .ok();
+}
+
+fn placeholder_count(formula_width: f32, shaped_advance: f32) -> usize {
+    // Never let the image extend past the space reserved by text layout.
+    ((formula_width / shaped_advance).ceil() as usize).max(1)
 }
 
 #[cfg(test)]

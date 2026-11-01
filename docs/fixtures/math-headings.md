@@ -4,6 +4,12 @@
 
 The same formula at body size: $f: \Bbb N \to \Bbb N$.
 
+## $\alpha: \Bbb N \times \Bbb N \to \Bbb N$
+
+At 80%, 90% and 100% zoom, the heading anchor should keep a visible gap
+after the formula. The same formula in prose, $\alpha: \Bbb N \times \Bbb N \to \Bbb N$,
+should leave room for this text too.
+
 ### Recurrence with blank lines
 
 $$

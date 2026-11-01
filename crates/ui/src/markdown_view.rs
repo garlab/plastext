@@ -529,13 +529,13 @@ impl MarkdownView {
             if style.math
                 && inline_math
                 && span.range == (start..end)
-                && let Some((count, width, formula)) = self.inline_slot(
+                && let Some((count, formula)) = self.inline_slot(
                     block,
                     &block.text[start..end],
                     math::inline_color(style, theme),
                 )
             {
-                let slot = math::Slot::new(text.len(), count, width, formula);
+                let slot = math::Slot::new(text.len(), count, formula);
                 if let Some(target) = &style.link {
                     links.push(slot.range());
                     targets.push(target.clone());
@@ -998,9 +998,9 @@ impl MarkdownView {
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
-                    .mt_3()
-                    .pb_2()
+                    .gap(px(8. * self.zoom))
+                    .mt(px(12. * self.zoom))
+                    .pb(px(8. * self.zoom))
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
                     .text_size(px(math::text_size(&block.kind) * self.zoom))
                     .font_weight(FontWeight::BOLD)
@@ -1008,6 +1008,7 @@ impl MarkdownView {
                     .child(
                         div()
                             .id(("md-anchor", ix))
+                            .flex_none()
                             .text_size(px(14. * self.zoom))
                             .text_color(theme.text_muted)
                             .cursor_pointer()
