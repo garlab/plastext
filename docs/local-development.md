@@ -61,8 +61,8 @@ crate, maintained in [its own repository](https://github.com/garlab/document-gra
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
 
-The SGF preview branch requires the unreleased 0.1.1 `sgf` feature and the local
-override below until that library release is published.
+Plastext uses the published `document-graphics` 0.1.1 release with its `sgf`
+feature. A sibling checkout is only needed when developing the library itself.
 
 To work on document-graphics alongside Plastext, place its checkout beside
 Plastext and add the following to an untracked `.cargo/config.toml` in the

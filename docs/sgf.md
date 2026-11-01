@@ -70,10 +70,10 @@ nodes and connectors are drawn, without reconstructing their board positions.
 
 ## Developing the shared backend
 
-This branch uses the unreleased `document-graphics` 0.1.1 `sgf` feature. Until that
-version is published, use the sibling checkout and ignored local Cargo override
-from [local development](local-development.md#shared-rendering-libraries).
-The library's `sgf_probe` example checks every node and renders root
+Plastext uses the published `document-graphics` 0.1.1 `sgf` feature. To develop
+the library, use the optional sibling checkout and ignored Cargo override from
+[local development](local-development.md#shared-rendering-libraries).
+Run the library's `sgf_probe` example from its checkout to check every node and render root
 and leaf positions in a directory without modifying its inputs:
 
 ```sh
