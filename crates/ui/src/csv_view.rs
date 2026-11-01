@@ -1,6 +1,8 @@
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, ScrollStrategy, SharedString,
-    Subscription, Task, UniformListScrollHandle, Window, div, prelude::*, px, uniform_list,
+    AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
+    FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollStrategy,
+    SharedString, Subscription, Task, UniformListScrollHandle, Window, canvas, div, prelude::*, px,
+    uniform_list,
 };
 use plastext_assets::csv::{CsvIndex, CsvRow};
 use plastext_buffer::{FileSource, LineIndex};
@@ -13,6 +15,9 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+mod columns;
+use columns::{ColumnDrag, Columns, FONT_SIZE, display_chars, sample_widths};
+
 const PAGE: u64 = 64;
 const HEIGHT: f32 = 28.;
 
@@ -27,7 +32,8 @@ pub struct CsvView {
     pages: HashMap<u64, Vec<CsvRow>>,
     order: VecDeque<u64>,
     loading: HashSet<u64>,
-    widths: Vec<f32>,
+    columns: Columns,
+    column_drag: Option<ColumnDrag>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     first_row: u64,
@@ -92,7 +98,8 @@ impl CsvView {
             pages: HashMap::new(),
             order: VecDeque::new(),
             loading: HashSet::new(),
-            widths: Vec::new(),
+            columns: Columns::default(),
+            column_drag: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             first_row: 0,
@@ -106,7 +113,7 @@ impl CsvView {
             _indexing: indexing,
         }
     }
-    fn request(&mut self, page: u64, cx: &mut Context<Self>) {
+    fn request(&mut self, page: u64, window: &Window, cx: &mut Context<Self>) {
         if self.pages.contains_key(&page) || self.loading.contains(&page) || self.loading.len() >= 4
         {
             return;
@@ -115,28 +122,41 @@ impl CsvView {
         let source = self.source.clone();
         let index = self.index.clone();
         let delimiter = self.delimiter;
-        let reading = cx
-            .background_executor()
-            .spawn(async move { index.page(&source, delimiter, page * PAGE, PAGE as usize) });
+        let metrics = (page == 0).then(|| (cx.text_system().clone(), window.text_style().font()));
+        let reading = cx.background_executor().spawn(async move {
+            let rows = index.page(&source, delimiter, page * PAGE, PAGE as usize);
+            let widths = metrics.and_then(|(text_system, mut font)| {
+                let rows = rows.as_ref().ok()?;
+                font.weight = FontWeight::NORMAL;
+                let regular = text_system.resolve_font(&font);
+                font.weight = FontWeight::BOLD;
+                let bold = text_system.resolve_font(&font);
+                let mut advances = HashMap::new();
+                Some(sample_widths(rows, |ch, header| {
+                    *advances.entry((ch, header)).or_insert_with(|| {
+                        text_system
+                            .advance(if header { bold } else { regular }, px(FONT_SIZE), ch)
+                            .map_or(FONT_SIZE, |size| f32::from(size.width))
+                    })
+                }))
+            });
+            (rows, widths)
+        });
         cx.spawn(async move |this, cx| {
-            let rows = reading.await;
+            let (rows, widths) = reading.await;
             this.update(cx, |this, cx| {
                 this.loading.remove(&page);
                 match rows {
                     Ok(rows) => {
-                        if page == 0 {
-                            for row in rows.iter().take(32) {
-                                if let Ok(cells) = &row.cells {
-                                    this.widths.resize(this.widths.len().max(cells.len()), 100.);
-                                    for (i, cell) in cells.iter().enumerate() {
-                                        this.widths[i] = this.widths[i].max(
-                                            (cell.chars().count().min(48) as f32 * 7.5 + 24.)
-                                                .min(380.),
-                                        );
-                                    }
-                                }
-                            }
+                        if let Some(widths) = widths {
+                            this.columns.set_sampled(widths);
                         }
+                        let count = rows
+                            .iter()
+                            .filter_map(|row| row.cells.as_ref().ok().map(Vec::len))
+                            .max()
+                            .unwrap_or(0);
+                        this.columns.ensure_count(count);
                         this.pages.insert(page, rows);
                         this.order.retain(|&p| p != page);
                         this.order.push_back(page);
@@ -165,14 +185,15 @@ impl CsvView {
         number: u64,
         header: bool,
         theme: Theme,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        self.request(number / PAGE, cx);
+        self.request(number / PAGE, window, cx);
         let record = self
             .pages
             .get(&(number / PAGE))
             .and_then(|rows| rows.get((number % PAGE) as usize));
-        let cells = match record {
+        let mut cells = match record {
             Some(CsvRow {
                 cells: Ok(cells), ..
             }) => cells.clone(),
@@ -181,21 +202,25 @@ impl CsvView {
             }) => vec![error.clone()],
             None => vec!["Loading…".into()],
         };
+        // Ragged records still need a header divider and aligned empty cells.
+        cells.resize(cells.len().max(self.columns.len()), String::new());
         div()
             .h(px(HEIGHT * self.zoom))
-            .text_size(px(14. * self.zoom))
+            .flex_none()
+            .text_size(px(FONT_SIZE * self.zoom))
+            .font_weight(FontWeight::NORMAL)
             .flex()
             .items_center()
             .border_b_1()
             .border_color(theme.border)
             .when(header, |d| {
-                d.bg(theme.surface).font_weight(gpui::FontWeight::BOLD)
+                d.bg(theme.surface).font_weight(FontWeight::BOLD)
             })
             .child(
                 div()
                     .w(px(56. * self.zoom))
                     .flex_none()
-                    .pl_2()
+                    .pl(px(8. * self.zoom))
                     .text_color(theme.text_muted)
                     .child(if header {
                         "#".into()
@@ -205,16 +230,110 @@ impl CsvView {
             )
             .children(cells.into_iter().enumerate().map(|(i, cell)| {
                 div()
-                    .w(px(self.widths.get(i).copied().unwrap_or(160.) * self.zoom))
+                    .relative()
+                    .w(px(self.columns.width(i) * self.zoom))
+                    .h_full()
                     .flex_none()
-                    .px_2()
-                    .overflow_hidden()
-                    .text_ellipsis()
+                    .flex()
+                    .items_center()
+                    .px(px(8. * self.zoom))
                     .border_l_1()
                     .border_color(theme.border)
-                    .child(cell.replace(['\r', '\n'], " ↵ "))
+                    .child(
+                        div()
+                            .w_full()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(display_chars(&cell).collect::<String>()),
+                    )
+                    .when(header, |cell| {
+                        cell.child(
+                            div()
+                                .id(("csv-column-divider", i))
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .w(px(7.))
+                                .h_full()
+                                .cursor(CursorStyle::ResizeLeftRight)
+                                .border_r_1()
+                                .border_color(theme.border)
+                                .hover(|style| style.bg(theme.border))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                        this.focus.focus(window);
+                                        if event.click_count == 2 {
+                                            this.columns.reset(i);
+                                            this.column_drag = None;
+                                        } else {
+                                            this.column_drag = Some(ColumnDrag {
+                                                column: i,
+                                                start_x: event.position.x.into(),
+                                                start_width: this.columns.width(i),
+                                            });
+                                        }
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
             }))
             .into_any_element()
+    }
+
+    fn resize_overlay(&self, cx: &Context<Self>) -> impl IntoElement {
+        let weak = cx.entity().downgrade();
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .occlude()
+            .cursor(CursorStyle::ResizeLeftRight)
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |_, _, window, _| {
+                        let moved = weak.clone();
+                        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+                            moved
+                                .update(cx, |this, cx| {
+                                    if let Some(drag) = this.column_drag {
+                                        if event.dragging() {
+                                            this.columns.resize(
+                                                drag.column,
+                                                drag.width_at(event.position.x.into(), this.zoom),
+                                            );
+                                        } else {
+                                            // Recover from a release outside the window too.
+                                            this.column_drag = None;
+                                        }
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                        });
+                        let released = weak.clone();
+                        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                released
+                                    .update(cx, |this, cx| {
+                                        this.column_drag = None;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            }
+                        });
+                    },
+                )
+                .size_full(),
+            )
     }
     pub fn summary(&self) -> String {
         let p = self.index.progress();
@@ -284,6 +403,7 @@ impl CsvView {
             raw.update(cx, |view, cx| view.set_font_size(font_size, cx));
         }
         if self.zoom != factor {
+            self.column_drag = None;
             self.zoom = factor;
             self.scroll
                 .scroll_to_item(self.first_row as usize, ScrollStrategy::Top);
@@ -304,6 +424,8 @@ impl CsvView {
             .map(|v| v.update(cx, |v, cx| v.duplicate(cx)));
         cx.new(|cx| {
             let mut view = Self::new(path, source, lines, style, cx);
+            view.columns = self.columns.clone();
+            view.zoom = self.zoom;
             view.first_row = first;
             view.show_raw = show_raw;
             view.raw = raw;
@@ -316,6 +438,7 @@ impl CsvView {
         })
     }
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.column_drag = None;
         if !self.show_raw {
             let offset = self.position(cx);
             let raw = self.raw.get_or_insert_with(|| {
@@ -363,10 +486,10 @@ impl Focusable for CsvView {
 impl Render for CsvView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
-        self.request(0, cx);
+        self.request(0, window, cx);
         let count = self.index.progress().rows.saturating_sub(1) as usize;
-        let header = self.row(0, true, theme, cx);
-        let width = (self.widths.iter().sum::<f32>() + 56.).max(640.) * self.zoom;
+        let header = self.row(0, true, theme, window, cx);
+        let width = (self.columns.total_width() + 56.).max(640.) * self.zoom;
         let body = if self.show_raw {
             self.raw.as_ref().unwrap().clone().into_any_element()
         } else {
@@ -385,12 +508,16 @@ impl Render for CsvView {
                             uniform_list(
                                 "csv-rows",
                                 count,
-                                cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                                    this.first_row = range.start as u64;
-                                    range
-                                        .map(|i| this.row(i as u64 + 1, false, theme, cx))
-                                        .collect()
-                                }),
+                                cx.processor(
+                                    move |this, range: std::ops::Range<usize>, window, cx| {
+                                        this.first_row = range.start as u64;
+                                        range
+                                            .map(|i| {
+                                                this.row(i as u64 + 1, false, theme, window, cx)
+                                            })
+                                            .collect()
+                                    },
+                                ),
                             )
                             .track_scroll(self.scroll.clone())
                             .flex_1(),
@@ -399,6 +526,7 @@ impl Render for CsvView {
                 .into_any_element()
         };
         div()
+            .relative()
             .track_focus(&self.focus)
             .size_full()
             .flex()
@@ -408,6 +536,7 @@ impl Render for CsvView {
             .child(
                 div()
                     .h(px(30.))
+                    .flex_none()
                     .flex()
                     .px_3()
                     .items_center()
@@ -425,5 +554,8 @@ impl Render for CsvView {
                     ),
             )
             .child(div().flex_1().min_h_0().child(body))
+            .when(self.column_drag.is_some(), |view| {
+                view.child(self.resize_overlay(cx))
+            })
     }
 }
