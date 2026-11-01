@@ -2,7 +2,10 @@ use std::ops::{ControlFlow, Range};
 
 use tree_sitter::{ParseOptions, Parser, QueryCursor, StreamingIterator as _, Tree};
 
-use crate::Language;
+use crate::{
+    Language,
+    injections::{self, Injection},
+};
 
 /// What a span of code is, as far as coloring goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -77,6 +80,7 @@ pub struct SyntaxTree {
     tree: Tree,
     language: &'static Language,
     parsed_len: usize,
+    injections: Vec<Injection>,
 }
 
 impl SyntaxTree {
@@ -111,30 +115,13 @@ impl SyntaxTree {
         text: &[u8],
         cancelled: impl Fn() -> bool,
     ) -> Option<Self> {
-        if cancelled() {
-            return None;
-        }
-        let mut parser = Parser::new();
-        parser.set_language(&language.grammar()?).ok()?;
-        let mut progress = |_: &tree_sitter::ParseState| {
-            if cancelled() {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        };
-        let options = ParseOptions::new().progress_callback(&mut progress);
-        let mut read = |offset: usize, _| &text[offset.min(text.len())..];
-        let tree = parser.parse_with_options(&mut read, None, Some(options))?;
-        if cancelled() {
-            return None;
-        }
-        // Compilation belongs to the background parse, not the first frame.
-        language.highlight_query();
+        let tree = parse_tree(language, text, &cancelled)?;
+        let injections = injections::parse(language, &tree, text, &cancelled)?;
         Some(Self {
             tree,
             language,
             parsed_len: text.len(),
+            injections,
         })
     }
 
@@ -151,45 +138,36 @@ impl SyntaxTree {
     ///
     /// When several captures cover a byte, the innermost node wins, and for
     /// the same node the earliest pattern in the query wins, as in
-    /// tree-sitter's own highlighter.
+    /// tree-sitter's own highlighter. Embedded languages overlay their content
+    /// without changing the surrounding markup.
     pub fn highlights(&self, text: &[u8], range: Range<usize>) -> Vec<(Range<usize>, Highlight)> {
-        let Some(query) = self.language.highlight_query() else {
-            return Vec::new();
-        };
         let len = text.len().min(self.parsed_len);
         let range = range.start.min(len)..range.end.min(len);
         if range.is_empty() {
             return Vec::new();
         }
-        let mut captures = Vec::new();
-        let mut cursor = QueryCursor::new();
-        cursor.set_byte_range(range.clone());
-        let mut matches = cursor.captures(&query.query, self.tree.root_node(), text);
-        while let Some((found, index)) = matches.next() {
-            let capture = found.captures()[*index];
-            let kind = query.kinds[capture.index as usize];
-            if kind != CaptureKind::Ignore {
-                captures.push((capture.node.byte_range(), found.pattern_index, kind));
-            }
-        }
-        // Outer nodes paint first so inner ones override them; for the same
-        // node the earliest pattern paints last.
-        captures.sort_by(|(a, a_pattern, _), (b, b_pattern, _)| {
-            a.start
-                .cmp(&b.start)
-                .then(b.end.cmp(&a.end))
-                .then(b_pattern.cmp(a_pattern))
-        });
-
         let mut painted = vec![None; range.len()];
-        for (node, _, kind) in captures {
-            let start = node.start.clamp(range.start, range.end) - range.start;
-            let end = node.end.clamp(range.start, range.end) - range.start;
-            let highlight = match kind {
-                CaptureKind::Highlight(highlight) => Some(highlight),
-                _ => None,
-            };
-            painted[start..end].fill(highlight);
+        paint(&self.tree, self.language, text, range.clone(), &mut painted);
+        // Injection ranges are disjoint and sorted. A viewport lookup never
+        // walks all of a long document's script/style blocks.
+        let first = self
+            .injections
+            .partition_point(|injection| injection.range.end <= range.start);
+        for injection in self.injections[first..]
+            .iter()
+            .take_while(|i| i.range.start < range.end)
+        {
+            let start = range.start.max(injection.range.start);
+            let end = range.end.min(injection.range.end);
+            let visible = &mut painted[start - range.start..end - range.start];
+            visible.fill(None);
+            paint(
+                &injection.tree,
+                injection.language,
+                &text[injection.range.clone()],
+                start - injection.range.start..end - injection.range.start,
+                visible,
+            );
         }
 
         let mut spans: Vec<(Range<usize>, Highlight)> = Vec::new();
@@ -202,6 +180,75 @@ impl SyntaxTree {
             }
         }
         spans
+    }
+}
+
+pub(crate) fn parse_tree(
+    language: &'static Language,
+    text: &[u8],
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Tree> {
+    if cancelled() {
+        return None;
+    }
+    let mut parser = Parser::new();
+    parser.set_language(&language.grammar()?).ok()?;
+    let mut progress = |_: &tree_sitter::ParseState| {
+        if cancelled() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let options = ParseOptions::new().progress_callback(&mut progress);
+    let mut read = |offset: usize, _| &text[offset.min(text.len())..];
+    let tree = parser.parse_with_options(&mut read, None, Some(options))?;
+    if cancelled() {
+        return None;
+    }
+    // Compilation belongs to the background parse, not the first frame.
+    language.highlight_query();
+    Some(tree)
+}
+
+fn paint(
+    tree: &Tree,
+    language: &Language,
+    text: &[u8],
+    range: Range<usize>,
+    painted: &mut [Option<Highlight>],
+) {
+    let Some(query) = language.highlight_query() else {
+        return;
+    };
+    let mut captures = Vec::new();
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(range.clone());
+    let mut matches = cursor.captures(&query.query, tree.root_node(), text);
+    while let Some((found, index)) = matches.next() {
+        let capture = found.captures()[*index];
+        let kind = query.kinds[capture.index as usize];
+        if kind != CaptureKind::Ignore {
+            captures.push((capture.node.byte_range(), found.pattern_index, kind));
+        }
+    }
+    // Outer nodes paint first so inner ones override them; for the same
+    // node the earliest pattern paints last.
+    captures.sort_by(|(a, a_pattern, _), (b, b_pattern, _)| {
+        a.start
+            .cmp(&b.start)
+            .then(b.end.cmp(&a.end))
+            .then(b_pattern.cmp(a_pattern))
+    });
+
+    for (node, _, kind) in captures {
+        let start = node.start.clamp(range.start, range.end) - range.start;
+        let end = node.end.clamp(range.start, range.end) - range.start;
+        let highlight = match kind {
+            CaptureKind::Highlight(highlight) => Some(highlight),
+            _ => None,
+        };
+        painted[start..end].fill(highlight);
     }
 }
 
@@ -267,6 +314,10 @@ mod tests {
             ("code.rs", "// café\nfn f() {\n    let s = \"hello\";\n}\n"),
             ("code.py", "def f():\n    # café\n    return 'hello'\n"),
             ("code.js", "function f() {\n    return 'hello';\n}\n"),
+            (
+                "code.html",
+                "<p>Café</p><script>function f() { return 'hello'; }</script>\n",
+            ),
         ] {
             let text = unit.repeat(4000);
             let language = detect(Path::new(file), b"").unwrap();

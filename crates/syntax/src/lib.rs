@@ -2,6 +2,7 @@
 
 mod folds;
 mod highlight;
+mod injections;
 mod languages;
 mod lexical;
 mod symbols;

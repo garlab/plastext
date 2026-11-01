@@ -63,6 +63,11 @@ by default, including for uppercase queries. Results are grouped alphabetically
 by folder and filename, with matches in line order. Search stops at 10,000
 matching lines; the files included at that limit can vary with parallel scan order.
 
+HTML source highlights JavaScript inside `<script>` and CSS inside `<style>`.
+Module scripts and JSON script data are recognized by their `type` attribute.
+Embedded parsing runs in the background under the existing syntax file-size
+limit; highlighting visits only the requested viewport.
+
 Right-click a tab for **Close Others**, **Close Right**, or **Close Left**. These actions apply only to that pane and keep the clicked tab open.
 
 Single-click a file in the navigation pane to open a temporary preview tab,
