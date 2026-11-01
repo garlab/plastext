@@ -121,6 +121,16 @@ impl Cache {
             });
         }
     }
+    fn retry(owner: EntityId, block: usize, cx: &mut App) {
+        if cx.has_global::<Self>() {
+            cx.update_global::<Self, _>(|cache, cx| {
+                cache.remove_where(
+                    |k, entry| k.0 == owner && k.1 == block && entry.result.is_err(),
+                    cx,
+                );
+            });
+        }
+    }
     fn begin_frame(owner: EntityId, cx: &mut App) {
         if cx.has_global::<Self>() {
             cx.update_global::<Self, _>(|cache, _| {
@@ -358,7 +368,12 @@ impl MarkdownView {
                                                 {
                                                     cancel.store(true, Ordering::Relaxed);
                                                 }
-                                                Cache::remove(cx.entity_id(), Some(ix), cx);
+                                                // Keep a successful raster for the return to
+                                                // Preview. A short loading placeholder can
+                                                // clamp the scroll position near the document
+                                                // end before the tall diagram renders again.
+                                                // Source leaves it unpinned and evictable.
+                                                Cache::retry(cx.entity_id(), ix, cx);
                                                 this.remeasure_diagram(ix, cx);
                                                 this.focus.focus(window);
                                             })),

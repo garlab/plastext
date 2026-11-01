@@ -1,6 +1,6 @@
 # Mermaid diagrams
 
-Markdown fences tagged `mermaid` show diagrams automatically. Each fence has a **Source / Preview** toggle and **Copy** copies its original code. Find reveals matching source so labels and syntax remain searchable. Diagrams fit the reading column and follow document zoom; resizing a pane reuses the existing image.
+Markdown fences tagged `mermaid` show diagrams automatically. Each fence has a **Source / Preview** toggle and **Copy** copies its original code. Find reveals matching source so labels and syntax remain searchable. Diagrams fit the reading column and follow document zoom; resizing a pane reuses the existing image. Source / Preview also reuses a cached image, avoiding a loading placeholder and scroll jump when returning to a rendered diagram.
 
 Try the [demo](fixtures/mermaid.md):
 
@@ -25,7 +25,7 @@ This is partial Mermaid compatibility. Labels support Latin (including accents),
 
 The Markdown parser keeps diagram fences whole up to 16 KiB / 256 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.
 
-Only viewport and list-overdraw blocks request diagrams, with at most two requests per view. One lazy worker serializes rendering across all windows, through an eight-request queue. Scrolling away cancels pending work; hiding or closing a tab, or switching to source, also releases its diagram images. The worker exits after five idle seconds and recycles after 32 requests. Documents without diagrams never start it.
+Only viewport and list-overdraw blocks request diagrams, with at most two requests per view. One lazy worker serializes rendering across all windows, through an eight-request queue. Scrolling away cancels pending work; hiding or closing a tab, or switching the whole document to source, also releases its diagram images. A diagram's own Source toggle cancels pending work but keeps a successful image in the bounded cache, available for eviction while source is shown. The worker exits after five idle seconds and recycles after 32 requests. Documents without diagrams never start it.
 
 Each request has a two-second rendering deadline. On macOS, the parent samples worker resident memory and stops it above 256 MiB. The worker's sandbox denies file-data reads, writes, networking and child processes; fonts are embedded. Unix workers also have an eight-second cumulative CPU backstop and disabled core dumps. No document path or inherited environment is sent to the worker. A failed, cancelled or timed-out worker is killed and reaped before replacement. The Rust rendering path is portable; the macOS sandbox and resident-memory guard require platform equivalents before offering the same guarantees elsewhere.
 
