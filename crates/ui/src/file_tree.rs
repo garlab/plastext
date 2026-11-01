@@ -1,8 +1,9 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use gpui::{
-    ClickEvent, Context, Entity, EventEmitter, PathBuilder, SharedString, Subscription, Task,
-    UniformListScrollHandle, Window, canvas, div, img, point, prelude::*, px, uniform_list,
+    ClickEvent, Context, Entity, EventEmitter, MouseButton, MouseDownEvent, PathBuilder, Pixels,
+    Point, SharedString, Subscription, Task, UniformListScrollHandle, Window, canvas, div, img,
+    point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
 use plastext_project::{EntryKind, FileTree, TreeOptions, read_dir};
@@ -14,7 +15,14 @@ const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
 
 pub enum FileTreeEvent {
-    Open { path: PathBuf, preview: bool },
+    Open {
+        path: PathBuf,
+        preview: bool,
+    },
+    ContextMenu {
+        path: PathBuf,
+        position: Point<Pixels>,
+    },
 }
 
 /// The sidebar's file tree (spec PRJ-2): directories are read in the
@@ -130,6 +138,7 @@ impl Render for FileTreeView {
                         let entry = &row.entry;
                         let selected = this.selected.as_ref() == Some(&entry.path);
                         let name: SharedString = entry.name.clone().into();
+                        let menu_path = entry.path.clone();
                         let icon = icon_theme
                             .as_ref()
                             .and_then(|theme| {
@@ -203,7 +212,18 @@ impl Render for FileTreeView {
                                 )
                                 .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                                     this.click(index, event.click_count(), cx)
-                                })),
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |_, event: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        window.prevent_default();
+                                        cx.emit(FileTreeEvent::ContextMenu {
+                                            path: menu_path.clone(),
+                                            position: event.position,
+                                        });
+                                    }),
+                                ),
                         )
                     })
                     .collect()

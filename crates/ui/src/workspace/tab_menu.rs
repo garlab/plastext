@@ -54,6 +54,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_file_menu(window, cx);
         self.dismiss_tab_menu(window, cx);
         let Some(tab) = self.panes.get(&pane).and_then(|pane| pane.tabs.get(index)) else {
             return;

@@ -36,6 +36,8 @@ use crate::{
 
 mod tab_menu;
 use tab_menu::TabMenu;
+mod file_menu;
+use file_menu::FileMenu;
 mod opening;
 use opening::{Destination, OpenKind, Openings, Placement};
 
@@ -125,6 +127,7 @@ pub struct Workspace {
     quick_open: Option<(Entity<QuickOpen>, Subscription)>,
     picker: Option<(Entity<Picker>, Subscription)>,
     tab_menu: Option<TabMenu>,
+    file_menu: Option<FileMenu>,
     outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
@@ -280,6 +283,9 @@ impl Workspace {
                             cx,
                         );
                     }
+                    FileTreeEvent::ContextMenu { path, position } => {
+                        this.open_file_menu(path.clone(), *position, window, cx);
+                    }
                 }),
             );
             tree
@@ -301,6 +307,7 @@ impl Workspace {
             quick_open: None,
             picker: None,
             tab_menu: None,
+            file_menu: None,
             outline: Outline::default(),
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
@@ -651,6 +658,7 @@ impl Workspace {
 
     fn activate(&mut self, pane: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.tab_menu = None;
+        self.file_menu = None;
         let Some(tab) = self.panes.get_mut(&pane).and_then(|pane_state| {
             pane_state.active = Some(index);
             pane_state.tabs.get(index)
@@ -1781,6 +1789,7 @@ impl Render for Workspace {
                     .child(quick_open.clone())
             }))
             .children(self.render_tab_menu(theme, cx))
+            .children(self.render_file_menu(theme, cx))
     }
 }
 
