@@ -68,9 +68,9 @@ restricted SVG renderer. They are not in the Mermaid worker's OS sandbox and
 have no hard wall-clock deadline. No document text becomes executable code,
 external resources or SVG markup.
 
-## Development dependency
+## Shared dependency
 
-Chess is included in the unreleased `document-graphics` 0.1.5 used by this branch,
-alongside the shared image decoder. Follow the
-[local development setup](local-development.md#shared-rendering-libraries) until
-publication, then switch the dependency lockfile to its registry release.
+Chess uses the optional `chess` feature of published `document-graphics` 0.1.5,
+alongside the shared image decoder. See the
+[local development setup](local-development.md#shared-rendering-libraries) to
+work on the shared library alongside Plastext.

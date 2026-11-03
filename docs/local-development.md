@@ -61,9 +61,9 @@ crate, maintained in [its own repository](https://github.com/garlab/document-gra
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
 
-The current integration pins unreleased `document-graphics` 0.1.5 with `sgf`,
-`chess` and `image-native`. Use its sibling checkout until publication. The
-Mermaid backend and math dependencies still resolve from crates.io.
+Plastext pins published `document-graphics` 0.1.5 with `sgf`, `chess` and
+`image-native`. The Mermaid backend and math dependencies also resolve from
+crates.io. Normal builds need no local dependency overrides.
 
 To work on document-graphics alongside Plastext, place its checkout beside
 Plastext and add the following to an untracked `.cargo/config.toml` in the
@@ -77,10 +77,10 @@ document-graphics = { path = "../document-graphics" }
 
 Adapt the relative path if the checkouts are elsewhere. Keep this checkout
 outside `target/` so `cargo clean` cannot remove the dependency. Run Cargo from
-the Plastext root so it reads the local override. This development lockfile
-temporarily resolves the local 0.1.5 checkout. After publication, remove the
-override, run `cargo update -p document-graphics --precise 0.1.5`, and commit the
-registry source/checksum. See
+the Plastext root so it reads the local override. Before validating a published
+release, remove the override and run `cargo check -p plastext-app` to restore the
+registry source and checksum in `Cargo.lock` using the version pinned in
+`Cargo.toml`. See
 [shared rendering release checks](shared-rendering-release.md) for review and
 validation commands.
 

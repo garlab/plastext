@@ -6,9 +6,8 @@ Fixes to third-party code go upstream, not into plastext. plastext keeps no modi
 
 `katex-native` 0.1.0 is consumed from crates.io. `document-graphics` owns shared
 Mermaid/SVG/SGF/chess rendering, bounded image decoding and worker supervision;
-its source lives in the standalone document-graphics repository. The current
-integration uses local 0.1.5 pending publication; see
-[local development](local-development.md#shared-rendering-libraries).
+its source lives in the standalone document-graphics repository. Version 0.1.5
+is consumed from crates.io.
 Plastext uses versioned dependencies and keeps GUI scheduling, cache budgets and
 presentation locally. Development overrides belong in untracked Cargo
 configuration ([local override](local-development.md#shared-rendering-libraries)).

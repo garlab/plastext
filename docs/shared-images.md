@@ -1,8 +1,8 @@
 # Shared image extraction
 
-Bounded image decoding now lives in `document-graphics` 0.1.5, prepared locally
-pending publication. Plastext enables `sgf`, `chess` and `image-native`; mdviewer
-enables only `images`. Applications retain file-access policy, queues, caches,
+Bounded image decoding lives in published `document-graphics` 0.1.5. Plastext
+enables `sgf`, `chess` and `image-native`; mdviewer enables only `images`.
+Applications retain file-access policy, queues, caches,
 fitting, playback and idle retirement. No new crate or service was introduced.
 
 Portable PNG/JPEG thumbnails share one byte-decoding API. The isolated image
@@ -79,9 +79,9 @@ requests now stop and reap the child before returning to a public caller. The
 portable API also enforces tiny output budgets for extremely narrow images.
 Native GUI zoom/playback interactions still need manual review.
 
-Both consumers temporarily pin 0.1.5 through ignored local overrides. After
-manual publication, remove those overrides and update both Cargo.lock files to
-the registry source/checksum. No Mermaid backend or math release is needed.
+Both consumers pin published 0.1.5, with registry sources and checksums in their
+lockfiles. Normal builds need no local overrides. The Mermaid backend and math
+dependency versions are unchanged.
 
 ## Private worker cleanup
 
@@ -90,7 +90,7 @@ memory-poll scheduling and direct-child termination/reaping. Their protocols,
 I/O loops, timeout values, error kinds and sandbox policies remain separate.
 Image requests still require a successful memory sample; Mermaid keeps its
 best-effort sampling policy. No public API, dependency or feature change is
-needed; this is included in the same unreleased 0.1.5.
+needed; this is included in 0.1.5.
 
 The follow-up comparison against library commit `0fa9ed2` used the same machine,
 release profiles and eight image/six terminal cases above, with one warm-up and

@@ -6,9 +6,10 @@ A fast, native, read-first viewer and light editor for code, Markdown and assets
 
 ## Building
 
-Chess and shared image decoding currently use the local `document-graphics`
-0.1.5 checkout pending publication; follow the
-[development setup](docs/local-development.md#shared-rendering-libraries).
+Shared rendering and image decoding use published `document-graphics` 0.1.5.
+Normal builds need no sibling checkout; see
+[local development](docs/local-development.md#shared-rendering-libraries) to work
+on the shared library alongside Plastext.
 
 You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The Xcode Command Line Tools are enough; full Xcode isn't required.
 

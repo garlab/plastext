@@ -1895,6 +1895,8 @@ dependencies = [
 [[package]]
 name = "document-graphics"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2facbd91937e414860865cb6d8cd06733194b922e49a48a31127e37b5344b522"
 dependencies = [
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",

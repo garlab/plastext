@@ -1,10 +1,10 @@
 # Shared rendering release checks
 
 `document-graphics` is maintained in its own repository and published on
-crates.io from version tags. Plastext normally pins a registry release; the
-current 0.1.5 integration is prepared locally pending publication. Review with the
-[local override](local-development.md#shared-rendering-libraries). `katex-native`
-also comes from the registry.
+crates.io from version tags. Plastext pins published 0.1.5; `katex-native` also
+comes from the registry. Use a
+[local override](local-development.md#shared-rendering-libraries) only when
+reviewing changes before a library release.
 
 ## Review and automated checks
 
@@ -22,7 +22,7 @@ cargo clippy --all-targets --all-features --locked --no-deps -- -D warnings
 cargo test --all-features --locked
 cargo +1.90.0 check --all-targets --all-features --locked
 cargo package --list --locked
-cargo package --locked
+cargo package --all-features --locked
 ```
 
 Install Rust 1.90.0 with rustup if needed for the minimum-version check. Run worker
@@ -86,11 +86,14 @@ overrides from Plastext's `paths` or `[patch.crates-io]` configuration if presen
 set the new version pin in the root `Cargo.toml`, then from the **Plastext root**:
 
 ```sh
-cargo update -p document-graphics --precise X.Y.Z
-cargo check --locked -p plastext-app
+cargo check -p plastext-app
 cargo test --locked -p plastext-platform --test mermaid_preview
+cargo test --locked -p plastext-platform --test image_preview
 cargo test --locked -p plastext-ui markdown_view::mermaid
 ```
+
+The first check allows Cargo to replace the removed path override in `Cargo.lock`
+with the pinned registry release. Subsequent checks use `--locked`.
 
 Review and commit the `Cargo.lock` registry source and checksum. Do the same in
 mdviewer and rerun its integration tests. Both apps pin the library's version
