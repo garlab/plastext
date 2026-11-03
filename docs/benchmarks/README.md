@@ -4,6 +4,9 @@ Only compact `*.summary.json` reports belong here. They retain fixture labels,
 sample counts, aggregate timings, budgets and completion/pass/fail status.
 Raw samples, logs and absolute local paths are excluded.
 
+The [large-workload validation guide](../m2-validation.md) describes the Markdown,
+CSV, PDF and TeX fixtures, native scrolling checks and reference-hardware procedure.
+
 `plastext-bench` stores full JSON and native stderr in a unique directory under
 `target/benchmarks/` and prints that directory. `--output` writes a summary only:
 

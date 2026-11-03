@@ -1,0 +1,112 @@
+{
+  "schema": 2,
+  "source": "plastext-search-kernel-20261103",
+  "files": 86280,
+  "runs": 5,
+  "million_synthetic_paths": true,
+  "scope": "core only; native rendering via read/launch; hardware is not normalized",
+  "passed": false,
+  "metrics": [
+    {
+      "name": "Quick Open first snapshot from walk start",
+      "unit": "ms",
+      "p50": 3.684334,
+      "p99": 4.299583,
+      "max": 4.299583,
+      "sample_count": 5,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "complete file walk and matching",
+      "unit": "ms",
+      "p50": 92.479625,
+      "p99": 172.18670799999998,
+      "max": 172.18670799999998,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "Quick Open per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000125,
+      "p99": 0.8739169999999999,
+      "max": 1.5122090000000001,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open completed ranking per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000166,
+      "p99": 2.620958,
+      "max": 3.11025,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open 1M synthetic paths per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000125,
+      "p99": 2.218833,
+      "max": 7.7315830000000005,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": true
+    },
+    {
+      "name": "Quick Open 1M completed ranking per keystroke (core)",
+      "unit": "ms",
+      "p50": 0.000167,
+      "p99": 26.344334,
+      "max": 34.567292,
+      "sample_count": 280,
+      "budget": 16.0,
+      "pass": false
+    },
+    {
+      "name": "project search first result (warm)",
+      "unit": "ms",
+      "p50": 1.034041,
+      "p99": 1.06975,
+      "max": 1.06975,
+      "sample_count": 5,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c bytes ready (excludes paint)",
+      "unit": "ms",
+      "p50": 0.079666,
+      "p99": 0.5932080000000001,
+      "max": 0.5932080000000001,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c open + tree + viewport highlights",
+      "unit": "ms",
+      "p50": 21.312959,
+      "p99": 25.845625000000002,
+      "max": 25.845625000000002,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "kernel/sched/core.c syntax folds (background)",
+      "unit": "ms",
+      "p50": 4.8612079999999995,
+      "p99": 5.363291,
+      "max": 5.363291,
+      "sample_count": 5,
+      "budget": null,
+      "pass": true
+    }
+  ],
+  "artifact": "summary"
+}

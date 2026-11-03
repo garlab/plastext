@@ -200,9 +200,10 @@ cargo run --release -p plastext-platform --example pdf_probe -- /path/to/documen
 Still pending: continuous multipage scrolling, text selection/search, outline
 and links, password entry, automatic external-change reload, configurable
 resource limits, Linux/Windows rendering and validation on the oldest supported
-macOS. Native UI interaction and the large/complex PDF performance matrix remain
-acceptance work. A 10,000-page correctness test is not scrolling or memory
-certification. The accepted M1/M2 performance baseline is unchanged.
+macOS. The [large-workload matrix](m2-validation.md#pdf-and-tex) measures repeated
+page/tile requests and helper memory on generated many-page, dense-vector,
+oversized-page and image-heavy PDFs. Native UI interaction remains acceptance
+work; headless worker measurements do not certify scrolling or GPU memory. The accepted M1/M2 performance baseline is unchanged.
 
 ## Local TeX increment
 
@@ -320,3 +321,9 @@ crashes. Source is currently read-only;
 external editor saves drive automatic rebuilding. Sandbox validation on the
 oldest supported macOS, visual UI acceptance and large-project resource/frame
 certification remain outstanding. The accepted performance baseline is unchanged.
+
+The [local workload checks](m2-validation.md#pdf-and-tex) add a 200-page,
+100-input-file project, repeated builds, helper-memory sampling and a 100-page
+watched project with save bursts, cancellation and error recovery. They cover
+the compiler/scheduler and PDF worker; native interaction and reference-hardware
+certification remain separate checks.

@@ -1,0 +1,55 @@
+{
+  "schema": 2,
+  "file": "large.md",
+  "bytes": 100000000,
+  "scope": "core source index, bounded parsed cache and rendered search; excludes native layout, equation counting and reference-machine certification",
+  "initial_64k_blocks": 3360,
+  "initial_read_and_parse_ms": 5.806917,
+  "full_index_ms": 2074.802833,
+  "blocks": 330110,
+  "pages": 1562,
+  "headings": 45391,
+  "index_bytes": 15657872,
+  "max_block_text_bytes": 1359,
+  "max_parsed_page_bytes": 1395676,
+  "parsed_cache_budget_bytes": 33554432,
+  "warning_count": 0,
+  "memory_mib": {
+    "before": 9.421875,
+    "index_retained": 35.265625,
+    "peak_after_index": 36.125,
+    "after_search": 115.03125,
+    "peak": 115.03125
+  },
+  "traversals": [
+    {
+      "direction": "forward",
+      "elapsed_ms": 1019.682,
+      "rss_mib": 114.453125,
+      "cache_bytes": 33516299,
+      "cached_pages": 73
+    },
+    {
+      "direction": "backward",
+      "elapsed_ms": 1020.3260839999999,
+      "rss_mib": 114.671875,
+      "cache_bytes": 33376283,
+      "cached_pages": 29
+    }
+  ],
+  "page_parse_ms": {
+    "p50": 0.617667,
+    "p99": 1.034417,
+    "max": 1.252833,
+    "sample_count": 3124
+  },
+  "rendered_find": {
+    "elapsed_ms": 1030.083375,
+    "matches": 0,
+    "cache_bytes_before": 33376283,
+    "cache_bytes_after": 33376283
+  },
+  "complete": true,
+  "passed": true,
+  "artifact": "summary"
+}

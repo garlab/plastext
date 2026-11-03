@@ -9,11 +9,12 @@ pub struct NativeLog {
     content: bool,
     full: bool,
     indexed: bool,
+    table: bool,
     cache: std::collections::HashMap<&'static str, usize>,
 }
 
 impl NativeLog {
-    pub fn parse(stderr: &str, markdown: bool) -> Self {
+    pub fn parse(stderr: &str, preview: bool) -> Self {
         let mut result = Self {
             frames: Vec::new(),
             intervals: Vec::new(),
@@ -21,14 +22,16 @@ impl NativeLog {
             finished: false,
             first: false,
             content: false,
-            full: !markdown,
+            full: !preview,
             indexed: false,
+            table: false,
             cache: std::collections::HashMap::new(),
         };
         let mut scrolling = false;
         for line in stderr.lines() {
             match line {
                 "reading: indexed preview" => result.indexed = true,
+                "reading: csv preview" => result.table = true,
                 "reading: scrolling" => scrolling = true,
                 "reading: done" => {
                     result.finished = true;
@@ -44,6 +47,9 @@ impl NativeLog {
                 ("reading: required targets ", "required_targets"),
                 ("reading: page loads ", "page_loads"),
                 ("reading: page reloads ", "page_reloads"),
+                ("reading: cached pages ", "cached_pages"),
+                ("reading: cached rows ", "cached_rows"),
+                ("reading: scrolled frames ", "scrolled_frames"),
             ] {
                 if let Some(value) = line.strip_prefix(prefix).and_then(|s| s.parse().ok()) {
                     result.cache.insert(key, value);
@@ -60,12 +66,12 @@ impl NativeLog {
                     result.paints.push((prefix.trim(), value, budget));
                     result.first |= prefix == "reading: first paint ";
                     result.content |= prefix
-                        == if markdown {
+                        == if preview {
                             "reading: preview paint "
                         } else {
                             "reading: syntax paint "
                         };
-                    result.full |= markdown && prefix == "reading: full preview paint ";
+                    result.full |= preview && prefix == "reading: full preview paint ";
                 }
             }
             if scrolling
@@ -92,6 +98,14 @@ impl NativeLog {
             && self.content
             && self.full
             && self.frames.len() >= frames.max(1)
+            && (!self.table
+                || (self.cache.get("visited_targets").is_some_and(|&n| n > 0)
+                    && self.cache.get("visited_targets") == self.cache.get("required_targets")
+                    && self.cache.get("cached_pages").is_some_and(|&n| n <= 9)
+                    && self.cache.get("cached_rows").is_some_and(|&n| n <= 9 * 64)
+                    && self.cache.get("scrolled_frames").is_some_and(|&n| {
+                        n >= frames.max(1).div_ceil(2) && n <= self.frames.len()
+                    })))
             && (!self.indexed
                 || (self.cache.get("visited_targets").is_some_and(|&n| n > 0)
                     && self.cache.get("visited_targets") == self.cache.get("required_targets")
@@ -102,7 +116,7 @@ impl NativeLog {
     }
 
     pub fn cache_summary(&self) -> serde_json::Value {
-        if self.indexed {
+        if self.indexed || self.table {
             serde_json::json!(self.cache)
         } else {
             serde_json::Value::Null
@@ -173,5 +187,25 @@ mod tests {
             !NativeLog::parse(&log.replace("reading: parsed cache bytes 1024\n", ""), true)
                 .complete(true, false, 2)
         );
+    }
+
+    #[test]
+    fn csv_requires_real_targets_and_bounded_row_cache() {
+        let log = format!(
+            "{LOG}reading: csv preview\nreading: cached pages 9\nreading: cached rows 576\nreading: visited targets 3\nreading: required targets 3\nreading: scrolled frames 1\n"
+        );
+        assert!(NativeLog::parse(&log, true).complete(true, false, 2));
+        for invalid in [
+            log.replace("cached pages 9", "cached pages 10"),
+            log.replace("cached rows 576", "cached rows 577"),
+            log.replace("visited targets 3", "visited targets 2"),
+            log.replace("scrolled frames 1", "scrolled frames 0"),
+            log.replace("scrolled frames 1", "scrolled frames 3"),
+            log.replace("reading: scrolled frames 1\n", ""),
+            log.replace("reading: cached pages 9\n", ""),
+            log.replace("reading: full preview paint 2500 ms\n", ""),
+        ] {
+            assert!(!NativeLog::parse(&invalid, true).complete(true, false, 2));
+        }
     }
 }

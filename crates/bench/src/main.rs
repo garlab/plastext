@@ -15,7 +15,9 @@ use plastext_settings::ByteSize;
 
 mod m1;
 mod m2;
+mod memory;
 mod native_log;
+mod preview;
 mod report;
 
 #[derive(Parser)]
@@ -30,6 +32,22 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Exercise isolated PDF snapshots, page lookup and bounded raster tiles.
+    Pdf {
+        file: PathBuf,
+        #[arg(long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=100))]
+        rounds: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Compile a local TeX project offline; input files are never modified.
+    Tex {
+        file: PathBuf,
+        #[arg(long, default_value_t = 3, value_parser = clap::value_parser!(u32).range(1..=100))]
+        runs: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Measure bounded Markdown parsing; does not measure native painting.
     M2 {
         file: PathBuf,
@@ -38,7 +56,12 @@ enum Commands {
         output: Option<PathBuf>,
     },
     /// Measure sparse CSV/TSV indexing and fetching the final visible page.
-    Csv { file: PathBuf },
+    Csv {
+        file: PathBuf,
+        /// Save a shareable summary; raw diagnostics stay in target/benchmarks.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Check M1's core budgets on a Linux source tree. Reports failures with a
     /// nonzero exit code; use `read` and `launch` for native rendering timings.
     M1 {
@@ -97,9 +120,23 @@ enum Commands {
 }
 
 fn main() -> ExitCode {
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--pdf-worker")) {
+        return match plastext_platform::pdf::worker_main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
     let result = match Args::parse().command {
+        Commands::Pdf {
+            file,
+            rounds,
+            output,
+        } => preview::pdf(file.as_path(), rounds, output.as_deref()),
+        Commands::Tex { file, runs, output } => {
+            preview::tex(file.as_path(), runs, output.as_deref())
+        }
         Commands::M2 { file, output } => m2::run(&file, output.as_deref()),
-        Commands::Csv { file } => m2::csv(&file),
+        Commands::Csv { file, output } => m2::csv(&file, output.as_deref()),
         Commands::M1 {
             dir,
             runs,

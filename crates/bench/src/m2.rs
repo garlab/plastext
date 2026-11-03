@@ -133,7 +133,7 @@ fn peak_rss_mib() -> Option<f64> {
     None
 }
 
-pub fn csv(file: &Path) -> io::Result<()> {
+pub fn csv(file: &Path, output: Option<&Path>) -> io::Result<()> {
     let start = Instant::now();
     let source = Arc::new(FileSource::open(file, OpenOptions::default())?);
     let delimiter = if file.extension().is_some_and(|s| s == "tsv") {
@@ -160,18 +160,23 @@ pub fn csv(file: &Path) -> io::Result<()> {
     let page = Instant::now();
     let rows = index.page(&source, delimiter, count.saturating_sub(60), 60)?;
     let page_ms = page.elapsed().as_secs_f64() * 1000.;
+    let passed =
+        index.error().is_none() && !rows.is_empty() && rows.iter().all(|row| row.cells.is_ok());
     let result = json!({
         "schema": 1, "file": file, "bytes": source.len(), "rows": count,
         "index_ms": indexed, "final_page_ms": page_ms, "page_rows": rows.len(),
         "scope": "core indexing and page decode only; excludes native layout/paint",
+        "complete": true, "passed": passed,
     });
-    let summary = crate::report::LocalRun::new("csv")?.save(&result, None)?;
+    let summary = crate::report::LocalRun::new("csv")?.save(&result, output)?;
     println!("{}", serde_json::to_string_pretty(&summary)?);
     if let Some(error) = index.error() {
         return Err(io::Error::other(error));
     }
-    if rows.iter().any(|row| row.cells.is_err()) {
-        return Err(io::Error::other("CSV page decode failed"));
+    if !passed {
+        return Err(io::Error::other(
+            "CSV page decode failed or produced no rows",
+        ));
     }
     Ok(())
 }

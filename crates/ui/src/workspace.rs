@@ -502,11 +502,17 @@ impl Workspace {
                                     s.eq_ignore_ascii_case("csv") || s.eq_ignore_ascii_case("tsv")
                                 }) =>
                             {
-                                TabView::Csv(
-                                    cx.new(|cx| {
-                                        CsvView::new(path.clone(), source, index, style, cx)
-                                    }),
-                                )
+                                TabView::Csv(cx.new(|cx| {
+                                    let mut view =
+                                        CsvView::new(path.clone(), source, index, style, cx);
+                                    if let Some(frames) = std::env::var("PLASTEXT_PROFILE_READING")
+                                        .ok()
+                                        .and_then(|v| v.parse::<usize>().ok())
+                                    {
+                                        view.profile_reading(opening_started, frames);
+                                    }
+                                    view
+                                }))
                             }
                             Opened::Image(source, lines) => {
                                 TabView::Image(cx.new(|cx| {

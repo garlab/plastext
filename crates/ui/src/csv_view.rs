@@ -18,6 +18,7 @@ use std::{
 mod columns;
 mod copy;
 mod interaction;
+mod profile;
 mod selection;
 use columns::{ColumnDrag, Columns, FONT_SIZE, sample_widths};
 pub(crate) use interaction::init;
@@ -56,6 +57,7 @@ pub struct CsvView {
     notice: Option<SharedString>,
     cancel: Arc<AtomicBool>,
     _indexing: Task<()>,
+    profile: Option<profile::ReadingProfile>,
 }
 impl CsvView {
     pub fn new(
@@ -127,6 +129,7 @@ impl CsvView {
             notice: None,
             cancel,
             _indexing: indexing,
+            profile: None,
         }
     }
     fn request(&mut self, page: u64, window: &Window, cx: &mut Context<Self>) {
@@ -174,6 +177,9 @@ impl CsvView {
                             .unwrap_or(0);
                         this.columns.ensure_count(count);
                         this.pages.insert(page, rows);
+                        if let Some(profile) = &mut this.profile {
+                            profile.loaded_page(page);
+                        }
                         this.order.retain(|&p| p != page);
                         this.order.push_back(page);
                         while this.order.len() > 8 {
@@ -503,7 +509,11 @@ impl Render for CsvView {
                                 cx.processor(
                                     move |this, range: std::ops::Range<usize>, window, cx| {
                                         this.first_row = range.start as u64;
-                                        range
+                                        if let Some(profile) = &mut this.profile {
+                                            profile.rendered_rows(range.clone(), &this.pages);
+                                        }
+                                        let rows = range
+                                            .clone()
                                             .map(|i| {
                                                 this.row(
                                                     i as u64 + 1,
@@ -514,7 +524,27 @@ impl Render for CsvView {
                                                     cx,
                                                 )
                                             })
-                                            .collect()
+                                            .collect::<Vec<_>>();
+                                        // Visible reads have priority; keep one page on
+                                        // either side warm within the same cache/job caps.
+                                        // The one-row sizing probe is not a viewport.
+                                        if range.len() > 1 {
+                                            let first = (range.start as u64 + 1) / PAGE;
+                                            let last = range.end as u64 / PAGE;
+                                            let progress = this.index.progress();
+                                            let pages = if progress.complete {
+                                                progress.rows.div_ceil(PAGE)
+                                            } else {
+                                                progress.rows / PAGE
+                                            };
+                                            if last + 1 < pages {
+                                                this.request(last + 1, window, cx);
+                                            }
+                                            if let Some(previous) = first.checked_sub(1) {
+                                                this.request(previous, window, cx);
+                                            }
+                                        }
+                                        rows
                                     },
                                 ),
                             )
@@ -536,6 +566,20 @@ impl Render for CsvView {
             .size_full()
             .flex()
             .flex_col()
+            .when(self.profile.is_some(), |view| {
+                let weak = cx.entity().downgrade();
+                view.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |_, _, window, cx| {
+                            weak.update(cx, |this, cx| this.profile_painted(window, cx))
+                                .ok();
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .text_sm()
             .text_color(theme.text)
             .child(

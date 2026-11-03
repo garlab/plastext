@@ -348,6 +348,9 @@ pub fn read(
     let mut progress = (0, Instant::now());
     let mut last_probe = Instant::now();
     let markdown = plastext_markdown::is_markdown(file);
+    let csv = file
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("csv") || ext.eq_ignore_ascii_case("tsv"));
     let mut last_memory = Instant::now();
     let mut resident = Vec::new();
     let status = loop {
@@ -361,7 +364,7 @@ pub fn read(
             }
             last_probe = Instant::now();
         }
-        if markdown && last_memory.elapsed() >= Duration::from_millis(500) {
+        if last_memory.elapsed() >= Duration::from_millis(500) {
             if let Ok(mib) = crate::m2::rss_of(child.id()) {
                 resident.push(mib);
             }
@@ -379,8 +382,9 @@ pub fn read(
         awake.wait().ok();
     }
     let stderr = fs::read_to_string(&log)?;
-    let parsed = crate::native_log::NativeLog::parse(&stderr, markdown);
-    let complete = parsed.complete(status.success(), timed_out, frames);
+    let parsed = crate::native_log::NativeLog::parse(&stderr, markdown || csv);
+    let complete = parsed.complete(status.success(), timed_out, frames)
+        && (!csv || parsed.cache_summary().get("cached_rows").is_some());
     let mut report = Vec::new();
     let mut passed = true;
     for &(name, value, budget) in &parsed.paints {
@@ -406,13 +410,14 @@ pub fn read(
     }
     passed &= complete;
     let result = json!({
-        "schema": 1, "file": file, "view": if markdown { "markdown" } else { "code" },
+        "schema": 1, "file": file, "view": if markdown { "markdown" } else if csv { "csv" } else { "code" },
         "requested_frames": frames.max(1), "observed_frames": times.len(), "foreground": foreground,
         "complete": complete, "timed_out": timed_out, "stalled": stalled,
         "keep_visible": keep_visible, "passed": passed, "log": log,
         "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
         "metrics": report,
-        "markdown_cache": cache_summary,
+        "markdown_cache": if markdown { cache_summary.clone() } else { Value::Null },
+        "csv_cache": if csv { cache_summary } else { Value::Null },
         "sampled_rss_mib": {"interval_ms":500, "max":resident.iter().copied().reduce(f64::max),
             "last":resident.last(), "samples":resident},
     });

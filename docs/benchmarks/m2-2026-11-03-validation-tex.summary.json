@@ -1,0 +1,41 @@
+{
+  "file": "main.tex",
+  "pages": 200,
+  "runs": 3,
+  "build_ms": {
+    "p50": 845.74975,
+    "p99": 850.019958,
+    "max": 850.019958,
+    "sample_count": 3
+  },
+  "cancellation_ms": 45.836957999999996,
+  "live_updates": {
+    "initial_pages": 100,
+    "latest_pages": 101,
+    "burst_saves": 21,
+    "save_to_pdf_ms": 879.371542,
+    "obsolete_build_cancelled": true,
+    "last_pdf_retained": true,
+    "recovered_after_error": true
+  },
+  "memory": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 12.9375,
+      "last": 12.921875,
+      "sample_count": 61
+    },
+    "helpers_mib": {
+      "max": 52.40625,
+      "last": 13.265625,
+      "sample_count": 61
+    }
+  },
+  "complete": true,
+  "passed": true,
+  "warning_count": 0,
+  "scope": "offline private snapshots, repeated TeX builds, last-page PDF render, disposable stuck-build cancellation; no native UI; sampled helper RSS can miss short peaks; build latency is informational",
+  "schema": 2,
+  "artifact": "summary"
+}

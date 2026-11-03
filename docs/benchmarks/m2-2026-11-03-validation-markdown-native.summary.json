@@ -1,0 +1,82 @@
+{
+  "schema": 2,
+  "file": "large.md",
+  "view": "markdown",
+  "requested_frames": 10000,
+  "observed_frames": 10023,
+  "foreground": true,
+  "complete": true,
+  "timed_out": false,
+  "stalled": false,
+  "keep_visible": true,
+  "passed": false,
+  "scope": "native GPUI draw/submit wall time, not GPU completion; hardware is not normalized",
+  "metrics": [
+    {
+      "name": "reading: first paint",
+      "unit": "ms",
+      "p50": 16.787,
+      "p99": 16.787,
+      "max": 16.787,
+      "sample_count": 1,
+      "budget": 50.0,
+      "pass": true
+    },
+    {
+      "name": "reading: preview paint",
+      "unit": "ms",
+      "p50": 16.816,
+      "p99": 16.816,
+      "max": 16.816,
+      "sample_count": 1,
+      "budget": 100.0,
+      "pass": true
+    },
+    {
+      "name": "reading: full preview paint",
+      "unit": "ms",
+      "p50": 1904.397,
+      "p99": 1904.397,
+      "max": 1904.397,
+      "sample_count": 1,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "native frame intervals (includes display pacing)",
+      "unit": "ms",
+      "p50": 8.333792,
+      "p99": 16.618209,
+      "max": 29.551666,
+      "sample_count": 10000,
+      "budget": null,
+      "pass": true
+    },
+    {
+      "name": "native scrolling frame wall time (draw + submit)",
+      "unit": "ms",
+      "p50": 8.262458,
+      "p99": 16.309875,
+      "max": 24.08575,
+      "sample_count": 10023,
+      "budget": 8.0,
+      "pass": false
+    }
+  ],
+  "markdown_cache": {
+    "required_targets": 5,
+    "index_bytes": 15657872,
+    "parsed_cache_bytes": 33289901,
+    "page_loads": 105,
+    "visited_targets": 5,
+    "placeholder_frames": 23,
+    "page_reloads": 10
+  },
+  "sampled_rss_mib": {
+    "interval_ms": 500,
+    "max": 262.984375,
+    "last": 243.328125,
+    "sample_count": 173
+  },
+  "artifact": "summary"
+}

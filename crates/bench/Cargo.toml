@@ -16,6 +16,8 @@ plastext-buffer.workspace = true
 plastext-syntax.workspace = true
 plastext-markdown.workspace = true
 plastext-assets.workspace = true
+plastext-platform.workspace = true
+tempfile.workspace = true
 serde_json = "1"
 libc = "0.2"
 

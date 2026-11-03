@@ -17,8 +17,10 @@ implemented features, measured limits and remaining exit checks. The accepted
 3. **Completed:** [Markdown reading](markdown-reading.md) supports rendered-text
    selection/copy, math in headings, document-scoped macros and the safe native
    HTML subset. Previews remain offline; remote-image loading is not planned.
-4. Validate large Markdown, CSV, PDF and TeX workloads. M2 still needs a passing
-   10,000-frame Markdown run within the 8 ms p99 budget and reference-M1 checks.
+4. **Validation in progress:** [large-workload checks](m2-validation.md) cover
+   Markdown, CSV, PDF and TeX with reproducible fixtures. A 10,000-frame Markdown
+   run now passes locally; CSV still misses the 8 ms frame target. Reference M1
+   Air checks and native PDF/TeX interaction review remain outstanding.
 
 The shared renderer now applies its fast-routing policy to large flowcharts.
 Published releases support up to 512 nodes / 1,024 edges with bounded generated

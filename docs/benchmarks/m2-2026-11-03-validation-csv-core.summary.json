@@ -1,0 +1,13 @@
+{
+  "schema": 2,
+  "file": "large.csv",
+  "bytes": 546670014,
+  "rows": 20000001,
+  "index_ms": 579.386167,
+  "final_page_ms": 0.9337920000000001,
+  "page_rows": 60,
+  "scope": "core indexing and page decode only; excludes native layout/paint",
+  "complete": true,
+  "passed": true,
+  "artifact": "summary"
+}

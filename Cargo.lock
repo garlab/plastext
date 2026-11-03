@@ -5313,11 +5313,13 @@ dependencies = [
  "plastext-assets",
  "plastext-buffer",
  "plastext-markdown",
+ "plastext-platform",
  "plastext-project",
  "plastext-search",
  "plastext-settings",
  "plastext-syntax",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

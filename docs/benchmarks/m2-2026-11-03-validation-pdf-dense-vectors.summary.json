@@ -1,0 +1,40 @@
+{
+  "file": "dense-vectors.pdf",
+  "bytes": 1083308,
+  "pages": 100,
+  "rounds": 4,
+  "open_ms": 16.031625000000002,
+  "page_ms": {
+    "p50": 0.034832999999999996,
+    "p99": 0.134375,
+    "max": 0.134375,
+    "sample_count": 20
+  },
+  "tile_ms": {
+    "p50": 69.80720799999999,
+    "p99": 508.032292,
+    "max": 508.367541,
+    "sample_count": 160
+  },
+  "max_tile_bytes": 1048576,
+  "memory": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 12.484375,
+      "last": 12.484375,
+      "sample_count": 175
+    },
+    "helpers_mib": {
+      "max": 18.171875,
+      "last": 17.15625,
+      "sample_count": 175
+    }
+  },
+  "complete": true,
+  "passed": true,
+  "warning_count": 0,
+  "scope": "isolated PDF worker: snapshot, first/middle/last pages at 0.125x/1x/2x/8x; no UI or GPU cache; sampled helper RSS can miss short peaks; latency is informational",
+  "schema": 2,
+  "artifact": "summary"
+}

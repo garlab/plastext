@@ -1,0 +1,40 @@
+{
+  "file": "large-images.pdf",
+  "bytes": 150998088,
+  "pages": 12,
+  "rounds": 4,
+  "open_ms": 111.548833,
+  "page_ms": {
+    "p50": 0.021916,
+    "p99": 0.047167,
+    "max": 0.047167,
+    "sample_count": 20
+  },
+  "tile_ms": {
+    "p50": 0.169459,
+    "p99": 21.647,
+    "max": 22.694292,
+    "sample_count": 160
+  },
+  "max_tile_bytes": 1048576,
+  "memory": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 12.203125,
+      "last": 12.203125,
+      "sample_count": 3
+    },
+    "helpers_mib": {
+      "max": 239.6875,
+      "last": 239.6875,
+      "sample_count": 3
+    }
+  },
+  "complete": true,
+  "passed": true,
+  "warning_count": 0,
+  "scope": "isolated PDF worker: snapshot, first/middle/last pages at 0.125x/1x/2x/8x; no UI or GPU cache; sampled helper RSS can miss short peaks; latency is informational",
+  "schema": 2,
+  "artifact": "summary"
+}
