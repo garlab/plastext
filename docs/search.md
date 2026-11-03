@@ -23,7 +23,9 @@ filters active, indicated beside **File filters**.
 
 Results are grouped alphabetically by directory and filename, ignoring case,
 with original names breaking ties at each path component. Matching lines remain
-in source order. The first page contains up to 10,000 matching lines. **Show more**
+in source order. Click a filename row to collapse or expand its matches; collapsed
+groups stay closed as more results arrive. Click a match to open that line.
+The first page contains up to 10,000 matching lines. **Show more**
 resumes the same search and appends another page without clearing results or
 moving the current scroll position. “Search paused” means unsearched work
 remains; proving that there are no additional matches requires continuing it.

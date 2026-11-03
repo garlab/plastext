@@ -1,5 +1,8 @@
 use plastext_search::{FileMatches, path_order};
-use std::{collections::BTreeMap, ffi::OsString};
+use std::{
+    collections::{BTreeMap, HashSet},
+    ffi::OsString,
+};
 
 /// File indices remain stable while their display order changes as results arrive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,9 +19,21 @@ pub(super) struct Results {
     // Alphabetical folder/file order, ignoring case. Original paths break ties
     // consistently on case-sensitive filesystems and for non-Unicode filenames.
     order: BTreeMap<Vec<(OsString, OsString)>, usize>,
+    collapsed: HashSet<usize>,
 }
 
 impl Results {
+    pub fn is_collapsed(&self, file: usize) -> bool {
+        self.collapsed.contains(&file)
+    }
+
+    pub fn toggle_file(&mut self, file: usize) {
+        if !self.collapsed.remove(&file) {
+            self.collapsed.insert(file);
+        }
+        self.rebuild_rows();
+    }
+
     pub fn extend(&mut self, files: impl IntoIterator<Item = FileMatches>) {
         for file in files {
             let key = path_order(&file.path);
@@ -31,11 +46,17 @@ impl Results {
             }
         }
         // Rebuild once per received batch, never once per rendered row/frame.
+        self.rebuild_rows();
+    }
+
+    fn rebuild_rows(&mut self) {
         self.rows.clear();
         for &index in self.order.values() {
             self.rows.push(Row::File(index));
-            self.rows
-                .extend((0..self.files[index].lines.len()).map(|line| Row::Line(index, line)));
+            if !self.collapsed.contains(&index) {
+                self.rows
+                    .extend((0..self.files[index].lines.len()).map(|line| Row::Line(index, line)));
+            }
         }
     }
 }

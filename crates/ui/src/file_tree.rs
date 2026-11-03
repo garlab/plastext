@@ -236,7 +236,7 @@ impl Render for FileTreeView {
 }
 
 /// A consistent disclosure chevron independent of the system font's glyphs.
-fn disclosure(expanded: bool, color: gpui::Rgba) -> impl IntoElement {
+pub(super) fn disclosure(expanded: bool, color: gpui::Rgba) -> impl IntoElement {
     canvas(
         |_, _, _| (),
         move |bounds, _, window, _| {

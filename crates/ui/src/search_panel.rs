@@ -2,6 +2,7 @@
 
 mod results;
 
+use crate::file_tree::disclosure;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -382,6 +383,12 @@ impl Render for SearchPanel {
                                 .flex()
                                 .items_center()
                                 .gap_2()
+                                .cursor_pointer()
+                                .hover(|row| row.bg(theme.background))
+                                .child(div().size(px(18.)).flex_none().child(disclosure(
+                                    !this.results.is_collapsed(file_id),
+                                    theme.text_muted,
+                                )))
                                 .child(div().flex_none().text_color(theme.text).child(name))
                                 .child(
                                     div()
@@ -400,6 +407,10 @@ impl Render for SearchPanel {
                                         .text_color(theme.text_muted)
                                         .child(file.lines.len().to_string()),
                                 )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.results.toggle_file(file_id);
+                                    cx.notify();
+                                }))
                         }
                         Row::Line(file, line) => {
                             let found = &this.results.files[file].lines[line];
