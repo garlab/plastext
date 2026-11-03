@@ -4,12 +4,12 @@ M2 is in progress. The accepted M1 performance baseline is commit `01fcbb3`; the
 
 ## Available now
 
-- Markdown extensions route to a native GPUI preview. CommonMark/GFM parsing supplies paragraphs, headings and unique anchors, lists/tasks, aligned table rows, strikethrough, footnotes, definition lists and GitHub alerts. YAML/TOML front matter renders as a collapsible key/value table with independent virtualized rows. Basic safe inline HTML is styled; comments disappear and unsupported HTML stays inert source.
+- Markdown extensions route to a native GPUI preview. CommonMark/GFM parsing supplies paragraphs, headings and unique anchors, lists/tasks, aligned table rows, strikethrough, footnotes, definition lists and GitHub alerts. YAML/TOML front matter renders as a collapsible key/value table with independent virtualized rows. The [safe native HTML subset](markdown-reading.md#safe-native-html) includes nested disclosures, aligned blocks, image attributes/theme pictures, links, marking and sub/superscripts; comments disappear and unsupported HTML stays inert source.
 - [Rendered selection and copy](markdown-reading.md) work across prose, headings, tables, code and formulas. Math uses document-scoped macros in source order, including headings; formulas copy as TeX and find highlights matching formulas. Clipboard reads are paged, cancellable and capped at 64 MB.
 - Heading navigation uses the existing outline and symbol picker. Local links open in plastext, including heading and `#L42` destinations; supported external links open in the browser. Hover shows link targets, and headings offer copy-anchor links.
 - `⇧⌘V` switches between rendered and source views at the corresponding source position. Split panes can independently show either view. This is not the synchronized Markdown split/edit mode planned for M3.
 - Mermaid fences render a bounded native subset on demand in an isolated worker. Source/Preview and Copy remain available; find reveals matching source. Unsupported syntax keeps the complete code. See [supported diagrams and limits](mermaid.md) and the [fixture](fixtures/mermaid.md).
-- Code fences use the bundled syntax highlighters lazily, with language labels and whole-fence copy. Rendered find (`⌘F` or `/`) searches case-sensitive literal text across inline markup, maps hits to source positions and navigates with Enter/Shift-Enter or `n`/`N`. Results are capped at 10,000. Matches do not cross virtualized block boundaries. Code-fence matches now show backgrounds while preserving syntax colors, including matches spanning token boundaries. Navigating to a metadata match expands its section automatically.
+- Code fences use the bundled syntax highlighters lazily, with language labels and whole-fence copy. Rendered find (`⌘F` or `/`) searches case-sensitive literal text across inline markup, maps hits to source positions and navigates with Enter/Shift-Enter or `n`/`N`. Results are capped at 10,000. Matches do not cross virtualized block boundaries. Code-fence matches now show backgrounds while preserving syntax colors, including matches spanning token boundaries. Navigating to a metadata or HTML-disclosure match expands its enclosing sections automatically.
 - Local and data-URI images decode near the viewport in an isolated worker. SVG uses resvg with image references disabled. Remote images remain blocked. [Dedicated image tabs](images.md) fit both axes without upscaling, with sharp visible tiles, zoom/pan, a transparency checkerboard and pixel grid. Native codecs add AVIF/HEIC and other formats; GIF/WebP animate with bounded frame caches. SVG offers an XML source view, and raster images retain Binary mode.
 - CSV/TSV tables use a sparse record index, virtualized rows, a sticky first-row header and a Source toggle. Initial column widths use font measurements from the first 64 records, including bold headers. Drag a header's right edge to resize a column; double-click it to restore the sampled width. Widths stay fixed while scrolling, survive Source/Table toggles and scale with zoom. Splitting a tab copies the widths; each pane can then resize independently. Quoted multiline fields and doubled quotes are handled. Byte navigation maps to actual records rather than a file-size estimate.
 - Markdown's prose font and centered text measure now honor `markdown.prose_font` and `markdown.max_width`. The default is `system` / `80ch`; `ch` uses the selected font's actual zero-glyph advance at the body size. Pixel measures such as `720px` are supported. Inline code now uses the configured editor font rather than a hard-coded Menlo face. Settings apply on restart.
@@ -286,8 +286,25 @@ save batching, cancellation, private build inputs and retention of the last succ
 downloads and large-project certification remain pending; see the
 [local TeX increment](pdf-and-tex-preview.md#local-tex-increment).
 
-- Full safe HTML subset, remote-image opt-in and host allowlist; rich-text/HTML clipboard output is a “should” follow-up.
+- Rich-text/HTML clipboard output is a “should” follow-up. The native safe HTML subset is implemented; previews remain offline.
 - Expanded image EXIF inspection (a “should” requirement); image codecs and interaction still need verification on reference hardware and future platform ports.
 - Validate memory and scrolling on the reference M1 Air, run native 20M-row CSV scrolling tests, and visually review light/dark themes and anchoring. The 8 ms scrolling budget still needs a passing 10,000-frame run.
 
 Workspace tests, strict Clippy and the GPUI dependency-boundary check cover this increment. M2's exit conditions have not been met. Markdown editing, task-list mutation, live preview and synchronized edit/preview belong to M3.
+
+### Safe native HTML — 2026-11-03
+
+The specified HTML subset now shares Markdown's native blocks, source maps,
+selection, rendered find and bounded image workers. Nested disclosures retain
+compact parent indices; closed contents do not enter the layout list or copied
+text. Page contexts preserve open HTML formatting and disclosures when revisiting
+pages in any order. Unknown/active elements remain source, and previews never
+load remote resources. See the [HTML guide and fixture](markdown-reading.md#safe-native-html).
+
+The [100 MB core check](benchmarks/m2-2026-11-03-safe-html.summary.json) retained
+14.93 MiB of index data and stayed within the 32 MiB parsed-page cache.
+The initial 64 KiB read/parse took 6.58 ms, full indexing
+2126.38 ms, and parsed-page p99 was 1.05 ms. Peak process RSS
+was 108.31 MiB. The cache did not grow during rendered find. This is one
+core run; accepted baseline reports remain unchanged, and native scroll/paint
+certification remains outstanding.

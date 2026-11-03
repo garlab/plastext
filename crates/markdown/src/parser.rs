@@ -1,3 +1,4 @@
+pub(crate) mod html;
 use crate::{
     Alignment, BLOCK_TEXT_LIMIT, Block, BlockKind, Document, Heading, InlineStyle, MetadataFormat,
     Span,
@@ -17,6 +18,7 @@ pub struct ParseSummary {
     pub headings: Vec<Heading>,
     pub warnings: Vec<String>,
     pub cancelled: bool,
+    pub(crate) html: html::HtmlState,
 }
 
 pub fn parse(text: &str) -> Document {
@@ -52,6 +54,7 @@ pub fn parse_stream(
         None,
         true,
         0..text.len(),
+        None,
     )
 }
 
@@ -79,6 +82,7 @@ pub(crate) struct HeadingIds {
 
 pub(crate) type References = HashMap<unicase::UniCase<String>, (Arc<str>, Arc<str>)>;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_context(
     text: &str,
     cancelled: impl Fn() -> bool,
@@ -87,25 +91,30 @@ pub(crate) fn parse_context(
     references: Option<&References>,
     metadata: bool,
     source_window: Range<usize>,
+    html: Option<(&html::HtmlState, isize)>,
 ) -> ParseSummary {
     let mut builder = Builder::new(emit, ids);
+    if let Some((html, offset)) = html {
+        builder.html = html.clone();
+        builder.html_offset = offset;
+    }
     let mut depth = 0usize;
     let mut inline = Vec::new();
     let mut style = InlineStyle::default();
     let mut alignments: Arc<[Alignment]> = Arc::from([]);
     let mut cell_start = 0;
     let mut image_depth = None;
-    let mut in_comment = false;
     let mut in_metadata = false;
     let callback = |link: BrokenLink<'_>| {
         let (url, title) = references?.get(&unicase::UniCase::new(link.reference.into_string()))?;
         Some((url.to_string().into(), title.to_string().into()))
     };
     let prepared = crate::math_blocks::prepare(text, metadata, false);
-    for (event, range) in
+    let mut events =
         Parser::new_with_broken_link_callback(&prepared, options(metadata), Some(callback))
             .into_offset_iter()
-    {
+            .peekable();
+    while let Some((event, range)) = events.next() {
         if range.start >= source_window.end {
             break;
         }
@@ -274,6 +283,7 @@ pub(crate) fn parse_context(
                     BlockKind::Image {
                         destination: dest_url.into_string(),
                         title: title.into_string(),
+                        attributes: None,
                     },
                     range,
                 );
@@ -361,31 +371,17 @@ pub(crate) fn parse_context(
                 footnote.link = Some(format!("#fn-{id}").into());
                 builder.append(&format!("[{id}]"), range, &footnote);
             }
-            Event::Html(html) | Event::InlineHtml(html) => {
-                let html = strip_comments(&html, &mut in_comment);
-                if html.is_empty() {
-                    continue;
+            Event::Html(_) | Event::InlineHtml(_) => {
+                let mut range = range;
+                // pulldown emits one Html event per line in block HTML. Join
+                // adjacent slices so comments, quoted attributes and raw text
+                // are tokenized together without copying the source.
+                while events.peek().is_some_and(|(event, next)| {
+                    matches!(event, Event::Html(_)) && next.start == range.end
+                }) {
+                    range.end = events.next().unwrap().1.end;
                 }
-                // Declarative subset; all unrecognized HTML remains visible source.
-                match html.trim().to_ascii_lowercase().as_str() {
-                    "<br>" | "<br/>" | "<br />" => builder.append("\n", range, &style),
-                    "<b>" | "<strong>" => style.strong = true,
-                    "</b>" | "</strong>" => style.strong = false,
-                    "<i>" | "<em>" => style.emphasis = true,
-                    "</i>" | "</em>" => style.emphasis = false,
-                    "<code>" | "<kbd>" => style.code = true,
-                    "</code>" | "</kbd>" => style.code = false,
-                    "<hr>" | "<hr/>" | "<hr />" => {
-                        builder.start(BlockKind::Rule, range);
-                        builder.flush();
-                    }
-                    _ => {
-                        let mut raw = style.clone();
-                        raw.dim = true;
-                        raw.code = true;
-                        builder.append(&html, range, &raw);
-                    }
-                }
+                builder.html_fragment(&text[range.clone()], range.start, &style, &cancelled);
             }
             _ => {}
         }
@@ -403,6 +399,7 @@ pub(crate) fn parse_context(
             .map_or(text.len(), |h| h.source.start);
         builder.summary.headings[i].source.end = end;
     }
+    builder.summary.html = builder.html;
     builder.summary
 }
 
@@ -416,6 +413,8 @@ struct Builder<'a> {
     marker: Option<String>,
     ids: &'a mut HeadingIds,
     summary: ParseSummary,
+    html: html::HtmlState,
+    html_offset: isize,
 }
 impl<'a> Builder<'a> {
     fn new(emit: &'a mut dyn FnMut(Vec<Arc<Block>>) -> bool, ids: &'a mut HeadingIds) -> Self {
@@ -429,6 +428,8 @@ impl<'a> Builder<'a> {
             marker: None,
             ids,
             summary: ParseSummary::default(),
+            html: html::HtmlState::default(),
+            html_offset: 0,
         }
     }
     fn ensure(&mut self, range: Range<usize>) {
@@ -479,12 +480,16 @@ impl<'a> Builder<'a> {
     fn start(&mut self, kind: BlockKind, range: Range<usize>) {
         self.flush();
         let mut block = Block::new(kind, range);
+        block.alignment = self.html.alignment();
+        block.details = self.html.section();
         block.indent = self.lists.len().saturating_sub(1).min(16);
         block.marker = self.marker.take();
         block.quote = self.quotes.last().cloned();
         self.current = Some(block);
     }
     fn append(&mut self, mut value: &str, source: Range<usize>, style: &InlineStyle) {
+        let styled = self.html.style(style);
+        let style = styled.as_ref();
         let mut consumed = 0;
         let exact = source.len() == value.len();
         while !value.is_empty() && !self.stopped {
@@ -580,6 +585,9 @@ impl<'a> Builder<'a> {
         let Some(mut block) = self.current.take() else {
             return;
         };
+        if block.text.is_empty() && matches!(block.kind, BlockKind::Details { .. }) {
+            block.text = "Details".into();
+        }
         if block.text.is_empty()
             && !matches!(
                 block.kind,
@@ -640,25 +648,6 @@ impl<'a> Builder<'a> {
             self.stopped = !(self.emit)(std::mem::take(&mut self.batch));
         }
     }
-}
-
-fn strip_comments(mut html: &str, in_comment: &mut bool) -> String {
-    let mut output = String::new();
-    while !html.is_empty() {
-        if *in_comment {
-            let Some(end) = html.find("-->") else { break };
-            html = &html[end + 3..];
-            *in_comment = false;
-        } else if let Some(start) = html.find("<!--") {
-            output.push_str(&html[..start]);
-            html = &html[start + 4..];
-            *in_comment = true;
-        } else {
-            output.push_str(html);
-            break;
-        }
-    }
-    output
 }
 
 #[cfg(test)]

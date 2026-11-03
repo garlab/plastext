@@ -45,6 +45,9 @@ pub struct InlineStyle {
     pub code: bool,
     pub dim: bool,
     pub math: bool,
+    pub mark: bool,
+    /// -1 for subscript, 1 for superscript.
+    pub script: i8,
     pub link: Option<Arc<str>>,
 }
 
@@ -63,6 +66,31 @@ pub enum Alignment {
     Left,
     Center,
     Right,
+}
+
+/// The only image presentation attributes accepted from HTML.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImageAttributes {
+    pub width: Option<u16>,
+    pub height: Option<u16>,
+    pub align: Alignment,
+    pub dark: Option<String>,
+    pub light: Option<String>,
+    pub link: Option<Arc<str>>,
+}
+
+impl ImageAttributes {
+    pub fn destination<'a>(&'a self, fallback: &'a str, dark: bool) -> &'a str {
+        (if dark { &self.dark } else { &self.light })
+            .as_deref()
+            .unwrap_or(fallback)
+    }
+    pub fn retained_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.dark.as_ref().map_or(0, String::capacity)
+            + self.light.as_ref().map_or(0, String::capacity)
+            + self.link.as_ref().map_or(0, |link| link.len() + 32)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,6 +127,10 @@ pub enum BlockKind {
     Image {
         destination: String,
         title: String,
+        attributes: Option<Box<ImageAttributes>>,
+    },
+    Details {
+        open: bool,
     },
     Html,
 }
@@ -125,6 +157,9 @@ pub struct Block {
     pub marker: Option<String>,
     pub quote: Option<String>,
     pub task: Option<bool>,
+    pub alignment: Alignment,
+    /// Absolute source offset of the enclosing details header.
+    pub details: Option<usize>,
 }
 
 impl Block {
@@ -138,6 +173,8 @@ impl Block {
             marker: None,
             quote: None,
             task: None,
+            alignment: Alignment::Left,
+            details: None,
         }
     }
 

@@ -84,7 +84,7 @@ struct InlineMetrics {
     scale: f32,
 }
 
-/// An inline formula in laid-out text.
+/// Inline math or raised/lowered native text in laid-out prose.
 pub(super) struct Slot {
     /// Where its placeholder starts in the displayed text.
     start: usize,
@@ -92,7 +92,27 @@ pub(super) struct Slot {
     line_start: usize,
     /// How many [`SLOT_CHAR`]s it has.
     count: usize,
-    formula: Image,
+    formula: SlotContent,
+}
+
+enum SlotContent {
+    Math(Image),
+    Text {
+        line: Box<gpui::ShapedLine>,
+        baseline: f32,
+    },
+}
+impl SlotContent {
+    fn metrics(&self) -> (f32, f32, f32) {
+        match self {
+            Self::Math(image) => (image.width, image.height, image.baseline),
+            Self::Text { line, baseline } => (
+                line.width.into(),
+                (line.ascent + line.descent).into(),
+                *baseline,
+            ),
+        }
+    }
 }
 
 fn channels(color: gpui::Rgba) -> [u8; 4] {
@@ -200,7 +220,50 @@ impl MarkdownView {
         Some((count, formula.clone()))
     }
 
-    /// `text` with its inline formulas painted over their placeholders,
+    pub(super) fn script_slot(
+        &self,
+        block: &Block,
+        start: usize,
+        value: &str,
+        style: &plastext_markdown::InlineStyle,
+        color: gpui::Rgba,
+        window: &Window,
+    ) -> Option<Slot> {
+        let font_size = text_size(&block.kind) * self.zoom;
+        let metrics = self.formulas.inline.get(&scale_key(font_size))?;
+        let bold = style.strong
+            || matches!(
+                block.kind,
+                BlockKind::Heading { .. } | BlockKind::TableRow { header: true, .. }
+            );
+        let mut run = text_run(value.len(), style.code, bold, style.emphasis, color, self);
+        if style.strike {
+            run.strikethrough = Some(gpui::StrikethroughStyle {
+                thickness: px(1.),
+                color: None,
+            });
+        }
+        let line = window.text_system().shape_line(
+            value.to_owned().into(),
+            px(font_size * 0.75),
+            &[run],
+            None,
+        );
+        let count = placeholder_count(line.width.into(), metrics.slot_char);
+        let baseline =
+            f32::from(line.ascent) + font_size * if style.script > 0 { 0.35 } else { -0.2 };
+        Some(Slot {
+            start,
+            line_start: 0,
+            count,
+            formula: SlotContent::Text {
+                line: Box::new(line),
+                baseline,
+            },
+        })
+    }
+
+    /// `text` with formulas and raised/lowered text painted over their placeholders,
     /// with lines tall enough for the tallest one.
     pub(super) fn with_inline_math(
         &self,
@@ -222,8 +285,8 @@ impl MarkdownView {
         // `(line - ascent - descent) / 2 + ascent` below the line's top.
         let (ascent, descent) = (metrics.ascent, metrics.descent);
         let line_height = slots.iter().fold(metrics.line_height, |line, slot| {
-            let above = slot.formula.baseline;
-            let below = slot.formula.height - above;
+            let (_, height, above) = slot.formula.metrics();
+            let below = height - above;
             line.max(2. * above - ascent + descent)
                 .max(2. * below + ascent - descent)
         });
@@ -234,9 +297,9 @@ impl MarkdownView {
             .child(
                 canvas(
                     |_, _, _| {},
-                    move |_, _, window, _| {
+                    move |_, _, window, cx| {
                         for slot in &slots {
-                            paint_slot(&layout, slot, window);
+                            paint_slot(&layout, slot, window, cx);
                         }
                     },
                 )
@@ -301,6 +364,7 @@ impl MarkdownView {
                 (ix, 0),
                 true,
                 theme,
+                window,
                 cx,
             ))
         };
@@ -330,6 +394,7 @@ impl MarkdownView {
                     0,
                     block.text.clone().into(),
                     None,
+                    Vec::new(),
                     Vec::new(),
                     content,
                     cx,
@@ -492,7 +557,7 @@ impl Slot {
             start,
             line_start: 0,
             count,
-            formula,
+            formula: SlotContent::Math(formula),
         }
     }
 
@@ -514,7 +579,7 @@ impl Slot {
     }
 }
 
-fn paint_slot(layout: &TextLayout, slot: &Slot, window: &mut Window) {
+fn paint_slot(layout: &TextLayout, slot: &Slot, window: &mut Window, cx: &mut App) {
     // An index at a wrap is reported at the end of the previous row, so
     // locate the placeholder by its first character's end instead.
     let Some(after_first) = layout.position_for_index(slot.start + SLOT_CHAR.len_utf8()) else {
@@ -561,21 +626,23 @@ fn paint_slot(layout: &TextLayout, slot: &Slot, window: &mut Window) {
     let first_advance = line_layout.x_for_index(local_start + SLOT_CHAR.len_utf8()) - start_x;
     let slot_width =
         line_layout.x_for_index(local_start + slot.count * SLOT_CHAR.len_utf8()) - start_x;
-    let left = after_first.x + offset - first_advance
-        + (slot_width - px(slot.formula.width)).max(px(0.)) / 2.;
+    let (width, height, above) = slot.formula.metrics();
+    let left = after_first.x + offset - first_advance + (slot_width - px(width)).max(px(0.)) / 2.;
     let bounds = Bounds::new(
-        point(left, baseline - px(slot.formula.baseline)),
-        size(px(slot.formula.width), px(slot.formula.height)),
+        point(left, baseline - px(above)),
+        size(px(width), px(height)),
     );
-    window
-        .paint_image(
-            bounds,
-            Corners::default(),
-            slot.formula.image.clone(),
-            0,
-            false,
-        )
-        .ok();
+    match &slot.formula {
+        SlotContent::Math(formula) => {
+            window
+                .paint_image(bounds, Corners::default(), formula.image.clone(), 0, false)
+                .ok();
+        }
+        SlotContent::Text { line, .. } => {
+            line.paint(bounds.origin, bounds.size.height, window, cx)
+                .ok();
+        }
+    }
 }
 
 fn placeholder_count(formula_width: f32, shaped_advance: f32) -> usize {

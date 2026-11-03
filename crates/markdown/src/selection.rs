@@ -124,11 +124,7 @@ pub fn copy_selection(
                 return Err(io::ErrorKind::Interrupted.into());
             }
             let ix = document.pages[page].blocks.start + local;
-            if block
-                .kind
-                .metadata_section()
-                .is_some_and(|s| !expanded.contains(&s))
-            {
+            if !crate::BlockEntry::visible(&document.blocks, ix, expanded) {
                 continue;
             }
             let Some(selected) = selection.block_range(ix, block.text.len()) else {

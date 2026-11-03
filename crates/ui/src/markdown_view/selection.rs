@@ -254,6 +254,7 @@ impl MarkdownView {
         text: SharedString,
         layout: Option<TextLayout>,
         replacements: Vec<Replacement>,
+        marks: Vec<std::ops::Range<usize>>,
         content: impl IntoElement,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -261,13 +262,14 @@ impl MarkdownView {
         let matches = self.find_ranges(&text, &replacements);
         let background = layout
             .clone()
-            .filter(|_| selected.is_some() || !matches.is_empty())
+            .filter(|_| selected.is_some() || !matches.is_empty() || !marks.is_empty())
             .map(|layout| {
                 canvas(
                     |_, _, _| (),
                     move |_, _, window, cx| {
                         super::highlights::paint(
                             &layout,
+                            &marks,
                             &matches,
                             selected.as_ref(),
                             window.text_style().text_align,

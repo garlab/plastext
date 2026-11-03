@@ -210,7 +210,7 @@ The foundation, which every text view (code, Markdown source, diffs, logs) share
   - Errors never break the document: the formula's source shows in an error color with the message on hover.
   - Engine choice is a spike; see [§7.2](#72-key-libraries).
 - **MD-4** **Code fences** use the code view's highlighter (CODE-1), with a language label and a copy button.
-- **MD-5** **Images:** relative and absolute local paths, data URIs, SVG. Decoding is lazy and downscaled to display size. **Remote images are blocked by default**: a per-document "Load remote images" action is available, plus a `markdown.remote_image_hosts` allowlist.
+- **MD-5** **Images:** relative and absolute local paths, data URIs, SVG. Decoding is lazy and downscaled to display size. **Remote images are always blocked**. Previews never fetch external content; there is no remote-image action or host allowlist.
 - **MD-6** **Links:** relative links to other files open in plastext (`./other.md`, `other.md#heading`, `src/lib.rs#L42`). `#anchor` links scroll within the document. External URLs open in the default browser, and hovering shows the target. Headings get a copy-anchor-link affordance.
 - **MD-7** **Inline HTML, safe subset:** `<details>`/`<summary>`, `<img>` (`width`, `height`, `align`), `<picture>`/`<source>` (picks the theme-matching source), `<br>`, `<sub>`, `<sup>`, `<kbd>`, `<mark>`, `<a>`, `<b>`/`<strong>`/`<i>`/`<em>`/`<code>`, `<p align>`/`<div align>`, `<hr>`, and HTML comments (hidden). Any other HTML shows as dimmed source. Nothing executes: no scripts, styles, iframes or forms.
 - **MD-8** **Views:** *Rendered* (read-mode default), *Source* (edit-mode default) and *Split*, which places source and preview side by side with **two-way scroll sync** driven by source maps. **Double-clicking a rendered block** enters edit mode with the caret at the matching source position.
@@ -310,8 +310,6 @@ atomic_save = true
 default_view = "rendered"     # "rendered" | "source" | "split"
 prose_font = "system"
 max_width = "80ch"
-load_remote_images = false
-remote_image_hosts = []
 
 [files]
 show_hidden = false
@@ -474,7 +472,7 @@ crates/
 
 ## 8. Security and privacy
 
-- **No network by default.** The only outbound traffic is remote Markdown images the user explicitly allowed. Links open in the system browser. No telemetry, no crash upload, no update pings: updates come through Homebrew or a manual download, and an update check is *(later)* and opt-in.
+- **Offline previews.** Markdown/HTML previews never fetch remote images, stylesheets, fonts or other external content. Links open in the system browser only after an explicit user action. No telemetry, no crash upload, no update pings: updates come through Homebrew or a manual download, and an update check is *(later)* and opt-in.
 - **Nothing executes.** There's no JS engine in the binary. Markdown and HTML rendering is purely declarative, git hooks never run (GIT-14), and project config can't run commands.
 - **Hostile input.** The Markdown, image, SVG and math parsers and the buffer are fuzzed. Decoded image size is capped (decompression bombs). Parser recursion is bounded.
 - **macOS distribution:** signed with the hardened runtime and notarized, distributed outside the App Store, not sandboxed. A sandbox would block opening arbitrary folders from the CLI, the same tradeoff other editors make.

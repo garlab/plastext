@@ -9,6 +9,7 @@ use std::ops::Range;
 
 pub(super) fn paint(
     layout: &TextLayout,
+    marks: &[Range<usize>],
     matches: &[Range<usize>],
     selected: Option<&Range<usize>>,
     align: TextAlign,
@@ -21,15 +22,19 @@ pub(super) fn paint(
     let mut at = 0;
     while let Some(line) = layout.line_layout_for_index(at) {
         let end = at + line.len();
+        let first_mark = marks.partition_point(|range| range.end <= at);
+        let last_mark = marks.partition_point(|range| range.start < end);
+        let marks = &marks[first_mark..last_mark.max(first_mark)];
         let first_match = matches.partition_point(|range| range.end <= at);
         let last_match = matches.partition_point(|range| range.start < end);
         let matches = &matches[first_match..last_match.max(first_match)];
         let selected = selected.filter(|range| range.end > at && range.start < end);
-        if !matches.is_empty() || selected.is_some() {
+        if !marks.is_empty() || !matches.is_empty() || selected.is_some() {
             let geometry = Geometry::new(&line);
             let row_bounds = Bounds::new(origin, size(bounds.size.width, height));
             // Find below selection; glyphs and inline formulas paint afterwards.
             for (ranges, color) in [
+                (marks, theme.find_match),
                 (matches, theme.find_match),
                 (
                     selected.map_or(&[][..], std::slice::from_ref),

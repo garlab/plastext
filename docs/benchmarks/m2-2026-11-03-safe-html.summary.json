@@ -1,0 +1,55 @@
+{
+  "artifact": "summary",
+  "blocks": 330110,
+  "bytes": 100000000,
+  "complete": true,
+  "file": "large.md",
+  "full_index_ms": 2126.384333,
+  "headings": 45391,
+  "index_bytes": 15657872,
+  "initial_64k_blocks": 3360,
+  "initial_read_and_parse_ms": 6.576458000000001,
+  "max_block_text_bytes": 1359,
+  "max_parsed_page_bytes": 1395676,
+  "memory_mib": {
+    "after_search": 108.3125,
+    "before": 2.78125,
+    "index_retained": 29.71875,
+    "peak": 108.3125,
+    "peak_after_index": 30.578125
+  },
+  "page_parse_ms": {
+    "max": 1.249042,
+    "p50": 0.6433749999999999,
+    "p99": 1.045541,
+    "sample_count": 3124
+  },
+  "pages": 1562,
+  "parsed_cache_budget_bytes": 33554432,
+  "passed": true,
+  "rendered_find": {
+    "cache_bytes_after": 33376283,
+    "cache_bytes_before": 33376283,
+    "elapsed_ms": 1050.686167,
+    "matches": 0
+  },
+  "schema": 2,
+  "scope": "core source index, bounded parsed cache and rendered search; excludes native layout, equation counting and reference-machine certification",
+  "traversals": [
+    {
+      "cache_bytes": 33516299,
+      "cached_pages": 73,
+      "direction": "forward",
+      "elapsed_ms": 1072.282041,
+      "rss_mib": 107.671875
+    },
+    {
+      "cache_bytes": 33376283,
+      "cached_pages": 29,
+      "direction": "backward",
+      "elapsed_ms": 1071.2635,
+      "rss_mib": 107.859375
+    }
+  ],
+  "warning_count": 0
+}

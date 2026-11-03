@@ -16,6 +16,7 @@ fn compact_records_and_small_document_parity() {
     assert_eq!(size_of::<BlockEntry>(), 32);
     for text in [
         include_str!("../../../docs/fixtures/tables.md"),
+        include_str!("../../../docs/fixtures/safe-html.md"),
         include_str!("../../../docs/fixtures/math-headings.md"),
         "# Title\n\n**Hello** *world* &amp; café\n\n> quote\n>\n> - nested\n>   - deeper\n\n---\n",
         "---\ntitle: café\nitems: [one, two]\n---\n# Body\n\n- [x] done\n- next\n\n```rust\nlet x = 42;\n```\n",
@@ -352,4 +353,28 @@ fn oversized_table_header_has_an_explicit_bounded_fallback() {
             .all(|p| p.source.len() <= PARSE_WINDOW_BYTES)
     );
     assert!(blocks.iter().all(|b| b.text.len() <= BLOCK_TEXT_LIMIT));
+}
+
+#[test]
+fn disclosure_parent_indices_preserve_offsets_past_four_gib() {
+    let start = u32::MAX as usize + 1024;
+    let header = Block::new(BlockKind::Details { open: false }, start..start + 9);
+    let mut body = Block::new(BlockKind::Paragraph, start + 10..start + 20);
+    body.details = Some(start);
+    let document = Document {
+        blocks: vec![Arc::new(header), Arc::new(body)],
+        ..Document::default()
+    };
+    let index = DocumentIndex::initial(&document, start + 20);
+    assert_eq!(size_of::<BlockEntry>(), 32);
+    assert_eq!(
+        BlockEntry::ancestors(&index.blocks, 1).collect::<Vec<_>>(),
+        [start]
+    );
+    assert!(!BlockEntry::visible(&index.blocks, 1, &Default::default()));
+    assert!(BlockEntry::visible(
+        &index.blocks,
+        1,
+        &std::collections::HashSet::from([start])
+    ));
 }

@@ -27,6 +27,7 @@ pub enum BlockType {
     Math,
     Metadata,
     MetadataRow,
+    Details,
     TableHead,
     TableRow,
     Other,
@@ -40,19 +41,50 @@ pub struct BlockEntry {
     pub local: u32,
     pub kind: BlockType,
     pub code_first: bool,
+    pub default_open: bool,
     section: u32,
 }
 impl BlockEntry {
-    pub fn metadata_section(&self) -> Option<usize> {
+    /// Block index of the enclosing collapsible section. Using an index keeps
+    /// records compact even when a details header occurs past 4 GiB of source.
+    pub fn section(&self) -> Option<usize> {
         (self.section != NO_SECTION).then_some(self.section as usize)
     }
-    fn new(block: &Block, page: usize, local: usize) -> Self {
+    fn parents(blocks: &[Self], block: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(blocks.get(block).and_then(Self::section), |index| {
+            blocks
+                .get(*index)?
+                .section()
+                .filter(|parent| parent < index)
+        })
+        .take(128)
+    }
+    /// Absolute source offsets of the enclosing headers, innermost first.
+    pub fn ancestors(blocks: &[Self], block: usize) -> impl Iterator<Item = usize> + '_ {
+        Self::parents(blocks, block)
+            .filter_map(|index| blocks.get(index).map(|block| block.source.start))
+    }
+    pub fn section_open(blocks: &[Self], section: usize, toggled: &HashSet<usize>) -> bool {
+        let header = blocks
+            .partition_point(|b| b.source.start <= section)
+            .saturating_sub(1);
+        blocks.get(header).is_some_and(|b| b.default_open) ^ toggled.contains(&section)
+    }
+    pub fn visible(blocks: &[Self], block: usize, toggled: &HashSet<usize>) -> bool {
+        Self::parents(blocks, block).all(|index| {
+            blocks
+                .get(index)
+                .is_some_and(|header| header.default_open ^ toggled.contains(&header.source.start))
+        })
+    }
+    fn new(block: &Block, page: usize, local: usize, previous: &[Self]) -> Self {
         Self {
             source: block.source.clone(),
             page: page as u32,
             local: local as u32,
             kind: match block.kind {
                 BlockKind::Paragraph => BlockType::Paragraph,
+                BlockKind::Details { .. } => BlockType::Details,
                 BlockKind::Heading { .. } => BlockType::Heading,
                 BlockKind::Code { .. } => BlockType::Code,
                 BlockKind::Math => BlockType::Math,
@@ -65,9 +97,15 @@ impl BlockEntry {
                 _ => BlockType::Other,
             },
             code_first: matches!(block.kind, BlockKind::Code { first: true, .. }),
+            default_open: matches!(block.kind, BlockKind::Details { open: true }),
             section: block
-                .kind
-                .metadata_section()
+                .details
+                .or_else(|| block.kind.metadata_section())
+                .and_then(|offset| {
+                    previous
+                        .partition_point(|b| b.source.start <= offset)
+                        .checked_sub(1)
+                })
                 .map_or(NO_SECTION, |n| n as u32),
         }
     }
@@ -103,6 +141,7 @@ pub struct Page {
     pub blocks: Range<usize>,
     mode: Mode,
     fingerprint: u64,
+    html: Option<Arc<crate::parser::html::HtmlState>>,
 }
 
 #[derive(Default, Debug)]
@@ -115,6 +154,7 @@ pub struct DocumentIndex {
     pub macros: crate::MacroHistory,
     references: References,
     footnotes: HashSet<UniCase<String>>,
+    html_context_bytes: usize,
 }
 
 impl DocumentIndex {
@@ -124,14 +164,13 @@ impl DocumentIndex {
         for block in &document.blocks {
             macros.collect(block);
         }
+        let mut blocks = Vec::with_capacity(document.blocks.len());
+        for (i, block) in document.blocks.iter().enumerate() {
+            blocks.push(BlockEntry::new(block, 0, i, &blocks));
+        }
         Self {
             macros,
-            blocks: document
-                .blocks
-                .iter()
-                .enumerate()
-                .map(|(i, b)| BlockEntry::new(b, 0, i))
-                .collect(),
+            blocks,
             headings: document.headings.clone(),
             warnings: document.warnings.clone(),
             pages: vec![Page {
@@ -139,6 +178,7 @@ impl DocumentIndex {
                 blocks: 0..document.blocks.len(),
                 mode: Mode::Normal,
                 fingerprint: 0,
+                html: None,
             }],
             ..Self::default()
         }
@@ -207,9 +247,17 @@ impl DocumentIndex {
         }
         let mut ids = HeadingIds::default();
         let mut equation = 1u32;
+        let mut html = crate::parser::html::HtmlState::default();
         for page_id in 0..index.pages.len() {
             check_cancel(&cancelled)?;
-            let document = index.read_page(source, page_id, &cancelled, &mut ids)?;
+            index.pages[page_id].html = (!html.is_empty()).then(|| {
+                index.html_context_bytes += size_of::<crate::parser::html::HtmlState>()
+                    + 2 * size_of::<usize>()
+                    + html.retained_bytes();
+                Arc::new(html.clone())
+            });
+            let (document, next_html) = index.read_page(source, page_id, &cancelled, &mut ids)?;
+            html = next_html;
             let first = index.blocks.len();
             for (local, block) in document.blocks.iter().enumerate() {
                 if matches!(block.kind, BlockKind::Math) {
@@ -220,7 +268,9 @@ impl DocumentIndex {
                     }
                 }
                 index.macros.collect(block);
-                index.blocks.push(BlockEntry::new(block, page_id, local));
+                index
+                    .blocks
+                    .push(BlockEntry::new(block, page_id, local, &index.blocks));
             }
             index.headings.extend(document.headings);
             for warning in document.warnings {
@@ -268,6 +318,7 @@ impl DocumentIndex {
     pub fn retained_bytes(&self) -> usize {
         self.blocks.capacity() * size_of::<BlockEntry>()
             + self.pages.capacity() * size_of::<Page>()
+            + self.html_context_bytes
             + self.headings.capacity() * size_of::<Heading>()
             + self
                 .headings
@@ -293,7 +344,8 @@ impl DocumentIndex {
         page: usize,
         cancelled: impl Fn() -> bool,
     ) -> io::Result<Vec<Arc<Block>>> {
-        let mut document = self.read_page(source, page, &cancelled, &mut HeadingIds::default())?;
+        let (mut document, _) =
+            self.read_page(source, page, &cancelled, &mut HeadingIds::default())?;
         let expected = &self.pages[page];
         if document.blocks.len() != expected.blocks.len() {
             return Err(io::Error::other(
@@ -317,7 +369,7 @@ impl DocumentIndex {
         page: usize,
         cancelled: &impl Fn() -> bool,
         ids: &mut HeadingIds,
-    ) -> io::Result<Document> {
+    ) -> io::Result<(Document, crate::parser::html::HtmlState)> {
         check_cancel(cancelled)?;
         let page = &self.pages[page];
         let raw = read(source, page.source.clone())?;
@@ -327,7 +379,12 @@ impl DocumentIndex {
             ));
         }
         if matches!(page.mode, Mode::Source) {
-            return Ok(source_document(&raw, page.source.start));
+            let mut document = source_document(&raw, page.source.start);
+            let html = page.html.as_deref().cloned().unwrap_or_default();
+            for block in &mut document.blocks {
+                Arc::make_mut(block).details = html.section();
+            }
+            return Ok((document, html));
         }
         let prefix = page.mode.prefix();
         let mut text = format!("{prefix}{raw}");
@@ -396,6 +453,12 @@ impl DocumentIndex {
             Some(&self.references),
             page.source.start == 0,
             prefix_len..real_end,
+            Some((
+                page.html
+                    .as_deref()
+                    .unwrap_or(&crate::parser::html::HtmlState::default()),
+                page.source.start as isize - prefix_len as isize,
+            )),
         );
         check_cancel(cancelled)?;
         blocks.retain(|b| b.source.start < real_end && b.source.end > prefix_len);
@@ -445,11 +508,14 @@ impl DocumentIndex {
                 page.source.end,
             );
         }
-        Ok(Document {
-            blocks,
-            headings: summary.headings,
-            warnings: summary.warnings,
-        })
+        Ok((
+            Document {
+                blocks,
+                headings: summary.headings,
+                warnings: summary.warnings,
+            },
+            summary.html,
+        ))
     }
 
     /// Streams rendered-text matches without touching the viewport cache.
@@ -653,6 +719,7 @@ fn next_page_window(
                 blocks: 0..0,
                 mode,
                 fingerprint: 0,
+                html: None,
             },
             next,
         )

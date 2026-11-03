@@ -24,11 +24,8 @@ impl VisibleBlocks {
     }
 
     pub fn extend(&mut self, blocks: &[BlockEntry], expanded: &HashSet<usize>) {
-        for (ix, block) in blocks.iter().enumerate().skip(self.scanned) {
-            if block
-                .metadata_section()
-                .is_none_or(|section| expanded.contains(&section))
-            {
+        for ix in self.scanned..blocks.len() {
+            if BlockEntry::visible(blocks, ix, expanded) {
                 if let Some(last) = self.spans.last_mut()
                     && last.blocks.end == ix
                 {
@@ -155,7 +152,7 @@ mod tests {
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| {
-                    b.metadata_section()
+                    b.section()
                         .is_none_or(|section| expanded.contains(&section))
                 })
                 .map(|(ix, _)| ix)

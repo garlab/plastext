@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 pulldown-cmark = { version = "0.13.4", default-features = false }
+# Tokenization and byte spans only; no DOM, scripting, or resource loader.
+html5gum = { version = "0.8.3", default-features = false }
 plastext-buffer.workspace = true
 url = "2"
 percent-encoding = "2"

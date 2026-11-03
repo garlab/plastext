@@ -465,13 +465,20 @@ impl MarkdownView {
         cx.notify();
     }
     fn reveal_metadata(&mut self, block: usize) {
-        if let Some(section) = self
-            .document
-            .blocks
-            .get(block)
-            .and_then(|b| b.metadata_section())
-            && self.expanded.insert(section)
-        {
+        let mut changed = false;
+        for section in plastext_markdown::BlockEntry::ancestors(&self.document.blocks, block) {
+            if !plastext_markdown::BlockEntry::section_open(
+                &self.document.blocks,
+                section,
+                &self.expanded,
+            ) {
+                if !self.expanded.remove(&section) {
+                    self.expanded.insert(section);
+                }
+                changed = true;
+            }
+        }
+        if changed {
             self.visible.reset(&self.document.blocks, &self.expanded);
             self.list.reset(self.visible.len());
         }
@@ -506,6 +513,7 @@ impl MarkdownView {
             }
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn rich_text(
         &self,
         block: &Block,
@@ -513,6 +521,7 @@ impl MarkdownView {
         id: (usize, usize),
         mono: bool,
         theme: Theme,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         // The displayed text: the source, except that rendered inline
@@ -523,6 +532,7 @@ impl MarkdownView {
         let mut targets = Vec::new();
         let mut slots = Vec::new();
         let mut replacements = Vec::new();
+        let mut marks = Vec::new();
         let mut at = range.start;
         let bold = matches!(
             block.kind,
@@ -559,6 +569,9 @@ impl MarkdownView {
                     links.push(slot.range());
                     targets.push(target.clone());
                 }
+                if style.mark {
+                    marks.push(slot.range());
+                }
                 text.push_str(&math::SLOT_CHAR.to_string().repeat(count));
                 slots.push(slot);
                 let transparent = gpui::Rgba {
@@ -578,6 +591,48 @@ impl MarkdownView {
             } else {
                 theme.text
             };
+            if !mono
+                && style.script != 0
+                && let Some(slot) = self.script_slot(
+                    block,
+                    text.len(),
+                    &block.text[start..end],
+                    style,
+                    color,
+                    window,
+                )
+            {
+                let display = slot.range();
+                replacements.push(selection::Replacement {
+                    source: start - range.start..end - range.start,
+                    display: display.clone(),
+                });
+                if let Some(target) = &style.link {
+                    links.push(display.clone());
+                    targets.push(target.clone());
+                }
+                if style.mark {
+                    marks.push(display.clone());
+                }
+                text.push_str(&math::SLOT_CHAR.to_string().repeat(display.len()));
+                runs.push(text_run(
+                    display.len(),
+                    false,
+                    false,
+                    false,
+                    gpui::Rgba {
+                        a: 0.,
+                        ..theme.text
+                    },
+                    self,
+                ));
+                slots.push(slot);
+                at = end;
+                continue;
+            }
+            if style.mark {
+                marks.push(text.len()..text.len() + end - start);
+            }
             let mut run = text_run(
                 end - start,
                 mono || style.code,
@@ -642,6 +697,7 @@ impl MarkdownView {
             block.text[range].to_owned().into(),
             Some(layout),
             replacements,
+            marks,
             content,
             cx,
         )
@@ -650,6 +706,7 @@ impl MarkdownView {
         &mut self,
         target: &str,
         alt: &str,
+        attributes: Option<&plastext_markdown::ImageAttributes>,
         ix: usize,
         theme: Theme,
         cx: &mut Context<Self>,
@@ -761,11 +818,19 @@ impl MarkdownView {
                 let dimensions = image.size(0);
                 let width = dimensions.width.0 as f32;
                 let height = dimensions.height.0 as f32;
-                let scale = (720. / width).min(1.) * self.zoom;
-                gpui::img(image.clone())
-                    .w(px(width * scale))
-                    .h(px(height * scale))
+                let (width, height) = image_box(width, height, attributes);
+                div()
+                    .w(px(width * self.zoom))
                     .max_w_full()
+                    .map(|mut d| {
+                        d.style().aspect_ratio = Some(width / height);
+                        d
+                    })
+                    .child(
+                        gpui::img(image.clone())
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
                     .into_any_element()
             }
             Some(Err(error)) => div()
@@ -776,11 +841,14 @@ impl MarkdownView {
                 .into_any_element(),
             None if self.image_sizes.contains_key(target) => {
                 let (w, h) = self.image_sizes[target];
-                let scale = (720. / w as f32).min(1.) * self.zoom;
+                let (width, height) = image_box(w as f32, h as f32, attributes);
                 div()
-                    .w(px(w as f32 * scale))
-                    .h(px(h as f32 * scale))
+                    .w(px(width * self.zoom))
                     .max_w_full()
+                    .map(|mut d| {
+                        d.style().aspect_ratio = Some(width / height);
+                        d
+                    })
                     .into_any_element()
             }
             None => div()
@@ -887,6 +955,7 @@ impl MarkdownView {
             0,
             block.text.clone().into(),
             Some(layout),
+            Vec::new(),
             Vec::new(),
             div()
                 .font_family(self.text_style.font_family.clone())
@@ -1076,8 +1145,44 @@ impl MarkdownView {
             })
             .text_size(px(BODY_SIZE * self.zoom))
             .line_height(relative(LINE_HEIGHT))
-            .text_color(theme.text);
+            .text_color(theme.text)
+            .map(|d| match block.alignment {
+                plastext_markdown::Alignment::Center => d.text_center(),
+                plastext_markdown::Alignment::Right => d.text_right(),
+                _ => d,
+            });
         let content = match &block.kind {
+            BlockKind::Details { open } => {
+                let section = block.source.start;
+                let expanded = *open ^ self.expanded.contains(&section);
+                div()
+                    .id(("md-details", ix))
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.text_muted)
+                            .child(if expanded { "▾" } else { "▸" }),
+                    )
+                    .child(div().flex_1().min_w_0().child(self.rich_text(
+                        &block,
+                        0..block.text.len(),
+                        (ix, 0),
+                        false,
+                        theme,
+                        window,
+                        cx,
+                    )))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.reading.selected.range().is_some_and(|r| !r.is_empty()) {
+                            this.toggle_metadata(section, cx);
+                        }
+                    }))
+                    .into_any_element()
+            }
             BlockKind::Rule => div()
                 .w_full()
                 .h(px(1.))
@@ -1095,7 +1200,15 @@ impl MarkdownView {
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
                     .text_size(px(math::text_size(&block.kind) * self.zoom))
                     .font_weight(FontWeight::BOLD)
-                    .child(self.rich_text(&block, 0..block.text.len(), (ix, 0), false, theme, cx))
+                    .child(self.rich_text(
+                        &block,
+                        0..block.text.len(),
+                        (ix, 0),
+                        false,
+                        theme,
+                        window,
+                        cx,
+                    ))
                     .child(
                         div()
                             .id(("md-anchor", ix))
@@ -1115,7 +1228,9 @@ impl MarkdownView {
             BlockKind::Code { .. } => self.code_block(block.clone(), ix, theme, window, cx),
             BlockKind::FrontMatter { .. }
             | BlockKind::FrontMatterRow { .. }
-            | BlockKind::FrontMatterSource { .. } => self.metadata_block(&block, ix, theme, cx),
+            | BlockKind::FrontMatterSource { .. } => {
+                self.metadata_block(&block, ix, theme, window, cx)
+            }
             BlockKind::TableRow {
                 header,
                 cells,
@@ -1148,14 +1263,65 @@ impl MarkdownView {
                             Some(plastext_markdown::Alignment::Right) => d.text_right(),
                             _ => d,
                         })
-                        .child(self.rich_text(&block, range.clone(), (ix, cell), false, theme, cx))
+                        .child(self.rich_text(
+                            &block,
+                            range.clone(),
+                            (ix, cell),
+                            false,
+                            theme,
+                            window,
+                            cx,
+                        ))
                 }))
                 .into_any_element(),
-            BlockKind::Image { destination, .. } => {
-                self.image(destination, &block.text, ix, theme, cx)
+            BlockKind::Image {
+                destination,
+                title,
+                attributes,
+            } => {
+                let dark = matches!(
+                    window.appearance(),
+                    gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+                );
+                let target = attributes
+                    .as_ref()
+                    .map_or(destination.as_str(), |a| a.destination(destination, dark));
+                let align = attributes.as_ref().map_or(block.alignment, |a| a.align);
+                let image = self.image(target, &block.text, attributes.as_deref(), ix, theme, cx);
+                let target_link = attributes
+                    .as_ref()
+                    .and_then(|a| a.link.clone())
+                    .or_else(|| block.spans.iter().find_map(|span| span.style.link.clone()));
+                let title = title.clone();
+                div()
+                    .id(("md-image", ix))
+                    .w_full()
+                    .flex()
+                    .when(!title.is_empty(), |d| {
+                        d.tooltip(move |_, cx| cx.new(|_| LinkTooltip(title.clone().into())).into())
+                    })
+                    .when_some(target_link, |d, link| {
+                        d.cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| this.open_link(&link, cx)))
+                    })
+                    .map(|d| match align {
+                        plastext_markdown::Alignment::Center => d.justify_center(),
+                        plastext_markdown::Alignment::Right => d.justify_end(),
+                        _ => d,
+                    })
+                    .child(image)
+                    .into_any_element()
             }
             BlockKind::Math => self.display_math(&block, ix, theme, window, cx),
-            _ => self.rich_text(&block, 0..block.text.len(), (ix, 0), false, theme, cx),
+            _ => self.rich_text(
+                &block,
+                0..block.text.len(),
+                (ix, 0),
+                false,
+                theme,
+                window,
+                cx,
+            ),
         };
         // List items are laid out as roots, so their auto margins do not
         // center them. Give each row a full-width flex parent instead.
@@ -1221,6 +1387,20 @@ impl MarkdownView {
                 ),
             )
             .into_any_element()
+    }
+}
+
+fn image_box(
+    width: f32,
+    height: f32,
+    attrs: Option<&plastext_markdown::ImageAttributes>,
+) -> (f32, f32) {
+    let aspect = width.max(1.) / height.max(1.);
+    match (attrs.and_then(|a| a.width), attrs.and_then(|a| a.height)) {
+        (Some(w), Some(h)) => (w as f32, h as f32),
+        (Some(w), None) => (w as f32, w as f32 / aspect),
+        (None, Some(h)) => (h as f32 * aspect, h as f32),
+        _ => (width.min(720.), width.min(720.) / aspect),
     }
 }
 

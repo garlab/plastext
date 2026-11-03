@@ -15,7 +15,8 @@ corresponding document position. Each split pane has its own view and selection.
 Copy produces plain text: Markdown styling and link destinations are omitted,
 table cells are separated by tabs, and formulas copy their original TeX without
 the surrounding dollar delimiters. Code and diagram source remain text.
-Collapsed front matter is omitted; expand it to include its values.
+Collapsed front matter and HTML disclosures are omitted; expand them to include
+their contents.
 
 Selection survives scrolling, zoom and Source/Preview toggles. Copying waits for
 the document index to finish, then reads one parsed page at a time in the
@@ -56,5 +57,42 @@ paragraphs and formulas without definitions do not add to this history.
 
 Try the [reading fixture](fixtures/markdown-reading.md) and
 [heading/zoom fixture](fixtures/math-headings.md).
-The broader safe HTML subset, remote-image loading and rich-text/HTML clipboard
-output remain future work. Editing and synchronized source/preview are M3 work.
+Rich-text/HTML clipboard output remains future work. Editing and synchronized
+source/preview are M3 work.
+
+## Safe native HTML
+
+HTML inside Markdown uses the same native blocks, text selection, find and image
+workers as Markdown. Supported elements are:
+
+- `<details>` and `<summary>`, including nesting and the `open` attribute.
+  Click the disclosure triangle or summary to toggle it. Find and source
+  navigation reveal enclosing disclosures; collapsed contents are excluded from
+  layout and copying. Each split pane has independent expansion state.
+- `<b>`, `<strong>`, `<i>`, `<em>`, `<code>`, `<kbd>`, `<mark>`, `<sub>` and `<sup>`.
+  Subscripts and superscripts use smaller native glyphs; copying retains their
+  original text. `<a href>` follows the same link policy as Markdown links.
+- `<p align>` and `<div align>` with left, center or right alignment, `<br>` and
+  `<hr>`. Comments are hidden, and HTML entities are decoded.
+- `<img src alt title width height align>`. Width and height accept positive
+  pixel values up to 16,384; the display box remains within the reading column.
+  `<picture>` selects the first applicable `<source srcset>` for the window's
+  light/dark appearance, falling back to `<img>`. Only empty media conditions
+  and `(prefers-color-scheme: light|dark)` are supported; the first srcset
+  candidate is used, without responsive density/width selection.
+
+Unsupported elements, including scripts, styles, forms and iframes, remain
+inert, dimmed source. Event handlers, CSS, navigation attributes and browser
+features are never evaluated. The tokenizer has no resource loader or execution
+engine. Local/data images use the existing bounded decoder; remote resources,
+including localhost URLs, are always blocked. Links leave the app only on a
+user click. Standalone HTML files still open in Source.
+
+HTML nesting is limited to 128 levels. Each tokenizer input is at most 256 KiB
+with at most 32,768 tokens; attribute values are limited to 16 KiB. Open-element
+context is bounded to approximately 64 KiB and charged to the existing index
+budget. Oversized constructs fall back to source. Text layout items remain
+bounded to 16 KiB, and parsed pages retain their 32 MiB cache limit. No full DOM
+is retained.
+
+Try the [safe HTML fixture](fixtures/safe-html.md).

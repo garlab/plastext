@@ -30,8 +30,14 @@ pub fn parsed_bytes(blocks: &[Arc<Block>]) -> usize {
                         }
                         BlockKind::Heading { id, .. } => id.capacity(),
                         BlockKind::Code { language, .. } => language.capacity(),
-                        BlockKind::Image { destination, title } => {
-                            destination.capacity() + title.capacity()
+                        BlockKind::Image {
+                            destination,
+                            title,
+                            attributes,
+                        } => {
+                            destination.capacity()
+                                + title.capacity()
+                                + attributes.as_ref().map_or(0, |a| a.retained_bytes())
                         }
                         BlockKind::FrontMatter { error, .. } => {
                             error.as_ref().map_or(0, String::capacity)
