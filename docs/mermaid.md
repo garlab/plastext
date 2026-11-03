@@ -23,8 +23,8 @@ This is partial Mermaid compatibility. Labels support Latin (including accents),
 
 ## Resource bounds
 
-Plastext uses the published `document-graphics` 0.1.2 and
-`document-graphics-mermaid` 0.1.2 releases for the limits below. No local
+Plastext uses the published `document-graphics` 0.1.3 and
+`document-graphics-mermaid` 0.1.3 releases for the limits below. No local
 dependency overrides are needed.
 
 The Markdown parser keeps diagram fences whole up to 16 KiB / 1,024 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.

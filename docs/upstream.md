@@ -4,7 +4,7 @@ Fixes to third-party code go upstream, not into plastext. plastext keeps no modi
 
 ## Shared libraries
 
-`katex-native` 0.1.0 and `document-graphics` 0.1.2 are consumed from crates.io.
+`katex-native` 0.1.0 and `document-graphics` 0.1.3 are consumed from crates.io.
 `document-graphics` owns shared Mermaid/SVG/SGF rendering and worker
 supervision; its source lives in the standalone document-graphics repository.
 Plastext uses versioned dependencies and keeps GUI scheduling, cache budgets and
