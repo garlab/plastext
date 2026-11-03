@@ -16,11 +16,10 @@ The strict document SVG subset and broader isolated image SVG renderer keep
 their own font/resource policies. See [shared image rendering](shared-images.md)
 for the extraction, validation and performance comparison.
 
-Next: **share the remaining private worker utilities** for cancellation,
-deadlines and process cleanup where the mechanisms match. macOS resident-memory
-sampling is already shared between the Mermaid and image workers. Keep
-format-specific protocols and sandbox rules separate; do not add another public
-crate or a general-purpose worker framework.
+The Mermaid and image workers also share private cancellation/deadline checks,
+macOS memory polling and child cleanup. Their protocols, I/O loops and sandbox
+policies remain separate. This completes the planned shared-rendering cleanup;
+no additional public crate or worker framework is needed.
 
 Math remains in `katex-native`. Markdown/HTML parsing, layout, navigation and
 icon-theme loading remain application concerns. TeX compilation stays with

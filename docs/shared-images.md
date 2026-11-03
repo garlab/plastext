@@ -11,7 +11,7 @@ animation frames and broader SVG. The strict SVG API retains its bundled fonts
 and rejection policy; broader SVG stays worker-only with nested images disabled.
 Icon-theme parsing and PDF/TeX orchestration remain in Plastext. macOS resident
 memory sampling is shared privately between the Mermaid and image workers.
-Remaining worker mechanism consolidation is tracked in the roadmap.
+The follow-up below consolidates request guards and child cleanup.
 
 ## Comparison
 
@@ -82,3 +82,28 @@ Native GUI zoom/playback interactions still need manual review.
 Both consumers temporarily pin 0.1.5 through ignored local overrides. After
 manual publication, remove those overrides and update both Cargo.lock files to
 the registry source/checksum. No Mermaid backend or math release is needed.
+
+## Private worker cleanup
+
+The Mermaid and image clients now share cancellation/deadline guards, macOS
+memory-poll scheduling and direct-child termination/reaping. Their protocols,
+I/O loops, timeout values, error kinds and sandbox policies remain separate.
+Image requests still require a successful memory sample; Mermaid keeps its
+best-effort sampling policy. No public API, dependency or feature change is
+needed; this is included in the same unreleased 0.1.5.
+
+The follow-up comparison against library commit `0fa9ed2` used the same machine,
+release profiles and eight image/six terminal cases above, with one warm-up and
+three fresh processes per version. Image metadata/RGBA and complete terminal
+output remained identical. The huge PNG overview took 1,199.5 → 1,205.8 ms, the
+64 × 64 tile 130.4 → 130.7 ms, and worker peak RSS 58.11 → 57.89 MiB. The terminal
+Mermaid fixture took 44.84 → 45.46 ms at 100 columns and 37.34 → 35.87 ms at 24.
+These short sequential runs show no material regression; they are smoke checks,
+not new performance guarantees. Plastext's binary shrank 32 bytes and mdviewer's
+grew 16 bytes. Raw samples remain local.
+
+Default/all-feature library tests, Clippy, Rust 1.90 and package verification
+passed, together with Linux/Windows cross-compilation checks. Both Plastext
+worker adapters passed integration tests. mdviewer passed its 68 Rust tests,
+44 terminal checks and 11 pager checks. Cancellation, partial replies, late
+completion, memory limits and process reaping remain covered by regression tests.
