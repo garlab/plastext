@@ -1,5 +1,5 @@
-use plastext_search::FileMatches;
-use std::{collections::BTreeMap, path::PathBuf};
+use plastext_search::{FileMatches, path_order};
+use std::{collections::BTreeMap, ffi::OsString};
 
 /// File indices remain stable while their display order changes as results arrive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,19 +15,20 @@ pub(super) struct Results {
     pub lines: usize,
     // Alphabetical folder/file order, ignoring case. Original paths break ties
     // consistently on case-sensitive filesystems and for non-Unicode filenames.
-    order: BTreeMap<(PathBuf, PathBuf), usize>,
+    order: BTreeMap<Vec<(OsString, OsString)>, usize>,
 }
 
 impl Results {
     pub fn extend(&mut self, files: impl IntoIterator<Item = FileMatches>) {
         for file in files {
-            let key = (
-                PathBuf::from(file.path.to_string_lossy().to_lowercase()),
-                file.path.clone(),
-            );
-            self.order.insert(key, self.files.len());
+            let key = path_order(&file.path);
             self.lines += file.lines.len();
-            self.files.push(file);
+            if let Some(&index) = self.order.get(&key) {
+                self.files[index].lines.extend(file.lines);
+            } else {
+                self.order.insert(key, self.files.len());
+                self.files.push(file);
+            }
         }
         // Rebuild once per received batch, never once per rendered row/frame.
         self.rows.clear();
@@ -43,6 +44,7 @@ impl Results {
 mod tests {
     use super::*;
     use plastext_search::LineMatch;
+    use std::path::PathBuf;
 
     fn file(path: &str) -> FileMatches {
         FileMatches {
@@ -109,6 +111,28 @@ mod tests {
         };
         assert_eq!(results.files[id].path, PathBuf::from("z.rs"));
         assert_eq!(results.files[id].lines[line].line, 2);
+    }
+
+    #[test]
+    fn continuation_appends_to_existing_file_without_moving_rows() {
+        let mut results = Results::default();
+        results.extend([file("a.rs")]);
+        let previous = results.rows.clone();
+        let mut next = file("a.rs");
+        next.lines[0].line = 20;
+        next.lines[1].line = 30;
+        results.extend([next, file("b.rs")]);
+        assert_eq!(results.files.len(), 2);
+        assert_eq!(&results.rows[..previous.len()], previous);
+        assert_eq!(
+            results.files[0]
+                .lines
+                .iter()
+                .map(|line| line.line)
+                .collect::<Vec<_>>(),
+            [2, 10, 20, 30]
+        );
+        assert_eq!(results.lines, 6);
     }
 
     #[test]

@@ -60,8 +60,9 @@ Drag the divider beside the Files/Search pane or between split panes to resize t
 Project search has separate **Aa** (Match Case), **ab** (Match Whole Word) and
 **`.*`** (Regular Expression) toggles, with hover descriptions. Case matching is off
 by default, including for uppercase queries. Results are grouped alphabetically
-by folder and filename, with matches in line order. Search stops at 10,000
-matching lines; the files included at that limit can vary with parallel scan order.
+by folder and filename, with matches in line order. **File filters** adds
+include/exclude globs; **Show more** continues after each 10,000 matching lines.
+The capped results are deterministic for unchanged files. See [project search](docs/search.md).
 
 HTML source highlights JavaScript inside `<script>` and CSS inside `<style>`.
 Module scripts and JSON script data are recognized by their `type` attribute.

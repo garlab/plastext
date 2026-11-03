@@ -18,10 +18,10 @@ use gpui::{
 };
 use plastext_editor::{TextInput, TextInputEvent, Theme};
 use plastext_project::TreeOptions;
-use plastext_search::{FileMatches, ProjectQuery, SearchOptions, search_project};
+use plastext_search::{FileFilters, FileMatches, ProjectQuery, ProjectSearch, SearchOptions};
 use results::{Results, Row};
 
-/// Searches stop after this many matching lines.
+/// Matching lines per requested page.
 const LIMIT: usize = 10_000;
 /// Typing pauses this long before a search starts.
 const DEBOUNCE: Duration = Duration::from_millis(200);
@@ -36,7 +36,7 @@ pub enum SearchPanelEvent {
 enum Progress {
     Idle,
     Searching,
-    Done,
+    Done { more: bool, incomplete: usize },
     Failed(String),
 }
 
@@ -44,13 +44,17 @@ pub struct SearchPanel {
     root: PathBuf,
     tree_options: TreeOptions,
     input: Entity<TextInput>,
+    include: Entity<TextInput>,
+    exclude: Entity<TextInput>,
+    filters_visible: bool,
+    session: Option<ProjectSearch>,
     options: SearchOptions,
     results: Results,
     progress: Progress,
     cancel: Arc<AtomicBool>,
     search: Option<Task<()>>,
     scroll_handle: UniformListScrollHandle,
-    _input_changes: Subscription,
+    _input_changes: Vec<Subscription>,
 }
 
 impl EventEmitter<SearchPanelEvent> for SearchPanel {}
@@ -58,13 +62,23 @@ impl EventEmitter<SearchPanelEvent> for SearchPanel {}
 impl SearchPanel {
     pub fn new(root: PathBuf, tree_options: TreeOptions, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| TextInput::new("Search the project", cx));
-        let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
-            this.schedule_search(cx)
-        });
+        let include = cx.new(|cx| TextInput::new("e.g. src/**, *.rs", cx));
+        let exclude = cx.new(|cx| TextInput::new("e.g. target, **/*.min.js", cx));
+        let input_changes = [&input, &include, &exclude]
+            .map(|input| {
+                cx.subscribe(input, |this, _, TextInputEvent::Changed, cx| {
+                    this.schedule_search(cx)
+                })
+            })
+            .into();
         Self {
             root,
             tree_options,
             input,
+            include,
+            exclude,
+            filters_visible: false,
+            session: None,
             options: SearchOptions::default(),
             results: Results::default(),
             progress: Progress::Idle,
@@ -83,6 +97,9 @@ impl SearchPanel {
     fn schedule_search(&mut self, cx: &mut Context<Self>) {
         // Stop obsolete work immediately, including during the typing debounce.
         self.cancel.store(true, Ordering::Relaxed);
+        self.session = None;
+        self.progress = Progress::Searching;
+        cx.notify();
         self.search = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(DEBOUNCE).await;
             this.update(cx, |this, cx| this.start_search(cx)).ok();
@@ -98,6 +115,7 @@ impl SearchPanel {
     fn start_search(&mut self, cx: &mut Context<Self>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.results = Results::default();
+        self.session = None;
         self.search = None;
         let text = self.input.read(cx).text().to_owned();
         if text.is_empty() {
@@ -113,26 +131,49 @@ impl SearchPanel {
                 return;
             }
         };
+        let filters =
+            match FileFilters::new(self.include.read(cx).text(), self.exclude.read(cx).text()) {
+                Ok(filters) => filters,
+                Err(err) => {
+                    self.progress = Progress::Failed(err);
+                    cx.notify();
+                    return;
+                }
+            };
+        let root = self.root.clone();
+        let tree_options = self.tree_options.clone();
+        self.scroll_handle
+            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+        self.run_page(
+            move |cancel| ProjectSearch::new(&root, &tree_options, query, &filters, cancel),
+            cx,
+        );
+    }
+
+    fn show_more(&mut self, cx: &mut Context<Self>) {
+        if let Some(session) = self.session.take() {
+            self.run_page(move |_| session, cx);
+        }
+    }
+
+    fn run_page(
+        &mut self,
+        create: impl FnOnce(&AtomicBool) -> ProjectSearch + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         self.progress = Progress::Searching;
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancel = cancel.clone();
         let (files, received) = async_channel::bounded(RESULT_BATCH);
-        let root = self.root.clone();
-        let tree_options = self.tree_options.clone();
         let worker_cancel = cancel.clone();
         let searching = cx.background_executor().spawn(async move {
-            search_project(
-                &root,
-                &tree_options,
-                &query,
-                LIMIT,
-                &worker_cancel,
-                |found| {
-                    if files.send_blocking(found).is_err() {
-                        worker_cancel.store(true, Ordering::Relaxed);
-                    }
-                },
-            );
+            let mut session = create(&worker_cancel);
+            let outcome = session.next_page(LIMIT, &worker_cancel, |found| {
+                if files.send_blocking(found).is_err() {
+                    worker_cancel.store(true, Ordering::Relaxed);
+                }
+            });
+            (session, outcome)
         });
         self.search = Some(cx.spawn(async move |this, cx| {
             while let Ok(file) = received.recv().await {
@@ -157,17 +198,24 @@ impl SearchPanel {
                 // First results publish immediately; subsequent bursts share an update.
                 cx.background_executor().timer(UPDATE_INTERVAL).await;
             }
-            searching.await;
+            let (session, outcome) = searching.await;
             this.update(cx, |this, cx| {
                 if Arc::ptr_eq(&cancel, &this.cancel) && !cancel.load(Ordering::Relaxed) {
-                    this.progress = Progress::Done;
+                    match outcome {
+                        Ok(more) => {
+                            this.progress = Progress::Done {
+                                more,
+                                incomplete: session.incomplete_files(),
+                            };
+                            this.session = more.then_some(session);
+                        }
+                        Err(error) => this.progress = Progress::Failed(error),
+                    }
                     cx.notify();
                 }
             })
             .ok();
         }));
-        self.scroll_handle
-            .scroll_to_item(0, gpui::ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -210,11 +258,23 @@ impl SearchPanel {
         match &self.progress {
             Progress::Idle => String::new(),
             Progress::Searching => format!("Searching… {found}"),
-            Progress::Done if self.results.lines >= LIMIT => {
-                format!("{found} (stopped at {LIMIT})")
+            Progress::Done { more, incomplete } => {
+                let mut text = if self.results.lines == 0 {
+                    "No results".to_owned()
+                } else {
+                    found
+                };
+                if *more {
+                    text.push_str(" · Search paused");
+                }
+                if *incomplete > 0 {
+                    text.push_str(&format!(
+                        " · {} not fully searched",
+                        plural(*incomplete, "file")
+                    ));
+                }
+                text
             }
-            Progress::Done if self.results.lines == 0 => "No results".to_owned(),
-            Progress::Done => found,
             Progress::Failed(err) => err.clone(),
         }
     }
@@ -390,6 +450,55 @@ impl Render for SearchPanel {
             .child(input)
             .child(
                 div()
+                    .id("search-filters-toggle")
+                    .mx_2()
+                    .pb_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .text_color(theme.text_muted)
+                    .child(if self.filters_visible {
+                        "Hide file filters"
+                    } else if !self.include.read(cx).text().is_empty()
+                        || !self.exclude.read(cx).text().is_empty()
+                    {
+                        "File filters · active"
+                    } else {
+                        "File filters"
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.filters_visible ^= true;
+                        cx.notify();
+                    })),
+            )
+            .when(self.filters_visible, |panel| {
+                let field = |label: &'static str, input: Entity<TextInput>| {
+                    let focus = input.focus_handle(cx);
+                    div()
+                        .mx_2()
+                        .mb_2()
+                        .text_xs()
+                        .child(div().text_color(theme.text_muted).child(label))
+                        .child(
+                            div()
+                                .px_2()
+                                .py_1()
+                                .bg(theme.background)
+                                .border_1()
+                                .border_color(theme.border)
+                                .rounded_sm()
+                                .cursor(CursorStyle::IBeam)
+                                .on_mouse_down(MouseButton::Left, move |_, window, _| {
+                                    focus.focus(window)
+                                })
+                                .child(input),
+                        )
+                };
+                panel
+                    .child(field("Files to include", self.include.clone()))
+                    .child(field("Files to exclude", self.exclude.clone()))
+            })
+            .child(
+                div()
                     .px_3()
                     .pb_1()
                     .text_xs()
@@ -397,6 +506,24 @@ impl Render for SearchPanel {
                     .child(self.summary()),
             )
             .child(results)
+            .when(
+                matches!(self.progress, Progress::Done { more: true, .. }),
+                |panel| {
+                    panel.child(
+                        div()
+                            .id("search-show-more")
+                            .m_2()
+                            .p_2()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .text_sm()
+                            .text_color(theme.text)
+                            .hover(|button| button.bg(theme.border))
+                            .child("Show more")
+                            .on_click(cx.listener(|this, _, _, cx| this.show_more(cx))),
+                    )
+                },
+            )
     }
 }
 

@@ -3,5 +3,5 @@
 mod files;
 mod tree;
 
-pub use files::walk_files;
+pub use files::{ordered_files, walk_files};
 pub use tree::{DirEntry, EntryKind, FileTree, ShowIgnored, TreeOptions, TreeRow, read_dir};

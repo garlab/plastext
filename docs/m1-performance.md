@@ -94,3 +94,18 @@ target/release/plastext-bench read /tmp/plastext-m1-10mb.c --frames 300 --foregr
 ```
 
 `m1` and `read` return nonzero for a measured budget failure, missing results or an incomplete native run. `read` prints the path of its raw frame log and has a timeout; it uses default settings. `--foreground` activates the benchmark window; keep it visible and open until it exits itself. Without this flag it leaves keyboard focus alone, but occlusion can suspend the run. `launch` prints its measurements for comparison with the table. Run performance commands serially, with compilation and other heavy tasks finished.
+
+### Search continuation — 2026-11-03
+
+The accepted baseline above is unchanged. [The search-continuation check](benchmarks/m1-2026-11-03-search-continuation.summary.json)
+uses Linux 6.12's 86,280 visible files and five warm core runs. First project-search
+results took 1.02 ms median / 1.06 ms maximum, within the 50 ms budget.
+Quick Open's measured first-result and completed-ranking budgets also passed.
+This run does not repeat the million-path test, native rendering or reference-M1
+certification.
+
+Search now walks directories in deterministic alphabetical order, sorting each
+as it is opened and reading at most eight files ahead. It can stop at the result
+cap without listing or reading the whole repository. “Show more” resumes that
+walk and any partially searched file; include/exclude filters retain ignore-file
+semantics.

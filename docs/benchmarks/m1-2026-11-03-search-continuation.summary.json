@@ -1,0 +1,92 @@
+{
+  "artifact": "summary",
+  "files": 86280,
+  "metrics": [
+    {
+      "budget": 100.0,
+      "max": 7.324416,
+      "name": "Quick Open first snapshot from walk start",
+      "p50": 3.808667,
+      "p99": 7.324416,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    },
+    {
+      "budget": null,
+      "max": 166.801166,
+      "name": "complete file walk and matching",
+      "p50": 99.69749999999999,
+      "p99": 166.801166,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    },
+    {
+      "budget": 16.0,
+      "max": 1.5653329999999999,
+      "name": "Quick Open per keystroke (core)",
+      "p50": 0.000125,
+      "p99": 1.0972499999999998,
+      "pass": true,
+      "sample_count": 280,
+      "unit": "ms"
+    },
+    {
+      "budget": 16.0,
+      "max": 2.61875,
+      "name": "Quick Open completed ranking per keystroke (core)",
+      "p50": 0.000125,
+      "p99": 2.53175,
+      "pass": true,
+      "sample_count": 280,
+      "unit": "ms"
+    },
+    {
+      "budget": 50.0,
+      "max": 1.0615830000000002,
+      "name": "project search first result (warm)",
+      "p50": 1.024666,
+      "p99": 1.0615830000000002,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    },
+    {
+      "budget": null,
+      "max": 0.597209,
+      "name": "kernel/sched/core.c bytes ready (excludes paint)",
+      "p50": 0.052083000000000004,
+      "p99": 0.597209,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    },
+    {
+      "budget": null,
+      "max": 25.760417,
+      "name": "kernel/sched/core.c open + tree + viewport highlights",
+      "p50": 21.61575,
+      "p99": 25.760417,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    },
+    {
+      "budget": null,
+      "max": 5.7915,
+      "name": "kernel/sched/core.c syntax folds (background)",
+      "p50": 4.97875,
+      "p99": 5.7915,
+      "pass": true,
+      "sample_count": 5,
+      "unit": "ms"
+    }
+  ],
+  "million_synthetic_paths": false,
+  "passed": true,
+  "runs": 5,
+  "schema": 2,
+  "scope": "core only; native rendering via read/launch; hardware is not normalized",
+  "source": "plastext-search-kernel-20261103"
+}

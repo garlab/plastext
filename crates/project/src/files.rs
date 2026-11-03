@@ -7,6 +7,42 @@ use ignore::{WalkBuilder, WalkState};
 
 use crate::TreeOptions;
 
+/// Ignore-aware depth-first traversal, sorting each directory as it is opened.
+/// This yields deterministic component-wise alphabetical order without listing
+/// the entire project before the first result. Original names break case ties.
+pub fn ordered_files(
+    root: &Path,
+    options: &TreeOptions,
+) -> impl Iterator<Item = std::path::PathBuf> + Send + 'static {
+    let exclude = options.exclude.clone();
+    let filter_root = root.to_owned();
+    let root = root.to_owned();
+    WalkBuilder::new(&root)
+        .hidden(!options.show_hidden)
+        .filter_entry(move |entry| {
+            !exclude.is_match(
+                entry
+                    .path()
+                    .strip_prefix(&filter_root)
+                    .unwrap_or(entry.path()),
+            )
+        })
+        .sort_by_file_name(|a, b| {
+            a.to_string_lossy()
+                .to_lowercase()
+                .cmp(&b.to_string_lossy().to_lowercase())
+                .then_with(|| a.cmp(b))
+        })
+        .build()
+        .filter_map(move |entry| {
+            let entry = entry.ok()?;
+            if !entry.file_type()?.is_file() && !entry.file_type()?.is_symlink() {
+                return None;
+            }
+            entry.path().strip_prefix(&root).ok().map(Path::to_owned)
+        })
+}
+
 /// Finds every file in the project at `root` for Quick Open (spec NAV-1),
 /// passing each path, relative to `root`, to `found` as soon as it's seen.
 /// Ignored files are left out, as are hidden ones unless shown, and the

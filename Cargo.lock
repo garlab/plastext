@@ -5424,6 +5424,7 @@ name = "plastext-search"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "globset",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",

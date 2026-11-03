@@ -7,10 +7,9 @@ implemented features, measured limits and remaining exit checks. The accepted
 
 ## Near term
 
-1. Polish everyday navigation and search. Project search now has explicit case
-   matching and alphabetical file groups. Include/exclude globs and expanding
-   capped results remain part of the search specification; continuation should
-   also make the retained subset deterministic when the result limit is reached.
+1. **Completed:** [project search](search.md) has explicit case matching,
+   include/exclude file globs, deterministic alphabetical results and resumable
+   “Show more” pages. Recent files rank higher among matching Quick Open results.
 2. **Completed:** [image previews](images.md) now have bounded large-image
    decoding, tiles for sharp zoom, AVIF/HEIC and additional native formats,
    animated GIF/WebP, and SVG source mode. See the image guide for codec and
