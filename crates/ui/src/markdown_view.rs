@@ -21,6 +21,7 @@ use std::{
 
 use crate::tab_view::format_size;
 mod find;
+mod highlights;
 mod math;
 mod mermaid;
 mod metadata;
@@ -613,12 +614,6 @@ impl MarkdownView {
         let weak = cx.entity().downgrade();
         let tooltip_targets = targets.clone();
         let tooltip_ranges = links.clone();
-        let runs = self.highlight_matches(&block.text[range.clone()], runs, &replacements, theme);
-        let runs = selection::highlight_runs(
-            runs,
-            self.selected_range(id.0, range.clone(), &replacements),
-            theme.selection.into(),
-        );
         math::Slot::set_line_starts(&mut slots, &text);
         let styled = StyledText::new(text).with_runs(runs);
         let layout = styled.layout().clone();
@@ -885,21 +880,6 @@ impl MarkdownView {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let highlights = self.highlight_code_matches(&block.text, highlights, theme);
-        let highlights = gpui::combine_highlights(
-            highlights,
-            self.selected_range(ix, 0..block.text.len(), &[])
-                .map(|range| {
-                    (
-                        range,
-                        gpui::HighlightStyle {
-                            background_color: Some(theme.selection.into()),
-                            ..Default::default()
-                        },
-                    )
-                }),
-        )
-        .collect::<Vec<_>>();
         let text = StyledText::new(block.text.clone()).with_highlights(highlights);
         let layout = text.layout().clone();
         self.selectable(

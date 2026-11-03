@@ -258,122 +258,61 @@ impl MarkdownView {
         )
     }
 
-    /// Merge search backgrounds with existing inline styles without losing links.
-    pub(super) fn highlight_matches(
+    /// Find decorations are painted behind the existing glyph layout.
+    pub(super) fn find_ranges(
         &self,
         text: &str,
-        runs: Vec<TextRun>,
         replacements: &[selection::Replacement],
-        theme: Theme,
-    ) -> Vec<TextRun> {
-        let Some(find) = &self.find else { return runs };
-        if find.query.is_empty() {
-            return runs;
-        }
-        let mut hits: Vec<std::ops::Range<usize>> = Vec::new();
-        for (at, _) in text.match_indices(&find.query) {
-            let range = selection::display_range(at..at + find.query.len(), replacements);
-            if let Some(last) = hits.last_mut().filter(|last| last.end >= range.start) {
-                last.end = last.end.max(range.end);
-            } else {
-                hits.push(range);
-            }
-        }
-        let mut result = Vec::new();
-        let mut at = 0;
-        let mut hit = 0;
-        for run in runs {
-            let end = at + run.len;
-            while at < end {
-                while hit < hits.len() && hits[hit].end <= at {
-                    hit += 1;
-                }
-                let active = hits.get(hit).is_some_and(|h| h.contains(&at));
-                let next = hits.get(hit).map_or(end, |h| {
-                    if active {
-                        h.end.min(end)
-                    } else {
-                        h.start.min(end)
-                    }
-                });
-                let mut part = run.clone();
-                part.len = next - at;
-                if active {
-                    part.background_color = Some(theme.find_match.into());
-                }
-                result.push(part);
-                at = next;
-            }
-        }
-        result
-    }
-
-    pub(super) fn highlight_code_matches(
-        &self,
-        text: &str,
-        syntax: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
-        theme: Theme,
-    ) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> {
-        let query = self.find.as_ref().map_or("", |find| find.query.as_str());
-        code_matches(text, syntax, query, theme.find_match.into())
+    ) -> Vec<std::ops::Range<usize>> {
+        mapped_matches(
+            text,
+            self.find.as_ref().map_or("", |find| find.query.as_str()),
+            replacements,
+        )
     }
 }
 
-fn code_matches(
+fn mapped_matches(
     text: &str,
-    syntax: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
     query: &str,
-    background: gpui::Hsla,
-) -> Vec<(std::ops::Range<usize>, gpui::HighlightStyle)> {
+    replacements: &[selection::Replacement],
+) -> Vec<std::ops::Range<usize>> {
+    let mut hits: Vec<std::ops::Range<usize>> = Vec::new();
     if query.is_empty() {
-        return syntax;
+        return hits;
     }
-    gpui::combine_highlights(
-        syntax,
-        text.match_indices(query).map(|(at, _)| {
-            (
-                at..at + query.len(),
-                gpui::HighlightStyle {
-                    background_color: Some(background),
-                    ..Default::default()
-                },
-            )
-        }),
-    )
-    .collect()
+    for (at, _) in text.match_indices(query) {
+        let range = selection::display_range(at..at + query.len(), replacements);
+        if let Some(last) = hits.last_mut().filter(|last| last.end >= range.start) {
+            last.end = last.end.max(range.end);
+        } else {
+            hits.push(range);
+        }
+    }
+    hits
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn code_find_spans_tokens_and_plain_text_without_losing_syntax_color() {
-        let foreground = gpui::rgb(0x123456).into();
-        let background = gpui::rgb(0xabcdef).into();
-        let syntax = vec![(
-            0..3,
-            gpui::HighlightStyle {
-                color: Some(foreground),
-                ..Default::default()
-            },
-        )];
-        let highlights = code_matches("let café = 1", syntax.clone(), "et café", background);
+    fn find_maps_tex_matches_to_whole_formulas_and_keeps_plain_text_offsets() {
+        let maps = [selection::Replacement {
+            source: 2..5,
+            display: 2..8,
+        }];
         assert_eq!(
-            highlights
-                .iter()
-                .map(|(r, _)| r.clone())
-                .collect::<Vec<_>>(),
-            [0..1, 1..3, 3..9]
+            mapped_matches("a xxx café", "x", &maps).as_slice(),
+            std::slice::from_ref(&(2..8))
         );
-        assert_eq!(highlights[0].1.color, Some(foreground));
-        assert_eq!(highlights[0].1.background_color, None);
-        assert_eq!(highlights[1].1.color, Some(foreground));
-        assert_eq!(highlights[1].1.background_color, Some(background));
-        assert_eq!(highlights[2].1.background_color, Some(background));
         assert_eq!(
-            code_matches("let café = 1", syntax, "", background).len(),
-            1
+            mapped_matches("a xxx café", "café", &maps).as_slice(),
+            std::slice::from_ref(&(9..14))
         );
+        assert_eq!(
+            mapped_matches("let café = 1", "et café", &[]).as_slice(),
+            std::slice::from_ref(&(1..9))
+        );
+        assert!(mapped_matches("text", "", &[]).is_empty());
     }
 }

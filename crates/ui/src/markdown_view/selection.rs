@@ -257,6 +257,30 @@ impl MarkdownView {
         content: impl IntoElement,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let selected = self.selected_range(block, offset..offset + text.len(), &replacements);
+        let matches = self.find_ranges(&text, &replacements);
+        let background = layout
+            .clone()
+            .filter(|_| selected.is_some() || !matches.is_empty())
+            .map(|layout| {
+                canvas(
+                    |_, _, _| (),
+                    move |_, _, window, cx| {
+                        super::highlights::paint(
+                            &layout,
+                            &matches,
+                            selected.as_ref(),
+                            window.text_style().text_align,
+                            Theme::get(window, cx),
+                            window,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+            });
         let hit = Hit {
             block,
             offset,
@@ -292,6 +316,7 @@ impl MarkdownView {
                     cx.stop_propagation();
                 }),
             )
+            .children(background)
             .child(content)
             .child(
                 canvas(
@@ -453,39 +478,6 @@ impl MarkdownView {
             0.
         }
     }
-}
-
-pub(super) fn highlight_runs(
-    runs: Vec<TextRun>,
-    selected: Option<Range<usize>>,
-    color: gpui::Hsla,
-) -> Vec<TextRun> {
-    let Some(selected) = selected else {
-        return runs;
-    };
-    let mut result = Vec::with_capacity(runs.len() + 2);
-    let mut at = 0;
-    for run in runs {
-        let end = at + run.len;
-        while at < end {
-            let active = selected.contains(&at);
-            let until = if at < selected.start {
-                selected.start.min(end)
-            } else if active {
-                selected.end.min(end)
-            } else {
-                end
-            };
-            let mut part = run.clone();
-            part.len = until - at;
-            if active {
-                part.background_color = Some(color);
-            }
-            result.push(part);
-            at = until;
-        }
-    }
-    result
 }
 
 #[cfg(test)]

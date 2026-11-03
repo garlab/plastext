@@ -11,6 +11,13 @@ Select **styled text**, *café*, 中文, 👩‍💻 and `inline code` together.
 Click [the heading fixture](math-headings.md) to follow the link, or drag across
 it to copy its label. Selection should survive zooming and Source/Preview.
 
+## Hard rules (read these every time)
+
+Slowly drag from `rules` through the closing parenthesis, then back again.
+The letters and heading anchor should stay still as the selection changes.
+Repeat at 80%, 90% and 100% zoom, and in a pane narrow enough to wrap this
+heading. Find highlighting should keep the same spacing too.
+
 ## A heading with $\sq{x}$
 
 An inline fraction $\frac{a+b}{c}$ should copy its TeX. Double-click the formula
