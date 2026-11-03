@@ -217,6 +217,7 @@ impl MarkdownView {
         self.diagrams.hidden = !visible;
         if !visible {
             self.diagrams.clear(cx.entity_id(), cx);
+            self.clear_images(cx);
         }
     }
 

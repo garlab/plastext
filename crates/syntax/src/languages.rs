@@ -119,7 +119,7 @@ macro_rules! language {
     };
 }
 
-static LANGUAGES: [Language; 16] = [
+static LANGUAGES: [Language; 17] = [
     language!(
         "Bash",
         tree_sitter_bash::LANGUAGE,
@@ -268,6 +268,17 @@ static LANGUAGES: [Language; 16] = [
         file_names: [".clang-format", ".clang-tidy"],
         interpreters: [],
     ),
+    // Reuse the markup grammar for SVG/XML tag and attribute highlighting.
+    // This is a reader, not an XML validator or an external-entity resolver.
+    language!(
+        "XML",
+        tree_sitter_html::LANGUAGE,
+        [tree_sitter_html::HIGHLIGHTS_QUERY],
+        lexical: Lexical::NONE,
+        extensions: ["xml", "svg"],
+        file_names: [],
+        interpreters: [],
+    ),
     // Log files have no grammar: they're always highlighted line by line.
     Language {
         name: "Log",
@@ -343,6 +354,7 @@ mod tests {
     #[test]
     fn detects_by_name_extension_and_shebang() {
         assert_eq!(name("src/main.rs", ""), Some("Rust"));
+        assert_eq!(name("diagram.SVG", ""), Some("XML"));
         assert_eq!(name("App.TSX", ""), Some("TSX"));
         assert_eq!(name("Cargo.lock", ""), Some("TOML"));
         assert_eq!(name("bin/tool", "#!/usr/bin/env python3\n"), Some("Python"));

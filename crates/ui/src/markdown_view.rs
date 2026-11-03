@@ -99,6 +99,8 @@ pub struct MarkdownView {
     pending_anchor: Option<String>,
     expanded: HashSet<usize>,
     images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
+    image_cancels: HashMap<String, Arc<AtomicBool>>,
+    image_sizes: HashMap<String, (u32, u32)>,
     image_order: VecDeque<String>,
     image_rows: HashMap<String, Vec<usize>>,
     formulas: math::Formulas,
@@ -190,8 +192,11 @@ impl MarkdownView {
             weak.update(cx, |_, cx| cx.notify()).ok();
         });
         let owner = cx.entity_id();
-        cx.on_release(move |this, cx| this.diagrams.clear(owner, cx))
-            .detach();
+        cx.on_release(move |this, cx| {
+            this.diagrams.clear(owner, cx);
+            this.clear_images(cx);
+        })
+        .detach();
         Self {
             path,
             source,
@@ -219,6 +224,8 @@ impl MarkdownView {
             pending_anchor: None,
             expanded: HashSet::new(),
             images: HashMap::new(),
+            image_cancels: HashMap::new(),
+            image_sizes: HashMap::new(),
             image_order: VecDeque::new(),
             image_rows: HashMap::new(),
             formulas: math::Formulas::default(),
@@ -448,6 +455,7 @@ impl MarkdownView {
         self.rendered = !self.rendered;
         if !self.rendered {
             self.diagrams.clear(cx.entity_id(), cx);
+            self.clear_images(cx);
         }
         cx.notify();
     }
@@ -643,13 +651,16 @@ impl MarkdownView {
                 self.images.insert(target.clone(), None);
                 self.image_order.retain(|key| key != &target);
                 self.image_order.push_back(target.clone());
+                let token = Arc::new(AtomicBool::new(false));
+                self.image_cancels.insert(target.clone(), token.clone());
                 let loading = cx.background_executor().spawn({
                     let target = target.clone();
+                    let token = token.clone();
                     async move {
                         let image = if target.starts_with("data:image/") {
-                            plastext_assets::load_data_uri(&target)
+                            plastext_platform::images::preview_data_uri(&target, &token)
                         } else if let LinkTarget::Local { path, .. } = local {
-                            plastext_assets::load_local(&path)
+                            plastext_platform::images::preview(&path, &token)
                         } else {
                             Err("Unsupported image URL".into())
                         };
@@ -661,18 +672,47 @@ impl MarkdownView {
                 cx.spawn(async move |this, cx| {
                     let image = loading.await;
                     this.update(cx, |this, cx| {
+                        if this
+                            .image_cancels
+                            .get(&target)
+                            .is_none_or(|current| !Arc::ptr_eq(current, &token))
+                        {
+                            return;
+                        }
+                        this.image_cancels.remove(&target);
+                        if let Ok(image) = &image {
+                            if this.image_sizes.len() >= 128
+                                && !this.image_sizes.contains_key(&target)
+                                && let Some(key) = this.image_sizes.keys().next().cloned()
+                            {
+                                this.image_sizes.remove(&key);
+                            }
+                            let size = image.size(0);
+                            this.image_sizes.insert(
+                                target.clone(),
+                                (size.width.0 as u32, size.height.0 as u32),
+                            );
+                        }
                         this.images.insert(target.clone(), Some(image));
                         while this.image_order.len() > 128
                             || this
                                 .images
                                 .values()
                                 .filter_map(|entry| entry.as_ref().and_then(|v| v.as_ref().ok()))
-                                .map(|image| image.as_bytes(0).map_or(0, <[u8]>::len))
+                                .map(|image| image.as_bytes(0).map_or(0, <[u8]>::len) * 2)
                                 .sum::<usize>()
                                 > 64 * 1024 * 1024
                         {
                             if let Some(key) = this.image_order.pop_front() {
-                                this.images.remove(&key);
+                                if let Some(Some(Ok(image))) = this.images.remove(&key) {
+                                    cx.defer(move |cx| {
+                                        cx.drop_image(image, None);
+                                    });
+                                }
+                                if let Some(token) = this.image_cancels.remove(&key) {
+                                    token.store(true, Ordering::Relaxed);
+                                }
+                                this.image_sizes.remove(&key);
                                 this.image_rows.remove(&key);
                             }
                         }
@@ -715,12 +755,36 @@ impl MarkdownView {
                 .text_color(theme.text_muted)
                 .child(format!("{alt}: {error}"))
                 .into_any_element(),
+            None if self.image_sizes.contains_key(target) => {
+                let (w, h) = self.image_sizes[target];
+                let scale = (720. / w as f32).min(1.) * self.zoom;
+                div()
+                    .w(px(w as f32 * scale))
+                    .h(px(h as f32 * scale))
+                    .max_w_full()
+                    .into_any_element()
+            }
             None => div()
                 .p_3()
                 .text_color(theme.text_muted)
                 .child(format!("Loading image · {alt}"))
                 .into_any_element(),
         }
+    }
+
+    fn clear_images(&mut self, cx: &mut App) {
+        for (_, token) in self.image_cancels.drain() {
+            token.store(true, Ordering::Relaxed);
+        }
+        for (_, entry) in self.images.drain() {
+            if let Some(Ok(image)) = entry {
+                cx.defer(move |cx| {
+                    cx.drop_image(image, None);
+                });
+            }
+        }
+        self.image_order.clear();
+        self.image_rows.clear();
     }
 
     fn code_text(

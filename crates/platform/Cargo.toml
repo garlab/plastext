@@ -16,19 +16,23 @@ notify = "8.2"
 sha2 = "0.10"
 toml.workspace = true
 document-graphics.workspace = true
+plastext-assets.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
+core-foundation = "0.10"
 foreign-types = "0.5"
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage", "NSView", "NSWindow", "NSEvent", "block2", "objc2-core-foundation"] }
+block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
 [dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
+gif = "0.14"
 tempfile.workspace = true
 
 [lints]
@@ -40,4 +44,8 @@ harness = false
 
 [[test]]
 name = "mermaid_preview"
+harness = false
+
+[[test]]
+name = "image_preview"
 harness = false

@@ -34,6 +34,9 @@ pub(crate) enum TabStatus {
 
 impl TabView {
     pub fn set_visible(&self, visible: bool, cx: &mut App) {
+        if let Self::Image(view) = self {
+            view.update(cx, |view, cx| view.set_visible(visible, cx));
+        }
         if let Self::Markdown(view) = self {
             view.update(cx, |view, cx| view.set_visible(visible, cx));
         }
@@ -56,7 +59,7 @@ impl TabView {
                 view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx))
             }
             Self::Csv(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
-            Self::Image(view) => view.update(cx, |view, cx| view.set_zoom(factor, cx)),
+            Self::Image(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Pdf(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Tex(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Sgf(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),

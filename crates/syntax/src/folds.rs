@@ -23,7 +23,7 @@ pub(crate) fn query(language: &str) -> Option<&'static str> {
         }
         "CSS" => "[(block) (comment)] @fold",
         "Go" => "[(block) (field_declaration_list) (literal_value) (comment)] @fold",
-        "HTML" => "[(element) (script_element) (style_element) (comment)] @fold",
+        "HTML" | "XML" => "[(element) (script_element) (style_element) (comment)] @fold",
         "JavaScript" | "TypeScript" | "TSX" => {
             "[(statement_block) (class_body) (object) (array) (template_string) (comment)] @fold"
         }

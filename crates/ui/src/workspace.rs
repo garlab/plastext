@@ -79,6 +79,7 @@ pub fn init(cx: &mut App) {
     crate::csv_view::init(cx);
     crate::markdown_view::init(cx);
     crate::pdf_view::init(cx);
+    crate::image_view::init(cx);
     crate::sgf_view::init(cx);
     crate::tex_view::init(cx);
     crate::quick_open::init(cx);
@@ -419,7 +420,22 @@ impl Workspace {
             let path = path.clone();
             async move {
                 if plastext_assets::is_image(&path) {
-                    return Ok(Opened::Image(plastext_assets::load_local(&path)));
+                    let source = Arc::new(FileSource::open(
+                        &path,
+                        OpenOptions {
+                            large_file_threshold: 0,
+                            block_cache: 4 * 1024 * 1024,
+                        },
+                    )?);
+                    let lines = if path
+                        .extension()
+                        .is_some_and(|s| s.eq_ignore_ascii_case("svg"))
+                    {
+                        Some(LineIndex::for_source(source.clone())?)
+                    } else {
+                        None
+                    };
+                    return Ok(Opened::Image(source, lines));
                 }
                 if plastext_platform::pdf::is_pdf(&path, b"") {
                     // Keep even small PDFs file-backed; preview owns no full-file buffer.
@@ -492,9 +508,11 @@ impl Workspace {
                                     }),
                                 )
                             }
-                            Opened::Image(preview) => TabView::Image(
-                                cx.new(|cx| ImageView::new(path.clone(), preview, cx)),
-                            ),
+                            Opened::Image(source, lines) => {
+                                TabView::Image(cx.new(|cx| {
+                                    ImageView::new(path.clone(), source, lines, style, cx)
+                                }))
+                            }
                             Opened::Text(source, index, _)
                                 if plastext_markdown::is_markdown(&path) =>
                             {
@@ -1659,7 +1677,7 @@ fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
 /// A file opened in the background, ready for a view.
 enum Opened {
     Pdf(Arc<FileSource>),
-    Image(Result<plastext_assets::Preview, String>),
+    Image(Arc<FileSource>, Option<Arc<LineIndex>>),
     Text(
         Arc<FileSource>,
         Arc<LineIndex>,

@@ -4774,6 +4774,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.2",
+ "block2",
  "objc2",
  "objc2-core-foundation",
  "objc2-foundation",
@@ -5289,7 +5290,9 @@ dependencies = [
  "image",
  "percent-encoding",
  "plastext-buffer",
+ "png 0.18.1",
  "resvg",
+ "serde",
  "tempfile",
  "ttf-parser 0.25.1",
 ]
@@ -5386,15 +5389,19 @@ name = "plastext-platform"
 version = "0.1.0"
 dependencies = [
  "async-channel 2.5.0",
+ "block2",
+ "core-foundation 0.10.0",
  "core-graphics 0.24.0",
  "document-graphics",
  "foreign-types",
+ "gif",
  "image",
  "libc",
  "notify",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "plastext-assets",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5478,6 +5485,7 @@ dependencies = [
  "plastext-search",
  "plastext-settings",
  "plastext-syntax",
+ "raw-window-handle",
 ]
 
 [[package]]

@@ -11,9 +11,10 @@ implemented features, measured limits and remaining exit checks. The accepted
    matching and alphabetical file groups. Include/exclude globs and expanding
    capped results remain part of the search specification; continuation should
    also make the retained subset deterministic when the result limit is reached.
-2. Complete M2's image work: bounded large-image decoding and tiles for sharp
-   zoom, missing formats including AVIF/HEIC, animated GIF/WebP, and SVG source
-   mode.
+2. **Completed:** [image previews](images.md) now have bounded large-image
+   decoding, tiles for sharp zoom, AVIF/HEIC and additional native formats,
+   animated GIF/WebP, and SVG source mode. See the image guide for codec and
+   resource limits.
 3. Complete the remaining Markdown reading features, especially rendered-text
    selection/copy, math in headings and document-scoped macros.
 4. Validate large Markdown, CSV, PDF and TeX workloads. M2 still needs a passing
