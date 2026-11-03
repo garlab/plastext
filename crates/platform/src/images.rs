@@ -1,11 +1,11 @@
 //! Image decoding lives in a disposable helper. All calls block: use background tasks.
-mod backend;
-#[cfg(target_os = "macos")]
-mod macos;
-mod protocol;
-mod worker;
-pub use plastext_assets::imaging::{Frame, Info, Pixels, Region, SCALE_UNIT, TILE_EDGE};
-use protocol::Operation;
+use document_graphics::images::worker;
+pub use document_graphics::images::{Frame, Info, Pixels, Region, SCALE_UNIT, TILE_EDGE};
+#[derive(Clone)]
+enum Operation {
+    Info,
+    Render(Vec<Region>),
+}
 use std::{
     fs::File,
     io::{Read, Seek, Write},
@@ -96,7 +96,7 @@ impl Document {
         regions: Vec<Region>,
         cancel: &Cancel,
     ) -> Result<Frame, String> {
-        plastext_assets::imaging::validate_regions(info, &regions)?;
+        document_graphics::images::validate_regions(info, &regions)?;
         match submit(self.clone(), Operation::Render(regions), cancel)? {
             Answer::Frame(frame) => Ok(frame),
             _ => Err("Unexpected image response".into()),
@@ -125,7 +125,7 @@ fn submit(
         std::thread::Builder::new()
             .name("image-broker".into())
             .spawn(move || {
-                let mut worker: Option<worker::Worker> = None;
+                let mut worker: Option<(Arc<Document>, worker::Worker)> = None;
                 loop {
                     let job = match receive.recv_timeout(Duration::from_secs(3)) {
                         Ok(job) => job,
@@ -144,15 +144,28 @@ fn submit(
                     let result = (|| {
                         if worker
                             .as_ref()
-                            .is_none_or(|w| w.document.id != job.document.id)
+                            .is_none_or(|(document, _)| document.id != job.document.id)
                         {
                             worker = None;
-                            worker = Some(worker::Worker::spawn(job.document.clone())?);
+                            worker = Some((
+                                job.document.clone(),
+                                worker::Worker::spawn(
+                                    &std::env::current_exe().map_err(|e| e.to_string())?,
+                                    "--image-worker",
+                                    &job.document.file,
+                                )?,
+                            ));
                             if matches!(job.operation, Operation::Render(_)) {
-                                worker.as_mut().unwrap().run(Operation::Info, &job.cancel)?;
+                                worker.as_mut().unwrap().1.info(&job.cancel)?;
                             }
                         }
-                        worker.as_mut().unwrap().run(job.operation, &job.cancel)
+                        let worker = &mut worker.as_mut().unwrap().1;
+                        match job.operation {
+                            Operation::Info => worker.info(&job.cancel).map(Answer::Info),
+                            Operation::Render(regions) => {
+                                worker.render(regions, &job.cancel).map(Answer::Frame)
+                            }
+                        }
                     })();
                     if result.is_err() {
                         worker = None;

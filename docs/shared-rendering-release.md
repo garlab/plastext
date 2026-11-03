@@ -1,8 +1,8 @@
 # Shared rendering release checks
 
 `document-graphics` is maintained in its own repository and published on
-crates.io from version tags. Plastext pins a released version; review library
-changes before a release with the
+crates.io from version tags. Plastext normally pins a registry release; the
+current 0.1.5 integration is prepared locally pending publication. Review with the
 [local override](local-development.md#shared-rendering-libraries). `katex-native`
 also comes from the registry.
 
@@ -18,17 +18,16 @@ resolution.
 
 ```sh
 cargo fmt --all --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-cargo +1.90.0 check --all-targets --locked
+cargo clippy --all-targets --all-features --locked --no-deps -- -D warnings
+cargo test --all-features --locked
+cargo +1.90.0 check --all-targets --all-features --locked
 cargo package --list --locked
-cargo publish --dry-run --locked
+cargo package --locked
 ```
 
 Install Rust 1.90.0 with rustup if needed for the minimum-version check. Run worker
 tests in a normal terminal: on macOS they install their own process sandbox and
-cannot run inside an enclosing sandbox. The dry run packages and verifies the
-crate without uploading it. Package from a clean checkout; the include list
+cannot run inside an enclosing sandbox. The package command verifies the crate without uploading it. Package from a clean checkout; the include list
 limits the archive to library source, tests, metadata, README and license.
 
 From the **mdviewer root**, with its own local override pointing to the same
@@ -38,6 +37,7 @@ standalone library checkout:
 cargo test --locked
 cargo build --locked
 python3 tests/terminal_smoke.py target/debug/mdviewer
+python3 tests/pager_smoke.py target/debug/mdviewer
 ```
 
 From the **Plastext root**, with the local override active:

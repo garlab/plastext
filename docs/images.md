@@ -76,12 +76,20 @@ data-URI images use the same worker for static overviews; remote images remain
 blocked. Its cache is limited to 64 MiB/128 entries per visible document, with
 at most four pending requests; hiding a document releases those pixels.
 
-## Verification
+## Shared backend and verification
 
-The integration suite exercises the actual worker protocol and sandbox, native
-formats, orientation, color profiles, region boundaries, GIF/WebP playback,
-worker recycling and immutable snapshots. Unit tests cover Adam7 decoding,
-pixel/request limits, cancellation, memory/deadline guards, fit/zoom geometry,
+`document-graphics` owns image metadata, decoding, regions, streaming PNG,
+animation frames, broader SVG rendering and the isolated worker. Plastext enables
+its `image-native` feature and retains immutable snapshots, the eight-job broker,
+three-second idle retirement, cache budgets and all interaction/playback policy.
+Icon-theme loading stays in `plastext-assets`. See the
+[extraction comparison](shared-images.md) for output and performance checks.
+
+Codec/protocol tests live in `document-graphics`, including native formats,
+orientation, profiles, animation disposal, Adam7, SVG resource policy, bounds,
+cancellation and memory/deadline guards. Plastext's integration suite checks the
+real shared worker through its snapshot/broker adapter, including mutation of the
+original file and recycling between documents. UI unit tests cover fit/zoom,
 finite playback and cache shares across split panes.
 
 ```sh

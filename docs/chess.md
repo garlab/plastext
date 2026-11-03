@@ -70,16 +70,7 @@ external resources or SVG markup.
 
 ## Development dependency
 
-Chess requires `document-graphics` **0.1.4**, currently prepared locally for
-publication. Until it is published, use the sibling checkout through the
-ignored `.cargo/config.toml`:
-
-```toml
-[patch.crates-io]
-document-graphics = { path = "../document-graphics" }
-```
-
-The development lockfile resolves that local version. After publication, remove
-this override, run `cargo update -p document-graphics --precise 0.1.4`, and commit
-the registry source/checksum in `Cargo.lock`. See
-[local development](local-development.md) for the shared-library workflow.
+Chess is included in the unreleased `document-graphics` 0.1.5 used by this branch,
+alongside the shared image decoder. Follow the
+[local development setup](local-development.md#shared-rendering-libraries) until
+publication, then switch the dependency lockfile to its registry release.

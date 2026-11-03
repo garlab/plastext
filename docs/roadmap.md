@@ -9,19 +9,18 @@ remains the comparison point.
 
 ## Shared rendering
 
-1. **In progress: extract bounded image decoding into `document-graphics`.**
-   Use optional features for portable decoding and native codecs. Share metadata,
-   thumbnails, orientation, regions, streaming PNG tiles and animation-frame
-   decoding between Plastext and mdviewer. Applications retain file-access policy,
-   snapshots, queues, caches, fitting and playback controls. Compare output,
-   memory, startup and binary size before accepting the extraction.
-2. **Consolidate SVG rendering with the image extraction.** Keep the strict
-   document SVG subset and the broader isolated image renderer explicit. Preserve
-   their respective font policies, resource limits and source fallbacks.
-3. **Share private worker utilities.** Reuse cancellation, deadlines, memory
-   monitoring and process cleanup where the workers need the same mechanisms.
-   Keep format-specific protocols and sandbox rules separate; do not add another
-   public crate or a general-purpose worker framework.
+Bounded image decoding and both SVG paths now live in `document-graphics`,
+behind optional features. Plastext retains snapshots, queues, caches and playback;
+mdviewer retains local-file policy, invocation budgets and terminal placement.
+The strict document SVG subset and broader isolated image SVG renderer keep
+their own font/resource policies. See [shared image rendering](shared-images.md)
+for the extraction, validation and performance comparison.
+
+Next: **share the remaining private worker utilities** for cancellation,
+deadlines and process cleanup where the mechanisms match. macOS resident-memory
+sampling is already shared between the Mermaid and image workers. Keep
+format-specific protocols and sandbox rules separate; do not add another public
+crate or a general-purpose worker framework.
 
 Math remains in `katex-native`. Markdown/HTML parsing, layout, navigation and
 icon-theme loading remain application concerns. TeX compilation stays with

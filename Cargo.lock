@@ -1894,14 +1894,21 @@ dependencies = [
 
 [[package]]
 name = "document-graphics"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
  "cozy-chess",
  "document-graphics-mermaid",
+ "foreign-types",
+ "image",
  "katex-native",
  "libc",
+ "png 0.18.1",
  "resvg",
  "roxmltree 0.20.0",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5310,7 +5317,6 @@ dependencies = [
  "image",
  "percent-encoding",
  "plastext-buffer",
- "png 0.18.1",
  "resvg",
  "serde",
  "tempfile",
@@ -5418,7 +5424,6 @@ dependencies = [
  "core-graphics 0.24.0",
  "document-graphics",
  "foreign-types",
- "gif",
  "image",
  "libc",
  "notify",

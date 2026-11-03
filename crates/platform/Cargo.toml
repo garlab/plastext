@@ -31,8 +31,7 @@ block2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData"] }
 
 [dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
-gif = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile.workspace = true
 
 [lints]

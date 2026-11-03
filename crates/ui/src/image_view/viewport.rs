@@ -19,7 +19,7 @@ impl Viewport {
         let overview = Self::overview(&self.info, frame, budget);
         let count = (budget.saturating_sub(overview.bytes() * 2) / (512 * 512 * 8))
             .min(
-                (plastext_assets::imaging::MAX_BATCH_PIXELS as usize)
+                (document_graphics::images::MAX_BATCH_PIXELS as usize)
                     .saturating_sub(overview.bytes() / 4)
                     / (512 * 512),
             )
@@ -155,7 +155,7 @@ mod tests {
             let mut view = Viewport::new(&info, 4000., 3000., 2., Some(1.), point(12000., 8000.));
             let plan = view.plan(0, budget);
             assert!(plan.iter().map(|r| r.bytes() * 2).sum::<usize>() <= budget);
-            plastext_assets::imaging::validate_regions(&info, &plan).unwrap();
+            document_graphics::images::validate_regions(&info, &plan).unwrap();
         }
     }
     #[test]
