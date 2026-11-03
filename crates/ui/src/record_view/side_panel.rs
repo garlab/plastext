@@ -1,10 +1,14 @@
+use super::document::Color;
 use super::*;
 use gpui::{Bounds, Size, TextRun, fill, font, point, rgb, size};
 
 const STEP: f32 = 40.;
+fn column_step(kind: Kind) -> f32 {
+    if kind == Kind::Go { STEP } else { 80. }
+}
 const MARGIN: f32 = 24.;
 
-impl SgfView {
+impl RecordView {
     pub(super) fn side_panel(&self, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
         let cursor = self.cursor.as_ref();
         let mut info = div().flex().flex_col().gap_1();
@@ -13,50 +17,23 @@ impl SgfView {
         if let Some(c) = cursor {
             // Annotations change with the displayed board, not an unfinished request.
             let node = self.presented.as_ref().map_or(c.selected, |p| p.node());
-            let game_id = c.document.nodes()[node].game;
-            let root = c.document.games()[game_id].root;
+            let game_id = c.document.node(node).game;
             info = info.child(
                 div()
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(clipped(c.document.title(game_id), 256)),
             );
-            for (label, key) in [
-                ("Black", "PB"),
-                ("White", "PW"),
-                ("Result", "RE"),
-                ("Komi", "KM"),
-                ("Date", "DT"),
-            ] {
-                if let Some(value) = c.document.text(root, key).filter(|s| !s.is_empty()) {
-                    info = info.child(format!("{label}: {}", clipped(value, 256)));
-                }
+            for line in c.document.info(node, self.presented.as_deref()) {
+                info = info.child(line);
             }
-            if let Some(p) = &self.presented {
-                info = info.child(format!(
-                    "Captures: Black {} · White {}",
-                    p.captures[0], p.captures[1]
-                ));
-            }
-            if let Some(name) = c.document.text(node, "N").filter(|s| !s.is_empty()) {
-                comment_title = clipped(name, 80);
-            }
-            if let Some(text) = c
-                .document
-                .text(node, "C")
-                .or_else(|| {
-                    if node == root {
-                        c.document.text(node, "GC")
-                    } else {
-                        None
-                    }
-                })
-                .filter(|s| !s.is_empty())
-            {
+            comment_title = clipped(c.document.comment_title(node), 80);
+            let text = c.document.comment(node);
+            if !text.is_empty() {
                 comment = clipped(text, 16_384);
             }
         }
         div()
-            .id("sgf-side-panel")
+            .id("record-side-panel")
             .w(px(300. * self.zoom))
             .max_w(relative(0.45))
             .h_full()
@@ -71,7 +48,7 @@ impl SgfView {
             .text_size(px(13. * self.zoom))
             .child(
                 div()
-                    .id("sgf-game-info")
+                    .id("record-game-info")
                     .h(relative(0.24))
                     .min_h_0()
                     .flex_none()
@@ -101,7 +78,7 @@ impl SgfView {
                     )
                     .child(
                         div()
-                            .id("sgf-comment")
+                            .id("record-comment")
                             .track_scroll(&self.comment_scroll)
                             .flex_1()
                             .min_h_0()
@@ -148,13 +125,15 @@ impl SgfView {
         let document = cursor.document.clone();
         let game = cursor.game();
         let zoom = self.zoom;
+        let column_step = column_step(self.kind);
+        let chess = self.kind != Kind::Go;
         let selected = cursor.selected;
         let path = cursor.path.clone();
-        let content = graph_size(&tree.games[game], zoom);
+        let content = graph_size(&tree.games[game], zoom, column_step);
         let family = self.style.font_family.clone();
         let view = cx.entity();
         div()
-            .id("sgf-game-tree")
+            .id("record-game-tree")
             .flex_1()
             .min_h_0()
             .overflow_scroll()
@@ -165,11 +144,15 @@ impl SgfView {
                 cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
                     if let Some(c) = &this.cursor {
                         let local = event.position - this.tree_origin;
-                        let column = ((f32::from(local.x) / this.zoom - MARGIN) / STEP).round();
+                        let column = ((f32::from(local.x) / this.zoom - column_step / 2. - 4.)
+                            / column_step)
+                            .round();
                         let row = ((f32::from(local.y) / this.zoom - MARGIN) / STEP).round();
                         if row >= 0. && column >= 0. {
-                            let center = center(row as usize, column as usize, this.zoom);
-                            if (f32::from(local.x - center.x)).abs() <= 16. * this.zoom
+                            let center =
+                                center(row as usize, column as usize, this.zoom, column_step);
+                            if (f32::from(local.x - center.x)).abs()
+                                <= (column_step / 2. - 4.) * this.zoom
                                 && (f32::from(local.y - center.y)).abs() <= 16. * this.zoom
                             {
                                 let node = c.tree.at(c.game(), row as usize, column as usize);
@@ -197,15 +180,23 @@ impl SgfView {
                                             this.reveal_tree = false;
                                             if let Some(c) = &this.cursor {
                                                 let node = c.tree.nodes[c.selected];
-                                                let target =
-                                                    center(node.row, node.column, this.zoom);
+                                                let target = center(
+                                                    node.row,
+                                                    node.column,
+                                                    this.zoom,
+                                                    column_step,
+                                                );
                                                 let current = this.tree_scroll.offset();
                                                 let next = reveal(
                                                     current,
                                                     target,
                                                     viewport,
-                                                    graph_size(&c.tree.games[c.game()], this.zoom),
-                                                    px(18. * this.zoom),
+                                                    graph_size(
+                                                        &c.tree.games[c.game()],
+                                                        this.zoom,
+                                                        column_step,
+                                                    ),
+                                                    px((if chess { 36. } else { 18. }) * this.zoom),
                                                 );
                                                 if current != next {
                                                     this.tree_scroll.set_offset(next);
@@ -225,16 +216,22 @@ impl SgfView {
                                     clip.top() - bounds.top(),
                                     clip.bottom() - bounds.top(),
                                     zoom,
+                                    STEP,
                                 );
                                 let columns = cells(
-                                    clip.left() - bounds.left(),
-                                    clip.right() - bounds.left(),
+                                    clip.left()
+                                        - bounds.left()
+                                        - px((column_step / 2. + 4. - MARGIN) * zoom),
+                                    clip.right()
+                                        - bounds.left()
+                                        - px((column_step / 2. + 4. - MARGIN) * zoom),
                                     zoom,
+                                    column_step,
                                 );
                                 let visible = tree.visible(game, rows, columns);
                                 let position = |id: NodeId| {
                                     let n = tree.nodes[id];
-                                    bounds.origin + center(n.row, n.column, zoom)
+                                    bounds.origin + center(n.row, n.column, zoom, column_step)
                                 };
                                 let connector = |from, to, color, window: &mut Window| {
                                     let from = position(from);
@@ -268,7 +265,7 @@ impl SgfView {
                                     }
                                 }
                                 for &id in &visible {
-                                    if let Some(parent) = document.nodes()[id].parent {
+                                    if let Some(parent) = document.node(id).parent {
                                         connector(
                                             parent,
                                             id,
@@ -285,6 +282,8 @@ impl SgfView {
                                     let node = tree.nodes[id];
                                     let at = position(id);
                                     let radius = px(13. * zoom);
+                                    let half_width = if chess { px(32. * zoom) } else { radius };
+                                    let rounding = if chess { px(4. * zoom) } else { radius };
                                     let outer = if id == selected {
                                         rgb(0x6ca9e8)
                                     } else if path[id] {
@@ -295,15 +294,15 @@ impl SgfView {
                                     window.paint_quad(
                                         fill(
                                             Bounds::new(
-                                                at - point(radius + px(3.), radius + px(3.)),
+                                                at - point(half_width + px(3.), radius + px(3.)),
                                                 size(
-                                                    (radius + px(3.)) * 2.,
+                                                    (half_width + px(3.)) * 2.,
                                                     (radius + px(3.)) * 2.,
                                                 ),
                                             ),
                                             outer,
                                         )
-                                        .corner_radii(radius + px(3.)),
+                                        .corner_radii(rounding + px(3.)),
                                     );
                                     let (background, ink) = match node.color {
                                         Some(Color::Black) => (rgb(0x171717), rgb(0xffffff)),
@@ -313,22 +312,29 @@ impl SgfView {
                                     window.paint_quad(
                                         fill(
                                             Bounds::new(
-                                                at - point(radius, radius),
-                                                size(radius * 2., radius * 2.),
+                                                at - point(half_width, radius),
+                                                size(half_width * 2., radius * 2.),
                                             ),
                                             background,
                                         )
                                         .corner_radii(
-                                            if node.color.is_some() { radius } else { px(4.) },
+                                            if node.color.is_some() {
+                                                rounding
+                                            } else {
+                                                px(4.)
+                                            },
                                         ),
                                     );
-                                    let text = if node.color.is_some() {
+                                    let text = if let Some(san) = document.tree_label(id) {
+                                        san.to_owned()
+                                    } else if node.color.is_some() {
                                         node.number.to_string()
                                     } else {
                                         "·".into()
                                     };
-                                    let text_size =
-                                        px((11_f32.min(40. / text.len() as f32)) * zoom);
+                                    let text_size = px((11_f32
+                                        .min((if chess { 90. } else { 40. }) / text.len() as f32))
+                                        * zoom);
                                     let run = TextRun {
                                         len: text.len(),
                                         font: font(family.clone()),
@@ -356,7 +362,7 @@ impl SgfView {
                                         window.paint_quad(
                                             fill(
                                                 Bounds::new(
-                                                    at + point(radius - marker, -radius),
+                                                    at + point(half_width - marker, -radius),
                                                     size(marker * 2., marker * 2.),
                                                 ),
                                                 rgb(0xe8b95d),
@@ -373,21 +379,21 @@ impl SgfView {
             .into_any_element()
     }
 }
-fn center(row: usize, column: usize, zoom: f32) -> Point<Pixels> {
+fn center(row: usize, column: usize, zoom: f32, column_step: f32) -> Point<Pixels> {
     point(
-        px((MARGIN + column as f32 * STEP) * zoom),
+        px((column_step / 2. + 4. + column as f32 * column_step) * zoom),
         px((MARGIN + row as f32 * STEP) * zoom),
     )
 }
-fn graph_size(game: &tree::Game, zoom: f32) -> Size<Pixels> {
+fn graph_size(game: &tree::Game, zoom: f32, column_step: f32) -> Size<Pixels> {
     size(
-        px((MARGIN * 2. + game.columns.saturating_sub(1) as f32 * STEP) * zoom),
+        px((column_step + 8. + game.columns.saturating_sub(1) as f32 * column_step) * zoom),
         px((MARGIN * 2. + game.rows.saturating_sub(1) as f32 * STEP) * zoom),
     )
 }
-fn cells(start: Pixels, end: Pixels, zoom: f32) -> std::ops::Range<usize> {
-    let start = ((f32::from(start) / zoom - MARGIN) / STEP).floor().max(0.) as usize;
-    let end = ((f32::from(end) / zoom - MARGIN) / STEP).ceil().max(0.) as usize + 1;
+fn cells(start: Pixels, end: Pixels, zoom: f32, step: f32) -> std::ops::Range<usize> {
+    let start = ((f32::from(start) / zoom - MARGIN) / step).floor().max(0.) as usize;
+    let end = ((f32::from(end) / zoom - MARGIN) / step).ceil().max(0.) as usize + 1;
     start..end
 }
 fn reveal(

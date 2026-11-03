@@ -2,9 +2,12 @@
 
 A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
 
-> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown opens in a virtualized native preview with headings, links, code fences, [Mermaid diagrams](docs/mermaid.md) and rendered-text find. [Image previews](docs/images.md) support bounded large-image tiles, AVIF/HEIC, animated GIF/WebP and SVG source mode; CSV/TSV tables have paged views. [SGF Go records](docs/sgf.md) open as interactive boards with move and variation navigation. PDFs have an isolated, tiled preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs). Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
+> **Status:** M2 in progress (Markdown and assets). M1's code reader, navigation, search, themes and hex view remain available. Markdown opens in a virtualized native preview with headings, links, code fences, [Mermaid diagrams](docs/mermaid.md) and rendered-text find. [Image previews](docs/images.md) support bounded large-image tiles, AVIF/HEIC, animated GIF/WebP and SVG source mode; CSV/TSV tables have paged views. [SGF Go records](docs/sgf.md) and [PGN/FEN chess records](docs/chess.md) open as interactive boards with move and variation navigation. PDFs have an isolated, tiled preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs). Editing and git come later. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
 
 ## Building
+
+Chess currently uses the local `document-graphics` 0.1.4 checkout pending its
+publication; follow the [development setup](docs/chess.md#development-dependency).
 
 You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The Xcode Command Line Tools are enough; full Xcode isn't required.
 
@@ -43,10 +46,10 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘D` / `⇧⌘D` | Split right / down |
 | `⌘C`, `⌘A`, `⌘W` | Copy, select all, close tab |
 | `⇧⌘V` in Markdown | Toggle rendered preview / source, preserving source position |
-| `⇧⌘V` in SGF | Toggle board preview / source |
-| `↑` / `↓`, `Home` / `End` in SGF | Previous / next node, start / end of selected line |
-| `←` / `→` in SGF | Cycle variations at the same tree depth |
-| `⌘↑` / `⌘↓` in SGF | Previous / next fork (or start / end) |
+| `⇧⌘V` in SGF/chess | Toggle board preview / source |
+| `↑` / `↓`, `Home` / `End` in SGF/chess | Previous / next node, start / end of selected line |
+| `←` / `→` in SGF/chess | Cycle variations at the same tree depth |
+| `⌘↑` / `⌘↓` in SGF/chess | Previous / next fork (or start / end) |
 | `⇧⌘V` in PDF | Toggle Preview / Binary, preserving each position |
 | `⇧⌘V` in TeX | Toggle Source / Preview; preview opens automatically with installed pdfLaTeX |
 | `⌘R` in TeX | Retry preview and reload advanced TeX settings |

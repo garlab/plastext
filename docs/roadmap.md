@@ -35,10 +35,11 @@ hardening and packaging.
 
 ## Additional previews
 
-These are lower-priority candidates, not requirements for M2 completion:
+Additional previews are not requirements for M2 completion:
 
-- **Chess records:** PGN games and FEN positions, with moves, variations and
-  comments using the same interaction conventions as the SGF viewer.
+- **Implemented:** [chess records](chess.md), including PGN games and FEN
+  positions, legal move replay, variations and comments using the SGF viewer’s
+  navigation conventions. The shared backend awaits publication as 0.1.4.
 - **ABC music notation:** start with score rendering and Source/Preview. Playback
   can be considered separately from notation support.
 - **Audio and video:** pursue only if an optional backend can provide bounded

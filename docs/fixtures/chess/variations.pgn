@@ -1,0 +1,24 @@
+[Event "Opening variations"]
+[Site "Local example"]
+[Date "2026.11.03"]
+[Round "1"]
+[White "White player"]
+[Black "Black player"]
+[Result "*"]
+
+{Use Up/Down for moves and Left/Right to follow variations at the same depth.}
+1. e4 {White takes space in the centre.}
+e5 (1... c5 {The Sicilian Defence.} 2. Nf3 d6 (2... Nc6) 3. d4 cxd4 4. Nxd4)
+2. Nf3 Nc6 3. Bb5 {The Ruy Lopez.}
+(3. Bc4 Nf6 4. d3 {A quieter development plan.})
+3... a6 4. Ba4 Nf6 5. O-O Be7 6. Re1 b5 7. Bb3 d6 8. c3 O-O *
+
+[Event "Promotion study"]
+[White "White player"]
+[Black "Black player"]
+[SetUp "1"]
+[FEN "4k3/P7/8/8/8/8/8/4K3 w - - 0 1"]
+[Result "*"]
+
+1. a8=Q+ {Promoting to a queen gives check.}
+(1. a8=N {An underpromotion example.}) 1... Kd7 *

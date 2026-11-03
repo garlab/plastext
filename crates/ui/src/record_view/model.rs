@@ -1,5 +1,5 @@
+use super::document::{Collection, NodeId, Position};
 use super::tree::Tree;
-use document_graphics::sgf::{Collection, Error, NodeId, Position};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, atomic::AtomicBool},
@@ -16,12 +16,12 @@ pub(super) struct Cursor {
 }
 impl Cursor {
     pub fn new(document: Arc<Collection>) -> Self {
-        let mut path = vec![false; document.nodes().len()];
-        path[document.games()[0].root] = true;
+        let mut path = vec![false; document.node_count()];
+        path[document.root(0)] = true;
         Self {
             tree: Arc::new(Tree::new(&document)),
             path: Arc::new(path),
-            selected: document.games()[0].root,
+            selected: document.root(0),
             document,
             choices: HashMap::new(),
         }
@@ -31,16 +31,16 @@ impl Cursor {
         let mut old = Some(self.selected);
         while let Some(id) = old {
             path[id] = false;
-            old = self.document.nodes()[id].parent;
+            old = self.document.node(id).parent;
         }
         let mut current = Some(node);
         while let Some(id) = current {
             path[id] = true;
-            current = self.document.nodes()[id].parent;
+            current = self.document.node(id).parent;
         }
         self.selected = node;
         let mut child = node;
-        while let Some(parent) = self.document.nodes()[child].parent {
+        while let Some(parent) = self.document.node(child).parent {
             if self.is_fork(parent) {
                 self.choices.insert(parent, child);
             }
@@ -54,21 +54,22 @@ impl Cursor {
         self.choices
             .get(&node)
             .copied()
-            .or(self.document.nodes()[node].first_child)
+            .or(self.document.node(node).first_child)
     }
     fn is_fork(&self, node: NodeId) -> bool {
-        self.document.nodes()[node]
+        self.document
+            .node(node)
             .first_child
-            .is_some_and(|id| self.document.nodes()[id].next_sibling.is_some())
+            .is_some_and(|id| self.document.node(id).next_sibling.is_some())
     }
     pub fn previous(&self) -> Option<NodeId> {
-        self.document.nodes()[self.selected].parent
+        self.document.node(self.selected).parent
     }
     pub fn game(&self) -> usize {
-        self.document.nodes()[self.selected].game
+        self.document.node(self.selected).game
     }
     pub fn first(&self) -> NodeId {
-        self.document.games()[self.game()].root
+        self.document.root(self.game())
     }
     pub fn last(&self) -> NodeId {
         let mut node = self.selected;
@@ -83,7 +84,7 @@ impl Cursor {
     pub fn previous_fork(&self) -> Option<NodeId> {
         let mut node = self.previous()?;
         while !self.is_fork(node) {
-            let Some(parent) = self.document.nodes()[node].parent else {
+            let Some(parent) = self.document.node(node).parent else {
                 break;
             };
             node = parent;
@@ -118,11 +119,11 @@ impl Positions {
         doc: &Collection,
         node: NodeId,
         cancel: &AtomicBool,
-    ) -> Result<Arc<Position>, Error> {
+    ) -> Result<Arc<Position>, String> {
         if let Some(p) = self.0.iter().find(|p| p.node() == node) {
             return Ok(p.clone());
         }
-        if let Some(parent) = doc.nodes()[node].parent
+        if let Some(parent) = doc.node(node).parent
             && let Some(p) = self.0.iter().find(|p| p.node() == parent)
         {
             return p.advance(doc, node, cancel).map(Arc::new);
@@ -133,11 +134,13 @@ impl Positions {
 
 #[cfg(test)]
 mod tests {
+    use super::super::document::Kind;
     use super::*;
     fn document() -> Arc<Collection> {
         Arc::new(
             Collection::parse(
                 Arc::from(&b"(;SZ[9];B[aa](;W[bb];B[cc])(;W[dd];B[ee]))(;SZ[13])"[..]),
+                Kind::Go,
                 &AtomicBool::new(false),
             )
             .unwrap(),
@@ -168,6 +171,7 @@ mod tests {
             Arc::from(
                 &b"(;SZ[9];B[aa](;W[bb];B[cc])(;W[dd];B[ee](;W[ff])(;W[gg];B[hh])))(;SZ[13])"[..],
             ),
+            Kind::Go,
             &AtomicBool::new(false),
         )
         .unwrap();
@@ -215,20 +219,62 @@ mod tests {
         let main = cache.get(&doc, 2, &cancel).unwrap();
         let branch = cache.get(&doc, 4, &cancel).unwrap();
         assert!(
-            main.stone(document_graphics::sgf::Point { x: 1, y: 1 })
-                .is_some()
+            match &*main {
+                Position::Go(p) => p.stone(document_graphics::sgf::Point { x: 1, y: 1 }),
+                _ => None,
+            }
+            .is_some()
         );
         assert!(
-            branch
-                .stone(document_graphics::sgf::Point { x: 1, y: 1 })
-                .is_none()
+            match &*branch {
+                Position::Go(p) => p.stone(document_graphics::sgf::Point { x: 1, y: 1 }),
+                _ => None,
+            }
+            .is_none()
         );
         let long = format!("(;SZ[9]{})", ";B[];W[]".repeat(40));
-        let doc = Collection::parse(Arc::from(long.as_bytes()), &cancel).unwrap();
+        let doc = Collection::parse(Arc::from(long.as_bytes()), Kind::Go, &cancel).unwrap();
         let mut cache = Positions::default();
-        for node in 0..doc.nodes().len() {
+        for node in 0..doc.node_count() {
             cache.remember(cache.get(&doc, node, &cancel).unwrap());
         }
         assert_eq!(cache.0.len(), 32);
+    }
+    #[test]
+    fn chess_navigation_source_offsets_and_split_cache_follow_variations() {
+        let cancel = AtomicBool::new(false);
+        let doc = Arc::new(
+            Collection::parse(
+                Arc::from(&b"1.e4 e5 (1...c5 {Sicilian} 2.Nf3) 2.Nf3 * 1.d4 *"[..]),
+                Kind::Pgn,
+                &cancel,
+            )
+            .unwrap(),
+        );
+        let mut c = Cursor::new(doc.clone());
+        assert_eq!(c.last(), 5);
+        c.select(3);
+        assert_eq!(c.variation(-1), 2);
+        assert!(c.tree.nodes[3].comment);
+        assert_eq!(doc.node_for_offset(doc.node(3).source.start), 3);
+        let split = c.clone();
+        c.select(c.first());
+        assert_eq!(c.last(), 4);
+        assert_eq!(split.selected, 3);
+        let mut cache = Positions::default();
+        cache.remember(cache.get(&doc, 1, &cancel).unwrap());
+        let main = cache.get(&doc, 2, &cancel).unwrap();
+        let branch = cache.get(&doc, 3, &cancel).unwrap();
+        let Position::Chess(main) = &*main else {
+            panic!("Expected chess")
+        };
+        let Position::Chess(branch) = &*branch else {
+            panic!("Expected chess")
+        };
+        assert!(main.piece(document_graphics::chess::Square::C5).is_none());
+        assert!(branch.piece(document_graphics::chess::Square::C5).is_some());
+        c.select(doc.root(1));
+        assert_eq!(c.last(), 7);
+        assert_eq!(c.previous(), None);
     }
 }

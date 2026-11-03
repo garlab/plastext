@@ -4,7 +4,7 @@ use crate::csv_view::CsvView;
 use crate::image_view::ImageView;
 use crate::markdown_view::MarkdownView;
 use crate::pdf_view::PdfView;
-use crate::sgf_view::SgfView;
+use crate::record_view::RecordView;
 use crate::tex_view::TexView;
 use gpui::{AnyView, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription};
 use plastext_editor::{HexView, HexViewStatus, TextView, TextViewStatus};
@@ -19,7 +19,7 @@ pub(crate) enum TabView {
     Image(Entity<ImageView>),
     Csv(Entity<CsvView>),
     Pdf(Entity<PdfView>),
-    Sgf(Entity<SgfView>),
+    Record(Entity<RecordView>),
     Tex(Entity<TexView>),
 }
 
@@ -43,7 +43,7 @@ impl TabView {
         if let Self::Pdf(view) = self {
             view.update(cx, |view, cx| view.set_visible(visible, cx));
         }
-        if let Self::Sgf(view) = self {
+        if let Self::Record(view) = self {
             view.update(cx, |view, cx| view.set_visible(visible, cx));
         }
         if let Self::Tex(view) = self {
@@ -62,7 +62,7 @@ impl TabView {
             Self::Image(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Pdf(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
             Self::Tex(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
-            Self::Sgf(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
+            Self::Record(view) => view.update(cx, |view, cx| view.set_zoom(factor, font_size, cx)),
         }
     }
 
@@ -75,7 +75,7 @@ impl TabView {
             Self::Csv(view) => view.focus_handle(cx),
             Self::Pdf(view) => view.focus_handle(cx),
             Self::Tex(view) => view.focus_handle(cx),
-            Self::Sgf(view) => view.focus_handle(cx),
+            Self::Record(view) => view.focus_handle(cx),
         }
     }
 
@@ -89,7 +89,7 @@ impl TabView {
             Self::Csv(view) => Self::Csv(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Pdf(view) => Self::Pdf(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Tex(view) => Self::Tex(view.update(cx, |view, cx| view.duplicate(cx))),
-            Self::Sgf(view) => Self::Sgf(view.update(cx, |view, cx| view.duplicate(cx))),
+            Self::Record(view) => Self::Record(view.update(cx, |view, cx| view.duplicate(cx))),
         }
     }
 
@@ -107,7 +107,7 @@ impl TabView {
         if let Self::Pdf(view) = self {
             view.update(cx, |view, cx| view.scroll_to_offset(line, cx));
         }
-        if let Self::Sgf(view) = self {
+        if let Self::Record(view) = self {
             view.update(cx, |view, cx| view.scroll_to_line(line, cx));
         }
         if let Self::Tex(view) = self {
@@ -131,7 +131,7 @@ impl TabView {
             Self::Image(_) => None,
             Self::Csv(_) => None,
             Self::Pdf(_) => None,
-            Self::Sgf(_) => None,
+            Self::Record(_) => None,
             Self::Tex(view) => view.read(cx).symbols(cx),
         }
     }
@@ -146,7 +146,7 @@ impl TabView {
             Self::Csv(view) => view.read(cx).position(cx),
             Self::Pdf(view) => view.read(cx).position(),
             Self::Tex(view) => view.read(cx).position(cx),
-            Self::Sgf(view) => view.read(cx).position(cx),
+            Self::Record(view) => view.read(cx).position(cx),
         }
     }
 
@@ -159,7 +159,7 @@ impl TabView {
             Self::Csv(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Pdf(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Tex(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
-            Self::Sgf(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
+            Self::Record(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
         }
     }
 
@@ -167,7 +167,7 @@ impl TabView {
         match self {
             Self::Text(view) => TabStatus::Text(view.read(cx).status()),
             Self::Hex(view) => TabStatus::Hex(view.read(cx).status()),
-            Self::Sgf(view) => TabStatus::Preview {
+            Self::Record(view) => TabStatus::Preview {
                 notice: view.read(cx).notice(),
                 summary: view.read(cx).summary(),
             },
@@ -204,7 +204,7 @@ impl TabView {
             Self::Csv(view) => cx.observe(view, |_, _, cx| cx.notify()),
             Self::Pdf(view) => cx.observe(view, |_, _, cx| cx.notify()),
             Self::Tex(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Sgf(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Record(view) => cx.observe(view, |_, _, cx| cx.notify()),
         }
     }
 
@@ -217,7 +217,7 @@ impl TabView {
             Self::Csv(view) => view.clone().into(),
             Self::Pdf(view) => view.clone().into(),
             Self::Tex(view) => view.clone().into(),
-            Self::Sgf(view) => view.clone().into(),
+            Self::Record(view) => view.clone().into(),
         }
     }
 }

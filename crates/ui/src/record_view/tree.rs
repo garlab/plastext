@@ -1,4 +1,4 @@
-use document_graphics::sgf::{Collection, Color, NodeId};
+use super::document::{Collection, Color, NodeId};
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug)]
@@ -25,21 +25,20 @@ pub(super) struct Tree {
 }
 impl Tree {
     pub fn new(document: &Collection) -> Self {
-        let mut nodes: Vec<Node> = Vec::with_capacity(document.nodes().len());
-        let mut games: Vec<Game> = document
-            .games()
-            .iter()
+        let mut nodes: Vec<Node> = Vec::with_capacity(document.node_count());
+        let mut games: Vec<Game> = (0..document.game_count())
             .map(|_| Game {
                 rows: 0,
                 columns: 1,
                 range: 0..0,
             })
             .collect();
-        for (id, node) in document.nodes().iter().enumerate() {
+        for id in 0..document.node_count() {
+            let node = document.node(id);
             let game = &mut games[node.game];
             let (row, column, number) = if let Some(parent) = node.parent {
                 let previous = nodes[parent];
-                let column = if document.nodes()[parent].first_child == Some(id) {
+                let column = if document.node(parent).first_child == Some(id) {
                     previous.column
                 } else {
                     let column = game.columns;
@@ -50,27 +49,14 @@ impl Tree {
             } else {
                 (0, 0, 0)
             };
-            let color = if document.text(id, "B").is_some() {
-                Some(Color::Black)
-            } else if document.text(id, "W").is_some() {
-                Some(Color::White)
-            } else {
-                None
-            };
-            let number = if color.is_some() {
-                document
-                    .text(id, "MN")
-                    .and_then(|s| s.trim().parse().ok())
-                    .unwrap_or(number.saturating_add(1))
-            } else {
-                number
-            };
+            let color = document.color(id);
+            let number = document.number(id, number);
             nodes.push(Node {
                 row,
                 column,
                 number,
                 color,
-                comment: document.text(id, "C").is_some_and(|s| !s.is_empty()),
+                comment: document.has_comment(id),
                 last_child: None,
             });
             if let Some(parent) = node.parent {
@@ -83,9 +69,8 @@ impl Tree {
             game.range.end = id + 1;
         }
         let mut by_row: Vec<_> = (0..nodes.len()).collect();
-        by_row.sort_unstable_by_key(|&id| {
-            (document.nodes()[id].game, nodes[id].row, nodes[id].column)
-        });
+        by_row
+            .sort_unstable_by_key(|&id| (document.node(id).game, nodes[id].row, nodes[id].column));
         Self {
             nodes,
             games,
@@ -134,7 +119,12 @@ mod tests {
     use super::*;
     use std::sync::{Arc, atomic::AtomicBool};
     fn parse(text: &str) -> Collection {
-        Collection::parse(Arc::from(text.as_bytes()), &AtomicBool::new(false)).unwrap()
+        Collection::parse(
+            Arc::from(text.as_bytes()),
+            super::super::document::Kind::Go,
+            &AtomicBool::new(false),
+        )
+        .unwrap()
     }
     #[test]
     fn branches_are_side_by_side_with_stable_move_numbers_and_game_ranges() {

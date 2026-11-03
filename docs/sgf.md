@@ -70,7 +70,7 @@ nodes and connectors are drawn, without reconstructing their board positions.
 
 ## Developing the shared backend
 
-Plastext uses the published `document-graphics` 0.1.3 `sgf` feature. To develop
+Plastext uses the `document-graphics` `sgf` feature. To develop
 the library, use the optional sibling checkout and ignored Cargo override from
 [local development](local-development.md#shared-rendering-libraries).
 Run the library's `sgf_probe` example from its checkout to check every node and render root

@@ -1,12 +1,10 @@
+pub(crate) mod document;
 mod model;
 mod side_panel;
 mod tree;
 mod viewport;
 
-use document_graphics::{
-    RasterOptions,
-    sgf::{self, Collection, Color, NodeId, Position, RenderOptions},
-};
+use document::{Collection, Kind, NodeId, Position};
 use gpui::{
     AnyElement, App, ContentMask, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton,
     Pixels, Point, RenderImage, ScrollHandle, SharedString, Subscription, Task, Window,
@@ -21,7 +19,7 @@ use std::sync::{
 };
 
 actions!(
-    sgf_view,
+    record_view,
     [
         ToggleSource,
         Next,
@@ -36,15 +34,15 @@ actions!(
 );
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-shift-v", ToggleSource, Some("Sgf")),
-        KeyBinding::new("down", Next, Some("SgfPreview")),
-        KeyBinding::new("up", Previous, Some("SgfPreview")),
-        KeyBinding::new("home", First, Some("SgfPreview")),
-        KeyBinding::new("end", Last, Some("SgfPreview")),
-        KeyBinding::new("right", NextVariation, Some("SgfPreview")),
-        KeyBinding::new("left", PreviousVariation, Some("SgfPreview")),
-        KeyBinding::new("cmd-down", NextFork, Some("SgfPreview")),
-        KeyBinding::new("cmd-up", PreviousFork, Some("SgfPreview")),
+        KeyBinding::new("cmd-shift-v", ToggleSource, Some("Record")),
+        KeyBinding::new("down", Next, Some("RecordPreview")),
+        KeyBinding::new("up", Previous, Some("RecordPreview")),
+        KeyBinding::new("home", First, Some("RecordPreview")),
+        KeyBinding::new("end", Last, Some("RecordPreview")),
+        KeyBinding::new("right", NextVariation, Some("RecordPreview")),
+        KeyBinding::new("left", PreviousVariation, Some("RecordPreview")),
+        KeyBinding::new("cmd-down", NextFork, Some("RecordPreview")),
+        KeyBinding::new("cmd-up", PreviousFork, Some("RecordPreview")),
     ]);
 }
 
@@ -52,7 +50,7 @@ pub(crate) fn init(cx: &mut App) {
 struct Request {
     node: NodeId,
     dark: bool,
-    numbers: bool,
+    board_option: bool,
 }
 struct Pending {
     request: Option<Request>,
@@ -65,7 +63,8 @@ impl Drop for Pending {
     }
 }
 
-pub struct SgfView {
+pub struct RecordView {
+    kind: Kind,
     source: Arc<FileSource>,
     lines: Arc<LineIndex>,
     style: TextStyle,
@@ -82,15 +81,16 @@ pub struct SgfView {
     rendered: Option<Request>,
     pending: Option<Pending>,
     pending_offset: u64,
-    numbers: bool,
+    board_option: bool,
     error: Option<SharedString>,
     tree_scroll: ScrollHandle,
     comment_scroll: ScrollHandle,
     tree_origin: Point<Pixels>,
     reveal_tree: bool,
 }
-impl SgfView {
+impl RecordView {
     pub fn new(
+        kind: Kind,
         source: Arc<FileSource>,
         lines: Arc<LineIndex>,
         style: TextStyle,
@@ -98,6 +98,7 @@ impl SgfView {
     ) -> Self {
         cx.on_release(|this, cx| this.release_preview(cx)).detach();
         Self {
+            kind,
             source,
             lines,
             style,
@@ -114,7 +115,7 @@ impl SgfView {
             rendered: None,
             pending: None,
             pending_offset: 0,
-            numbers: false,
+            board_option: false,
             error: None,
             tree_scroll: ScrollHandle::new(),
             comment_scroll: ScrollHandle::new(),
@@ -129,7 +130,7 @@ impl SgfView {
         let wanted = self.cursor.as_ref().map(|c| Request {
             node: c.selected,
             dark,
-            numbers: self.numbers,
+            board_option: self.board_option,
         });
         if let Some(pending) = &self.pending {
             if pending.request.is_some() && pending.request != wanted {
@@ -147,18 +148,7 @@ impl SgfView {
             let positions = self.positions.clone();
             let work = cx.background_executor().spawn(async move {
                 let position = positions.get(&doc, request.node, &token)?;
-                let raster = sgf::rasterize(
-                    &position,
-                    RenderOptions {
-                        dark: request.dark,
-                        move_numbers: request.numbers,
-                    },
-                    RasterOptions {
-                        bounds: (1000, 1000),
-                        scale: 4.,
-                    },
-                    &token,
-                )?;
+                let raster = position.rasterize(request.dark, request.board_option, &token)?;
                 let image = crate::image_view::render_image(plastext_assets::Preview {
                     width: raster.width,
                     height: raster.height,
@@ -167,7 +157,7 @@ impl SgfView {
                     rgba: raster.rgba,
                 })
                 .0;
-                Ok::<_, sgf::Error>((position, image))
+                Ok::<_, String>((position, image))
             });
             cx.spawn(async move |this, cx| {
                 let result = work.await;
@@ -210,17 +200,18 @@ impl SgfView {
                 return;
             }
             let source = self.source.clone();
+            let kind = self.kind;
             let work = cx.background_executor().spawn(async move {
-                if source.len() > sgf::MAX_SOURCE as u64 {
-                    return Err(
-                        "SGF preview supports files up to 8 MiB. Open Source to read this file."
-                            .to_owned(),
-                    );
+                if source.len() > kind.max_source() as u64 {
+                    return Err(format!(
+                        "{} preview supports files up to 8 MiB. Open Source to read this file.",
+                        kind.format()
+                    ));
                 }
                 let bytes = source
-                    .head(sgf::MAX_SOURCE as u64)
+                    .head(kind.max_source() as u64)
                     .map_err(|e| e.to_string())?;
-                Collection::parse(Arc::from(bytes.as_ref()), &token)
+                Collection::parse(Arc::from(bytes.as_ref()), kind, &token)
                     .map(|document| Cursor::new(Arc::new(document)))
                     .map_err(|e| e.to_string())
             });
@@ -281,10 +272,9 @@ impl SgfView {
             Motion::PreviousFork => c.previous_fork(),
             Motion::NextFork => c.next_fork(),
             Motion::Game(direction) => {
-                let index = (c.game() as i32 + direction)
-                    .rem_euclid(c.document.games().len() as i32)
+                let index = (c.game() as i32 + direction).rem_euclid(c.document.game_count() as i32)
                     as usize;
-                Some(c.document.games()[index].root)
+                Some(c.document.root(index))
             }
         });
         self.select(node, cx);
@@ -320,16 +310,11 @@ impl SgfView {
     }
     pub fn summary(&self) -> String {
         if self.show_raw {
-            return "Source    SGF".into();
+            return format!("Source    {}", self.kind.format());
         }
         self.presented.as_ref().map_or_else(
-            || "SGF".into(),
-            |p| {
-                format!(
-                    "{} × {}    Move {}    SGF",
-                    p.width, p.height, p.move_number
-                )
-            },
+            || self.kind.format().into(),
+            |p| format!("{}    {}", p.summary(), self.kind.format()),
         )
     }
     pub fn position(&self, cx: &App) -> u64 {
@@ -339,7 +324,7 @@ impl SgfView {
             return raw.read(cx).position();
         }
         self.cursor.as_ref().map_or(self.pending_offset, |c| {
-            c.document.nodes()[c.selected].source.start as u64
+            c.document.node(c.selected).source.start as u64
         })
     }
     pub fn scroll_to_line(&mut self, line: u64, cx: &mut Context<Self>) {
@@ -374,6 +359,7 @@ impl SgfView {
             .map(|v| v.update(cx, |v, cx| v.duplicate(cx)));
         cx.new(|cx| {
             let mut view = Self::new(
+                self.kind,
                 self.source.clone(),
                 self.lines.clone(),
                 self.style.clone(),
@@ -385,7 +371,7 @@ impl SgfView {
             view.presented = self.presented.clone();
             // Each pane owns its raster/atlas entry; compact positions are shared.
             view.show_raw = self.show_raw;
-            view.numbers = self.numbers;
+            view.board_option = self.board_option;
             view.pending_offset = self.pending_offset;
             view.error = self.error.clone();
             view.raw = raw;
@@ -457,7 +443,7 @@ impl SgfView {
         let cursor = self.cursor.as_ref();
         let ready = cursor.is_some();
         let mut controls = div()
-            .id("sgf-controls")
+            .id("record-controls")
             .flex_none()
             .h(px(36. * self.zoom))
             .overflow_x_scroll()
@@ -469,7 +455,7 @@ impl SgfView {
             .py_1()
             .text_size(px(13. * self.zoom))
             .child(self.button(
-                "sgf-first",
+                "record-first",
                 "Start",
                 Motion::First,
                 cursor.is_some_and(|c| c.previous().is_some()),
@@ -477,7 +463,7 @@ impl SgfView {
                 cx,
             ))
             .child(self.button(
-                "sgf-previous",
+                "record-previous",
                 "↑",
                 Motion::Previous,
                 cursor.is_some_and(|c| c.previous().is_some()),
@@ -485,7 +471,7 @@ impl SgfView {
                 cx,
             ))
             .child(self.button(
-                "sgf-next",
+                "record-next",
                 "↓",
                 Motion::Next,
                 cursor.is_some_and(|c| c.next().is_some()),
@@ -493,7 +479,7 @@ impl SgfView {
                 cx,
             ))
             .child(self.button(
-                "sgf-last",
+                "record-last",
                 "End",
                 Motion::Last,
                 cursor.is_some_and(|c| c.next().is_some()),
@@ -501,60 +487,40 @@ impl SgfView {
                 cx,
             ));
         if let Some(p) = &self.presented {
-            let last = p
-                .last_move
-                .map(|m| {
-                    format!(
-                        " · {} {}",
-                        if m.color == Color::Black {
-                            "Black"
-                        } else {
-                            "White"
-                        },
-                        m.point
-                            .map_or_else(|| "passes".into(), |pnt| pnt.coordinate(p.height))
-                    )
-                })
-                .unwrap_or_default();
-            controls = controls.child(
-                div()
-                    .flex_none()
-                    .px_2()
-                    .child(format!("Move {}{last}", p.move_number)),
-            );
+            controls = controls.child(div().flex_none().px_2().child(p.status()));
         }
         controls = controls.child(
             div()
-                .id("sgf-numbers")
+                .id("record-board_option")
                 .flex_none()
                 .px_2()
                 .py_1()
                 .rounded_sm()
                 .cursor_pointer()
-                .when(self.numbers, |d| d.bg(theme.selection))
-                .child("Numbers")
+                .when(self.board_option, |d| d.bg(theme.selection))
+                .child(self.kind.option())
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.numbers = !this.numbers;
+                    this.board_option = !this.board_option;
                     this.error = None;
                     this.focus.focus(window);
                     cx.notify();
                 })),
         );
         if let Some(c) = cursor
-            && c.document.games().len() > 1
+            && c.document.game_count() > 1
         {
             controls = controls
                 .child(self.button(
-                    "sgf-game-prev",
+                    "record-game-prev",
                     "Previous game",
                     Motion::Game(-1),
                     true,
                     theme,
                     cx,
                 ))
-                .child(format!("{}/{}", c.game() + 1, c.document.games().len()))
+                .child(format!("{}/{}", c.game() + 1, c.document.game_count()))
                 .child(self.button(
-                    "sgf-game-next",
+                    "record-game-next",
                     "Next game",
                     Motion::Game(1),
                     true,
@@ -594,12 +560,12 @@ impl SgfView {
                 .child(if ready {
                     "Rendering board…"
                 } else {
-                    "Opening SGF…"
+                    "Opening record…"
                 })
                 .into_any_element()
         };
         div()
-            .key_context("SgfPreview")
+            .key_context("RecordPreview")
             .track_focus(&self.focus)
             .size_full()
             .min_h_0()
@@ -621,7 +587,7 @@ impl SgfView {
                     .overflow_hidden()
                     .child(
                         div()
-                            .id("sgf-board")
+                            .id("record-board")
                             .relative()
                             .flex_1()
                             .min_h_0()
@@ -653,7 +619,7 @@ fn clipped(s: String, max: usize) -> String {
         format!("{}…", s.chars().take(max).collect::<String>())
     }
 }
-impl Focusable for SgfView {
+impl Focusable for RecordView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         if self.show_raw
             && let Some(raw) = &self.raw
@@ -664,7 +630,7 @@ impl Focusable for SgfView {
         }
     }
 }
-impl Render for SgfView {
+impl Render for RecordView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::get(window, cx);
         let dark = matches!(
@@ -678,7 +644,7 @@ impl Render for SgfView {
             self.preview(theme, cx)
         };
         div()
-            .key_context("Sgf")
+            .key_context("Record")
             .size_full()
             .flex()
             .flex_col()
@@ -720,10 +686,10 @@ impl Render for SgfView {
                     .bg(theme.surface)
                     .text_color(theme.text_muted)
                     .text_xs()
-                    .child("Go record")
+                    .child(self.kind.title())
                     .child(
                         div()
-                            .id("sgf-source")
+                            .id("record-source")
                             .cursor_pointer()
                             .child(if self.show_raw {
                                 "Preview ⇧⌘V"

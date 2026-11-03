@@ -80,7 +80,7 @@ pub fn init(cx: &mut App) {
     crate::markdown_view::init(cx);
     crate::pdf_view::init(cx);
     crate::image_view::init(cx);
-    crate::sgf_view::init(cx);
+    crate::record_view::init(cx);
     crate::tex_view::init(cx);
     crate::quick_open::init(cx);
     crate::picker::init(cx);
@@ -448,10 +448,8 @@ impl Workspace {
                     )?);
                     return Ok(Opened::Pdf(source));
                 }
-                let sgf = path
-                    .extension()
-                    .is_some_and(|s| s.eq_ignore_ascii_case("sgf"));
-                let options = if sgf {
+                let record = crate::record_view::document::Kind::for_path(&path).is_some();
+                let options = if record {
                     OpenOptions {
                         large_file_threshold: 0,
                         block_cache: 8 * 1024 * 1024,
@@ -464,7 +462,7 @@ impl Workspace {
                 if plastext_platform::pdf::is_pdf(&path, &head) {
                     return Ok(Opened::Pdf(source));
                 }
-                if !sgf && plastext_buffer::looks_binary(&head) {
+                if !record && plastext_buffer::looks_binary(&head) {
                     return Ok(Opened::Binary(source));
                 }
                 let index = LineIndex::for_source(source.clone())?;
@@ -489,12 +487,15 @@ impl Workspace {
                                 cx.new(|cx| PdfView::new(path.clone(), source, style, cx)),
                             ),
                             Opened::Text(source, index, _)
-                                if path
-                                    .extension()
-                                    .is_some_and(|s| s.eq_ignore_ascii_case("sgf")) =>
+                                if crate::record_view::document::Kind::for_path(&path)
+                                    .is_some() =>
                             {
-                                TabView::Sgf(cx.new(|cx| {
-                                    crate::sgf_view::SgfView::new(source, index, style, cx)
+                                let kind =
+                                    crate::record_view::document::Kind::for_path(&path).unwrap();
+                                TabView::Record(cx.new(|cx| {
+                                    crate::record_view::RecordView::new(
+                                        kind, source, index, style, cx,
+                                    )
                                 }))
                             }
                             Opened::Text(source, index, _)
