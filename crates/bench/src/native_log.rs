@@ -50,6 +50,12 @@ impl NativeLog {
                 ("reading: cached pages ", "cached_pages"),
                 ("reading: cached rows ", "cached_rows"),
                 ("reading: scrolled frames ", "scrolled_frames"),
+                ("reading: max visible columns ", "max_visible_columns"),
+                ("reading: visited column targets ", "visited_column_targets"),
+                (
+                    "reading: required column targets ",
+                    "required_column_targets",
+                ),
             ] {
                 if let Some(value) = line.strip_prefix(prefix).and_then(|s| s.parse().ok()) {
                     result.cache.insert(key, value);
@@ -103,6 +109,9 @@ impl NativeLog {
                     && self.cache.get("visited_targets") == self.cache.get("required_targets")
                     && self.cache.get("cached_pages").is_some_and(|&n| n <= 9)
                     && self.cache.get("cached_rows").is_some_and(|&n| n <= 9 * 64)
+                    && self.cache.get("required_column_targets").is_none_or(|&n| {
+                        n > 0 && self.cache.get("visited_column_targets") == Some(&n)
+                    })
                     && self.cache.get("scrolled_frames").is_some_and(|&n| {
                         n >= frames.max(1).div_ceil(2) && n <= self.frames.len()
                     })))
@@ -204,6 +213,19 @@ mod tests {
             log.replace("reading: scrolled frames 1\n", ""),
             log.replace("reading: cached pages 9\n", ""),
             log.replace("reading: full preview paint 2500 ms\n", ""),
+        ] {
+            assert!(!NativeLog::parse(&invalid, true).complete(true, false, 2));
+        }
+        let horizontal = format!(
+            "{log}reading: max visible columns 7\nreading: visited column targets 3\nreading: required column targets 3\n"
+        );
+        let parsed = NativeLog::parse(&horizontal, true);
+        assert!(parsed.complete(true, false, 2));
+        assert_eq!(parsed.cache_summary()["max_visible_columns"], 7);
+        for invalid in [
+            horizontal.replace("visited column targets 3", "visited column targets 2"),
+            horizontal.replace("reading: visited column targets 3\n", ""),
+            horizontal.replace("column targets 3", "column targets 0"),
         ] {
             assert!(!NativeLog::parse(&invalid, true).complete(true, false, 2));
         }

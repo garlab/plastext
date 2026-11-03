@@ -33,8 +33,14 @@ with csv.open("wb") as f:
     for _ in range(2_000):
         f.write(batch)
 
+wide_csv = out / "wide.csv"
+with wide_csv.open("w") as f:
+    f.write(",".join(f"column_{column:03}" for column in range(128)) + "\n")
+    for row in range(20_000):
+        f.write(",".join(f"row {row:05} col {column:03}" for column in range(128)) + "\n")
+
 manifest = []
-for path in (markdown, csv):
+for path in (markdown, csv, wide_csv):
     digest = hashlib.sha256()
     with path.open("rb") as f:
         while block := f.read(1024 * 1024):

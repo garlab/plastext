@@ -21,9 +21,22 @@ pub(super) struct ReadingProfile {
     previous_top: Option<usize>,
     scrolled_frames: usize,
     rendered: Range<usize>,
+    sweep_columns: bool,
+    column_targets: Vec<usize>,
+    visited_columns: HashSet<usize>,
+    max_columns: usize,
 }
 
 impl ReadingProfile {
+    pub(super) fn painted_columns(&mut self, columns: Range<usize>) {
+        self.max_columns = self.max_columns.max(columns.len());
+        for &target in &self.column_targets {
+            if columns.contains(&target) {
+                self.visited_columns.insert(target);
+            }
+        }
+    }
+
     pub(super) fn loaded_page(&mut self, page: u64) {
         self.page_loads += 1;
         if !self.seen_pages.insert(page) {
@@ -67,6 +80,10 @@ impl CsvView {
             previous_top: None,
             scrolled_frames: 0,
             rendered: 0..0,
+            sweep_columns: std::env::var_os("PLASTEXT_PROFILE_CSV_SWEEP").is_some(),
+            column_targets: Vec::new(),
+            visited_columns: HashSet::new(),
+            max_columns: 0,
         });
     }
 
@@ -94,6 +111,12 @@ impl CsvView {
             profile.targets.sort_unstable();
             profile.targets.dedup();
             profile.steps = 0;
+            if profile.sweep_columns {
+                let last = self.columns.len().saturating_sub(1);
+                profile.column_targets = vec![0, last / 2, last];
+                profile.column_targets.sort_unstable();
+                profile.column_targets.dedup();
+            }
             eprintln!("reading: csv preview");
         }
         if ready {
@@ -128,9 +151,22 @@ impl CsvView {
         if !first && !ready {
             return;
         }
-        let done =
-            complete && profile.frames_left == 0 && profile.visited.len() == profile.targets.len();
+        let done = complete
+            && profile.frames_left == 0
+            && profile.visited.len() == profile.targets.len()
+            && profile.visited_columns.len() == profile.column_targets.len();
         if done {
+            eprintln!("reading: max visible columns {}", profile.max_columns);
+            if profile.sweep_columns {
+                eprintln!(
+                    "reading: visited column targets {}",
+                    profile.visited_columns.len()
+                );
+                eprintln!(
+                    "reading: required column targets {}",
+                    profile.column_targets.len()
+                );
+            }
             eprintln!("reading: cached pages {}", self.pages.len());
             eprintln!(
                 "reading: cached rows {}",
@@ -181,6 +217,12 @@ impl CsvView {
                     let count = this.index.progress().rows.saturating_sub(1) as usize;
                     let row = if complete && profile.steps.is_multiple_of(250) {
                         let jump = profile.steps / 250;
+                        if profile.sweep_columns {
+                            let max = this.horizontal_scroll.max_offset().width;
+                            let mut offset = this.horizontal_scroll.offset();
+                            offset.x = -max * ((jump % 3) as f32 / 2.);
+                            this.horizontal_scroll.set_offset(offset);
+                        }
                         if jump % 2 == 1 {
                             profile.targets[(jump / 2) % profile.targets.len()]
                         } else {

@@ -28,9 +28,9 @@ it. Keep new backends optional and initialize them only when used.
 
 ## Remaining M2 work
 
-- Finish the [large-workload checks](m2-validation.md): CSV still misses the 8 ms
-  frame target; reference M1 Air measurements and native PDF/TeX interaction
-  review remain outstanding.
+- Finish the [large-workload checks](m2-validation.md): local 10,000-frame
+  Markdown and CSV runs now pass the 8 ms target. Reference M1 Air measurements
+  and native PDF/TeX interaction review remain outstanding.
 - Add zoom/pan or tiled rendering for reading large Mermaid graphs at full
   detail, and expose more specific renderer rejection reasons. Preserve the
   [existing diagram limits](mermaid.md#resource-bounds).

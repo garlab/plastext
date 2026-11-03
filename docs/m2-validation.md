@@ -21,6 +21,8 @@ target/release/plastext-bench m2 target/benchmarks/m2-fixtures/large.md --output
 target/release/plastext-bench csv target/benchmarks/m2-fixtures/large.csv --output target/benchmarks/m2-csv-core.summary.json
 target/release/plastext-bench read target/benchmarks/m2-fixtures/large.md --frames 10000 --foreground --keep-visible --output target/benchmarks/m2-markdown-native.summary.json
 target/release/plastext-bench read target/benchmarks/m2-fixtures/large.csv --frames 10000 --foreground --keep-visible --output target/benchmarks/m2-csv-native.summary.json
+target/release/plastext-bench read target/benchmarks/m2-fixtures/wide.csv --frames 1500 --foreground --keep-visible --output target/benchmarks/m2-csv-wide.summary.json
+PLASTEXT_PROFILE_CSV_SWEEP=1 target/release/plastext-bench read target/benchmarks/m2-fixtures/wide.csv --frames 1500 --foreground --keep-visible --output target/benchmarks/m2-csv-horizontal.summary.json
 
 for fixture in many-pages dense-vectors large-page large-images; do
   target/release/plastext-bench pdf "target/benchmarks/m2-preview-fixtures/$fixture.pdf" --output "target/benchmarks/m2-$fixture.summary.json"
@@ -32,6 +34,15 @@ PDF and TeX measurements require macOS. TeX also requires a local TeX Live
 installation with `article` and `amsmath`. No package downloads are attempted.
 The TeX benchmark snapshots its input read-only; save-burst, error recovery and
 stuck-build checks use separate disposable files.
+
+The wide CSV has 20,000 data rows and 128 columns. The optional
+`PLASTEXT_PROFILE_CSV_SWEEP` also scrolls horizontally between the first, middle
+and last columns. Its summary must show all three `visited_column_targets`,
+matching `required_column_targets`; `max_visible_columns` reports the largest
+painted header range. The 1,500-frame wide runs are additional diagnostics, not
+replacements for the 10,000-frame, 20-million-row check. To compare builds,
+preserve the earlier executable and pass it with `--app` under the same window
+mode, without the optional sweep for builds that predate that instrumentation.
 
 ## What counts as a pass
 
@@ -100,7 +111,7 @@ index/cache byte counts remain comparable.
 The [20-million-row native run](benchmarks/m2-2026-11-03-validation-csv-native.summary.json)
 completed 10,000 content frames, including **8,506 actual changes of the first
 visible row** and all three destinations. First content took 24.10 ms, full
-indexing 474.95 ms, and draw/submit p99 was **8.46 ms: the 8 ms budget still fails**.
+indexing 474.95 ms, and draw/submit p99 was **8.46 ms: this run failed the 8 ms budget**.
 Frame-interval p99 was 9.21 ms. The cache held nine pages / 576 records, and sampled
 app RSS peaked at 133.64 MiB.
 
@@ -116,6 +127,41 @@ establish a draw/submit budget pass or a stable change in rendering cost.
 The [core CSV check](benchmarks/m2-2026-11-03-validation-csv-core.summary.json)
 indexed 20,000,001 records including the header in 579.39 ms and decoded the final
 60 records in 0.93 ms. It reports failures independently of native timing.
+
+### CSV visible-column follow-up
+
+On the same hardware and window mode, the unchanged app at `7647347` first
+[passed 10,000 frames at 4.83 ms p99](benchmarks/m2-2026-11-03-csv-columns-large-before.summary.json).
+That pass predates the optimization below: the earlier 8.46 ms failure is not
+consistently reproducible, and remains part of the display/system variability
+described above. Both follow-up builds used local `document-graphics` 0.1.5 at
+`8d4ab41` (the shared-rendering cleanup).
+
+CSV rows now defer cell construction until their visible bounds are known.
+Only intersecting columns are built and laid out, including partial edge cells;
+off-screen columns retain their logical widths. Fixed-height sizing probes no
+longer build cells. Selection and copying continue to use complete source
+records, independently of which columns are visible.
+
+| Native workload | Frames | Draw/submit p99 before → after | First content before → after | Peak sampled app RSS before → after |
+|---|---:|---:|---:|---:|
+| [20M rows before](benchmarks/m2-2026-11-03-csv-columns-large-before.summary.json) / [after](benchmarks/m2-2026-11-03-csv-columns-large-after.summary.json) | 10,000 | 4.83 → **2.88 ms** | 24.99 → 24.83 ms | 131.75 → 131.77 MiB |
+| [128 columns before](benchmarks/m2-2026-11-03-csv-columns-wide-before.summary.json) / [after](benchmarks/m2-2026-11-03-csv-columns-wide-after.summary.json) | 1,500 | 46.34 → **4.99 ms** | 157.17 → 42.01 ms | 336.38 → 182.34 MiB |
+
+The large-file run changed the first visible row 8,506 times, reached all three
+destinations and retained nine pages / 576 records. Its 32 placeholder frames
+match the unchanged build. The wide run built at most seven columns per row.
+A separate [horizontal sweep](benchmarks/m2-2026-11-03-csv-columns-horizontal.summary.json)
+reached the first, middle and last columns and all three row destinations at
+**4.45 ms p99**, with nine pages / 545 records cached. These are single runs of
+each workload, collected without overlapping compilation or tests.
+
+The wide fixture is 46,081,408 bytes, with 20,000 data rows and 128 columns;
+SHA-256 `dfc86cdd9de0aaa5495b9f004c495dfdb4672bdb606ef5c19329824a2b1c98b5`.
+Regression checks cover partial edge cells, ragged rows, resized widths,
+coordinate calculations at 50%, 100% and 200% zoom, existing selection/copy
+behavior, and rejection of incomplete horizontal benchmark runs. These checks
+do not replace manual interaction or reference-hardware review.
 
 ### PDF and TeX
 
@@ -153,6 +199,6 @@ budget (the accepted baseline was 28.68 ms). This known miss remains a failure;
 the samples do not establish a statistical improvement. This is a comparison
 with the M1 milestone's core baseline, not a reference-machine check.
 
-Roadmap item 4 remains open for the CSV frame budget, the base M1 Air / 8 GB
-runs, and native PDF/TeX interaction and visual review. A passing local Markdown
-run and bounded headless workers do not certify all M2 exit conditions.
+Local Markdown and CSV runs now meet the frame budget. The base M1 Air / 8 GB
+runs and native PDF/TeX interaction and visual review remain open. Local passes
+and bounded headless workers do not certify all M2 exit conditions.

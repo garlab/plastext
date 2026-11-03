@@ -1,8 +1,8 @@
 use gpui::{
-    AnyElement, App, Context, CursorStyle, DispatchPhase, Entity, FocusHandle, Focusable,
-    FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollHandle,
+    AnyElement, App, AvailableSpace, Context, CursorStyle, DispatchPhase, Entity, FocusHandle,
+    Focusable, FontWeight, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollHandle,
     ScrollStrategy, SharedString, Subscription, Task, UniformListScrollHandle, Window, canvas, div,
-    prelude::*, px, uniform_list,
+    prelude::*, px, size, uniform_list,
 };
 use plastext_assets::csv::{CsvIndex, CsvRow};
 use plastext_buffer::{FileSource, LineIndex};
@@ -212,24 +212,86 @@ impl CsvView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.request(number / PAGE, window, cx);
+        let view = cx.entity().downgrade();
+        let painted = view.clone();
+        let track_columns = header && self.profile.is_some();
+        canvas(
+            move |bounds, window, cx| {
+                // Wait for this frame's layout and scroll clamping. Cached scroll
+                // bounds would leave gaps for a frame after pane/column resizing.
+                let clip = bounds.intersect(&window.content_mask().bounds);
+                if clip.size.width <= px(0.) || clip.size.height <= px(0.) {
+                    return None;
+                }
+                let (mut row, columns) = view
+                    .update(cx, |this, cx| {
+                        let left = f32::from(clip.left() - bounds.left()) / this.zoom - 56.;
+                        let right = f32::from(clip.right() - bounds.left()) / this.zoom - 56.;
+                        this.row_contents(number, header, left..right, theme, hits, cx)
+                    })
+                    .ok()?;
+                row.layout_as_root(
+                    size(
+                        AvailableSpace::Definite(bounds.size.width),
+                        AvailableSpace::Definite(bounds.size.height),
+                    ),
+                    window,
+                    cx,
+                );
+                row.prepaint_at(bounds.origin, window, cx);
+                Some((row, columns))
+            },
+            move |_, row, window, cx| {
+                if let Some((mut row, columns)) = row {
+                    row.paint(window, cx);
+                    if track_columns {
+                        painted
+                            .update(cx, |this, _| {
+                                if let Some(profile) = &mut this.profile {
+                                    profile.painted_columns(columns);
+                                }
+                            })
+                            .ok();
+                    }
+                }
+            },
+        )
+        .w_full()
+        .h(px(HEIGHT * self.zoom))
+        .flex_none()
+        .into_any_element()
+    }
+
+    fn row_contents(
+        &self,
+        number: u64,
+        header: bool,
+        visible: std::ops::Range<f32>,
+        theme: Theme,
+        hits: FrameHits,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, std::ops::Range<usize>) {
         let record = self
             .pages
             .get(&(number / PAGE))
             .and_then(|rows| rows.get((number % PAGE) as usize));
         let selectable = record.is_some_and(|row| row.cells.is_ok());
-        let mut cells = match record {
+        let (cells, fallback) = match record {
             Some(CsvRow {
                 cells: Ok(cells), ..
-            }) => cells.clone(),
+            }) => (cells.as_slice(), ""),
             Some(CsvRow {
                 cells: Err(error), ..
-            }) => vec![error.clone()],
-            None => vec!["Loading…".into()],
+            }) => (&[][..], error.as_str()),
+            None => (&[][..], "Loading…"),
         };
-        // Ragged records still need a header divider and aligned empty cells.
-        cells.resize(cells.len().max(self.columns.len()), String::new());
-        div()
+        // Ragged records retain aligned empty cells without allocating strings
+        // or elements for the columns outside the visible horizontal interval.
+        let count = cells.len().max(self.columns.len()).max(1);
+        let (columns, before) = self.columns.visible(visible.start, visible.end, count);
+        let row = div()
             .id(("csv-row", number as usize))
+            .w_full()
             .h(px(HEIGHT * self.zoom))
             .flex_none()
             .text_size(px(FONT_SIZE * self.zoom))
@@ -267,11 +329,25 @@ impl CsvView {
                         number.to_string()
                     }),
             )
-            .children(cells.into_iter().enumerate().map(|(i, cell)| {
-                self.render_cell(number, i, cell, selectable, theme, hits.clone(), cx)
-                    .into_any_element()
+            .child(div().w(px(before * self.zoom)).flex_none())
+            .children(columns.clone().map(|column| {
+                let cell = cells
+                    .get(column)
+                    .map(String::as_str)
+                    .unwrap_or_else(|| if column == 0 { fallback } else { "" });
+                self.render_cell(
+                    number,
+                    column,
+                    cell.to_owned(),
+                    selectable,
+                    theme,
+                    hits.clone(),
+                    cx,
+                )
+                .into_any_element()
             }))
-            .into_any_element()
+            .into_any_element();
+        (row, columns)
     }
 
     fn resize_overlay(&self, cx: &Context<Self>) -> impl IntoElement {

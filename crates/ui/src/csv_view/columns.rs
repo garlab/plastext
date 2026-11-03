@@ -43,6 +43,27 @@ impl Columns {
         (0..self.len()).map(|column| self.width(column)).sum()
     }
 
+    /// Columns intersecting a logical horizontal interval, plus the width skipped
+    /// before them. Keep partial edge cells; callers clip them at paint time.
+    pub fn visible(&self, left: f32, right: f32, count: usize) -> (std::ops::Range<usize>, f32) {
+        if right <= left || right <= 0. {
+            return (0..0, 0.);
+        }
+        let mut first = 0;
+        let mut before = 0.;
+        while first < count && before + self.width(first) <= left {
+            before += self.width(first);
+            first += 1;
+        }
+        let mut last = first;
+        let mut end = before;
+        while last < count && end < right {
+            end += self.width(last);
+            last += 1;
+        }
+        (first..last, before)
+    }
+
     pub fn resize(&mut self, column: usize, width: f32) {
         self.ensure_count(column + 1);
         self.overrides[column] = Some(width.clamp(MIN_WIDTH, MAX_WIDTH));
@@ -166,6 +187,41 @@ mod tests {
         assert_eq!(columns.total_width(), 540.);
         columns.ensure_count(3);
         assert_eq!(columns.width(2), DEFAULT_WIDTH);
+    }
+
+    #[test]
+    fn visible_columns_keep_partial_edges_and_their_original_positions() {
+        let mut columns = Columns::default();
+        columns.set_sampled(vec![64., 100., 150.]);
+        assert_eq!(columns.visible(63., 165., 3), (0..3, 0.));
+        assert_eq!(columns.visible(64., 164., 3), (1..2, 64.));
+        assert_eq!(columns.visible(164., 314., 3), (2..3, 164.));
+        assert_eq!(columns.visible(314., 900., 3), (3..3, 314.));
+        assert_eq!(columns.visible(-20., 64., 3), (0..1, 0.));
+        assert_eq!(columns.visible(0., 0., 3), (0..0, 0.));
+        // Newly discovered ragged columns use the normal default width.
+        assert_eq!(columns.visible(314., 474., 5), (3..4, 314.));
+        columns.resize(0, 200.);
+        assert_eq!(columns.visible(200., 300., 3), (1..2, 200.));
+    }
+
+    #[test]
+    fn wide_tables_only_visit_columns_intersecting_the_viewport_at_any_zoom() {
+        let mut columns = Columns::default();
+        columns.ensure_count(128);
+        for zoom in [0.5, 1., 2.] {
+            let left = 10.5 * DEFAULT_WIDTH;
+            let right = left + 800. / zoom;
+            let (range, before) = columns.visible(left, right, 128);
+            assert_eq!(range.start, 10);
+            assert_eq!(before, 10. * DEFAULT_WIDTH);
+            assert!(range.len() <= (800. / zoom / MIN_WIDTH).ceil() as usize + 2);
+            for i in 0..128 {
+                let intersects =
+                    (i + 1) as f32 * DEFAULT_WIDTH > left && (i as f32) * DEFAULT_WIDTH < right;
+                assert_eq!(range.contains(&i), intersects);
+            }
+        }
     }
 
     #[test]
