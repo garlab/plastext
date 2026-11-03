@@ -20,6 +20,7 @@ pub(super) const SLOT_CHAR: char = 'l';
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct FormulaKey {
     tex: String,
+    macros: plastext_markdown::MacroContext,
     display: bool,
     /// The first automatic equation number, or 0 if it numbers none.
     first_number: u32,
@@ -163,6 +164,7 @@ impl MarkdownView {
         for span in block.spans.iter().filter(|span| span.style.math) {
             let key = FormulaKey {
                 tex: block.text[span.range.clone()].to_owned(),
+                macros: self.document.macros.at(span.source.start),
                 display: false,
                 first_number: 0,
                 color: channels(inline_color(&span.style, theme)),
@@ -179,12 +181,14 @@ impl MarkdownView {
         &self,
         block: &Block,
         tex: &str,
+        source: usize,
         color: gpui::Rgba,
     ) -> Option<(usize, Image)> {
         let size_key = scale_key(text_size(&block.kind) * self.zoom);
         let metrics = self.formulas.inline.get(&size_key)?;
         let key = FormulaKey {
             tex: tex.to_owned(),
+            macros: self.document.macros.at(source),
             display: false,
             first_number: 0,
             color: channels(color),
@@ -265,7 +269,9 @@ impl MarkdownView {
         }
         let scale = window.scale_factor();
         // Numbered formulas wait until their first number is known.
-        let first_number = if plastext_math::may_number(&block.text) {
+        let first_number = if plastext_math::may_number(&block.text)
+            || !self.document.macros.at(block.source.start).is_empty()
+        {
             self.formulas
                 .numbering
                 .as_ref()
@@ -275,6 +281,7 @@ impl MarkdownView {
         };
         let key = first_number.map(|first_number| FormulaKey {
             tex: block.text.to_string(),
+            macros: self.document.macros.at(block.source.start),
             display: true,
             first_number,
             color: channels(theme.text),
@@ -291,7 +298,7 @@ impl MarkdownView {
             div().p_3().bg(theme.surface).child(self.rich_text(
                 block,
                 start..end,
-                ix,
+                (ix, 0),
                 true,
                 theme,
                 cx,
@@ -302,7 +309,32 @@ impl MarkdownView {
             .and_then(|key| self.formulas.cache.get(key))
             .and_then(Option::as_ref);
         match rendered {
-            Some(Ok(formula)) => display_formula(formula, ix),
+            Some(Ok(formula)) => {
+                let selected = self
+                    .reading
+                    .selected
+                    .block_range(ix, block.text.len())
+                    .is_some();
+                let found = self.find_matches_text(&block.text);
+                let content = div()
+                    .when(selected || found, |d| {
+                        d.bg(if selected {
+                            theme.selection
+                        } else {
+                            theme.find_match
+                        })
+                    })
+                    .child(display_formula(formula, ix));
+                self.selectable(
+                    ix,
+                    0,
+                    block.text.clone().into(),
+                    None,
+                    Vec::new(),
+                    content,
+                    cx,
+                )
+            }
             Some(Err(error)) => source()
                 .child(
                     div()
@@ -337,12 +369,13 @@ impl MarkdownView {
             let body_size = key.font_size as f32 / 1000.;
             async move {
                 let px_per_em = body_size * plastext_math::SCALE * scale;
-                let rendered = plastext_math::render(
+                let rendered = plastext_math::render_with_macros(
                     &key.tex,
                     key.display,
                     key.first_number.max(1),
                     px_per_em,
                     key.color,
+                    key.macros.sources()?,
                 )?;
                 Ok(Formula {
                     body: image(rendered.body, scale)?,
@@ -553,6 +586,54 @@ fn placeholder_count(formula_width: f32, shaped_advance: f32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paged_macros_render_in_headings_and_keep_numbering_when_visited_backwards() {
+        let input = format!(
+            "$$\\newcommand{{\\sq}}[1]{{#1^2}}\\def\\N{{\\mathbb{{N}}}}$$\n\n{}\n# $f: \\N \\to \\N$, $\\sq{{x}}$\n\n$$\\begin{{equation}}\\sq{{x}}\\end{{equation}}$$\n\n$\\def\\N{{222}}$ then $\\N$\n\n$$\\begin{{equation}}\\N\\end{{equation}}$$",
+            "padding\n\n".repeat(10000)
+        );
+        let source = FileSource::from_bytes(input.into_bytes());
+        let document = DocumentIndex::build(
+            &source,
+            || false,
+            |tex, macros| {
+                plastext_math::equation_numbers_with_macros(tex, macros.sources().unwrap())
+            },
+        )
+        .unwrap();
+        assert!(document.pages.len() > 1);
+        let mut starts: Vec<_> = document.equation_starts.values().copied().collect();
+        starts.sort_unstable();
+        assert_eq!(starts, [1, 2]);
+        let mut rendered_headings = 0;
+        for page in (0..document.pages.len()).rev() {
+            for block in document.parse_page(&source, page, || false).unwrap() {
+                if matches!(block.kind, BlockKind::Heading { .. }) {
+                    for span in block.spans.iter().filter(|s| s.style.math) {
+                        let context = document.macros.at(span.source.start);
+                        for zoom in [0.8, 0.9, 1.] {
+                            let rendered = plastext_math::render_with_macros(
+                                &block.text[span.range.clone()],
+                                false,
+                                1,
+                                text_size(&block.kind) * zoom * plastext_math::SCALE,
+                                [255; 4],
+                                context.sources().unwrap(),
+                            )
+                            .unwrap();
+                            assert!(rendered.body.width > 1);
+                        }
+                        rendered_headings += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(rendered_headings, 2);
+        let other = plastext_markdown::parse("# $\\N$");
+        let other = DocumentIndex::initial(&other, 8);
+        assert!(other.macros.at(8).is_empty());
+    }
 
     #[test]
     fn heading_math_uses_the_heading_size_and_a_separate_cache_entry() {

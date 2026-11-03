@@ -48,7 +48,27 @@ pub fn render(
     px_per_em: f32,
     rgba: [u8; 4],
 ) -> Result<Rendered, String> {
-    let settings = Settings::builder().display_mode(display).build();
+    render_with_macros(
+        tex,
+        display,
+        first_number,
+        px_per_em,
+        rgba,
+        std::iter::empty(),
+    )
+}
+
+/// Each render owns its macro namespace. Replay earlier definitions in document
+/// order; malformed formulas cannot leave partially applied definitions behind.
+pub fn render_with_macros<'a>(
+    tex: &str,
+    display: bool,
+    first_number: u32,
+    px_per_em: f32,
+    rgba: [u8; 4],
+    definitions: impl Iterator<Item = (&'a str, bool)>,
+) -> Result<Rendered, String> {
+    let settings = macro_settings(display, definitions);
     let layout = katex_native::layout_numbered(context(), tex, &settings, first_number)
         .map_err(|err| err.to_string())?;
     let [r, g, b, a] = rgba;
@@ -63,7 +83,16 @@ pub fn render(
         )
     };
     Ok(Rendered {
-        body: raster(&layout).ok_or("The formula is empty.")?,
+        body: raster(&layout)
+            .or_else(|| {
+                (layout.width == 0.).then_some(Raster {
+                    width: 1,
+                    height: 1,
+                    baseline: 0.,
+                    rgba: vec![0; 4],
+                })
+            })
+            .ok_or("The formula could not be rasterized.")?,
         tag: layout.tag.as_deref().and_then(raster),
     })
 }
@@ -72,11 +101,46 @@ pub fn render(
 /// the next formula's from. Formulas that can't number equations are not
 /// laid out.
 pub fn equation_numbers(tex: &str) -> u32 {
-    if !may_number(tex) {
+    equation_numbers_with_macros(tex, std::iter::empty())
+}
+
+pub fn equation_numbers_with_macros<'a>(
+    tex: &str,
+    definitions: impl Iterator<Item = (&'a str, bool)>,
+) -> u32 {
+    let mut definitions = definitions.peekable();
+    if !may_number(tex) && definitions.peek().is_none() {
         return 0;
     }
-    let settings = Settings::builder().display_mode(true).build();
+    let settings = macro_settings(true, definitions);
     katex_native::layout_with(context(), tex, &settings).map_or(0, |layout| layout.equation_numbers)
+}
+
+fn macro_settings<'a>(
+    display: bool,
+    definitions: impl Iterator<Item = (&'a str, bool)>,
+) -> Settings {
+    let mut macros = Default::default();
+    for (tex, display) in definitions {
+        let settings = Settings::builder()
+            .display_mode(display)
+            .global_group(true)
+            .max_expand(1000)
+            .macros(macros)
+            .build();
+        let previous = settings.macros.borrow().clone();
+        macros = if katex_native::katex::parse_tree::parse_tree(context(), tex, &settings).is_ok() {
+            settings.macros.into_inner()
+        } else {
+            previous
+        };
+    }
+    Settings::builder()
+        .display_mode(display)
+        .global_group(true)
+        .max_expand(1000)
+        .macros(macros)
+        .build()
 }
 
 /// Whether `tex` uses an environment that numbers equations (the starred
@@ -99,6 +163,64 @@ mod tests {
         assert!(body.baseline > 0. && body.baseline < body.height as f32);
         assert!(rendered.tag.is_none());
         assert!(render(r"\frac{a}", false, 1, 20., [0, 0, 0, 255]).is_err());
+    }
+
+    #[test]
+    fn document_macros_are_ordered_isolated_and_bounded() {
+        let definitions = [(r"\newcommand{\sq}[1]{#1^2}\def\N{\mathbb{N}}", true)];
+        let render =
+            |tex: &str| render_with_macros(tex, false, 1, 20., [255; 4], definitions.into_iter());
+        assert!(render(r"f: \N \to \N,\quad \sq{x}").is_ok());
+        assert!(super::render(r"\sq{x}", false, 1, 20., [255; 4]).is_err());
+        assert!(
+            render_with_macros(
+                r"\loop",
+                false,
+                1,
+                20.,
+                [255; 4],
+                [(r"\def\loop{\loop}", true)].into_iter()
+            )
+            .is_err()
+        );
+        assert!(
+            render_with_macros(
+                r"\leaked",
+                false,
+                1,
+                20.,
+                [255; 4],
+                [(r"\def\leaked{1}\badcommand", true)].into_iter()
+            )
+            .is_err()
+        );
+        let first = render_with_macros(
+            r"\x",
+            false,
+            1,
+            20.,
+            [255; 4],
+            [(r"\def\x{1}", true)].into_iter(),
+        )
+        .unwrap();
+        let second = render_with_macros(
+            r"\x",
+            false,
+            1,
+            20.,
+            [255; 4],
+            [(r"\def\x{1}", true), (r"\def\x{222}", true)].into_iter(),
+        )
+        .unwrap();
+        assert!(second.body.width > first.body.width);
+        assert!(super::render(r"\def\x{1}", true, 1, 20., [255; 4]).is_ok());
+        assert_eq!(
+            equation_numbers_with_macros(
+                r"\begin{equation}\sq{x}\end{equation}",
+                definitions.into_iter()
+            ),
+            1
+        );
     }
 
     #[test]

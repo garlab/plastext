@@ -263,16 +263,22 @@ impl MarkdownView {
         &self,
         text: &str,
         runs: Vec<TextRun>,
+        replacements: &[selection::Replacement],
         theme: Theme,
     ) -> Vec<TextRun> {
         let Some(find) = &self.find else { return runs };
         if find.query.is_empty() {
             return runs;
         }
-        let hits: Vec<_> = text
-            .match_indices(&find.query)
-            .map(|(at, _)| at..at + find.query.len())
-            .collect();
+        let mut hits: Vec<std::ops::Range<usize>> = Vec::new();
+        for (at, _) in text.match_indices(&find.query) {
+            let range = selection::display_range(at..at + find.query.len(), replacements);
+            if let Some(last) = hits.last_mut().filter(|last| last.end >= range.start) {
+                last.end = last.end.max(range.end);
+            } else {
+                hits.push(range);
+            }
+        }
         let mut result = Vec::new();
         let mut at = 0;
         let mut hit = 0;

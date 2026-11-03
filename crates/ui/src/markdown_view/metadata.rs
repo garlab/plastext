@@ -42,40 +42,36 @@ impl MarkdownView {
                     })
                     .into_any_element()
             }
-            BlockKind::FrontMatterRow { key, value, .. } => {
-                div()
-                    .flex()
-                    .w_full()
-                    .bg(theme.surface)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_size(px(14. * self.zoom))
-                    .child(div().w(relative(0.3)).flex_none().min_w_0().p_2().child(
-                        self.rich_text(block, key.clone(), ix.wrapping_mul(4096), true, theme, cx),
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .p_2()
-                            .border_l_1()
-                            .border_color(theme.border)
-                            .child(self.rich_text(
-                                block,
-                                value.clone(),
-                                ix.wrapping_mul(4096) + 1,
-                                true,
-                                theme,
-                                cx,
-                            )),
-                    )
-                    .into_any_element()
-            }
+            BlockKind::FrontMatterRow { key, value, .. } => div()
+                .flex()
+                .w_full()
+                .bg(theme.surface)
+                .border_b_1()
+                .border_color(theme.border)
+                .text_size(px(14. * self.zoom))
+                .child(
+                    div()
+                        .w(relative(0.3))
+                        .flex_none()
+                        .min_w_0()
+                        .p_2()
+                        .child(self.rich_text(block, key.clone(), (ix, 0), true, theme, cx)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .p_2()
+                        .border_l_1()
+                        .border_color(theme.border)
+                        .child(self.rich_text(block, value.clone(), (ix, 1), true, theme, cx)),
+                )
+                .into_any_element(),
             BlockKind::FrontMatterSource { .. } => div()
                 .p_3()
                 .bg(theme.surface)
                 .text_size(px(14. * self.zoom))
-                .child(self.rich_text(block, 0..block.text.len(), ix, true, theme, cx))
+                .child(self.rich_text(block, 0..block.text.len(), (ix, 0), true, theme, cx))
                 .into_any_element(),
             _ => unreachable!("metadata renderer requires a metadata block"),
         }

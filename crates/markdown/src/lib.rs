@@ -1,4 +1,6 @@
 //! Native Markdown model. Parsing and source mapping never depend on GPUI.
+mod macros;
+pub use macros::{MacroContext, MacroHistory};
 mod cache;
 mod index;
 #[cfg(test)]
@@ -8,6 +10,7 @@ mod math_blocks;
 mod metadata;
 mod parser;
 mod search;
+pub mod selection;
 
 use std::{ops::Range, path::Path, sync::Arc};
 

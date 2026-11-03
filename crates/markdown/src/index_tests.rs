@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 fn indexed(text: &str) -> (DocumentIndex, Vec<Arc<Block>>) {
     let source = FileSource::from_bytes(text.to_owned());
-    let index = DocumentIndex::build(&source, || false, |_| 0).unwrap();
+    let index = DocumentIndex::build(&source, || false, |_, _| 0).unwrap();
     let blocks = (0..index.pages.len())
         .flat_map(|page| index.parse_page(&source, page, || false).unwrap())
         .collect();
@@ -175,12 +175,12 @@ fn large_tables_and_fences_keep_context_and_every_byte() {
 fn cancelled_work_and_modified_source_are_rejected() {
     let source = FileSource::from_bytes("hello");
     assert_eq!(
-        DocumentIndex::build(&source, || true, |_| 0)
+        DocumentIndex::build(&source, || true, |_, _| 0)
             .unwrap_err()
             .kind(),
         std::io::ErrorKind::Interrupted
     );
-    let index = DocumentIndex::build(&source, || false, |_| 0).unwrap();
+    let index = DocumentIndex::build(&source, || false, |_, _| 0).unwrap();
     assert!(
         index
             .parse_page(&FileSource::from_bytes("other"), 0, || false)
@@ -196,7 +196,7 @@ fn cancelled_work_and_modified_source_are_rejected() {
 #[test]
 fn byte_cache_evicts_and_search_does_not_retain_pages() {
     let source = FileSource::from_bytes("paragraph **bold** text\n\n".repeat(30_000));
-    let index = DocumentIndex::build(&source, || false, |_| 0).unwrap();
+    let index = DocumentIndex::build(&source, || false, |_, _| 0).unwrap();
     let mut cache = PageCache::new(2 * 1024 * 1024);
     for _ in 0..2 {
         for page in (0..index.pages.len()).rev() {
@@ -263,7 +263,7 @@ fn equation_prefixes_are_independent_of_page_visit_order() {
     );
     let source = FileSource::from_bytes(text);
     let index =
-        DocumentIndex::build(&source, || false, |tex| if tex == "two" { 2 } else { 1 }).unwrap();
+        DocumentIndex::build(&source, || false, |tex, _| if tex == "two" { 2 } else { 1 }).unwrap();
     let mut numbers: Vec<_> = index.equation_starts.iter().collect();
     numbers.sort_by_key(|(block, _)| **block);
     assert_eq!(

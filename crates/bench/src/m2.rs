@@ -19,7 +19,7 @@ pub fn run(file: &Path, output: Option<&Path>) -> io::Result<()> {
     drop(preview);
     let full = Instant::now();
     // This core benchmark excludes the math engine's equation-counting pass.
-    let index = DocumentIndex::build(&source, || false, |_| 0)?;
+    let index = DocumentIndex::build(&source, || false, |_, _| 0)?;
     let full_ms = full.elapsed().as_secs_f64() * 1000.;
     let rss_index = rss_mb()?;
     let peak_index = peak_rss_mib();

@@ -15,8 +15,9 @@ implemented features, measured limits and remaining exit checks. The accepted
    decoding, tiles for sharp zoom, AVIF/HEIC and additional native formats,
    animated GIF/WebP, and SVG source mode. See the image guide for codec and
    resource limits.
-3. Complete the remaining Markdown reading features, especially rendered-text
-   selection/copy, math in headings and document-scoped macros.
+3. **Completed:** [Markdown reading](markdown-reading.md) supports rendered-text
+   selection/copy, math in headings and document-scoped macros. The broader safe
+   HTML subset and remote-image loading remain follow-ups.
 4. Validate large Markdown, CSV, PDF and TeX workloads. M2 still needs a passing
    10,000-frame Markdown run within the 8 ms p99 budget and reference-M1 checks.
 

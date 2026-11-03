@@ -25,6 +25,7 @@ mod math;
 mod mermaid;
 mod metadata;
 mod profile;
+mod selection;
 mod visibility;
 type CodeHighlights = Arc<Vec<(std::ops::Range<usize>, Highlight)>>;
 
@@ -43,6 +44,7 @@ actions!(
 
 pub fn init(cx: &mut App) {
     find::init(cx);
+    selection::init(cx);
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Markdown")),
         KeyBinding::new("j", ScrollDown, Some("MarkdownPreview")),
@@ -92,6 +94,7 @@ pub struct MarkdownView {
     source_view: Option<Entity<TextView>>,
     _source_observer: Option<Subscription>,
     find: Option<find::FindState>,
+    reading: selection::State,
     parsing: bool,
     preview_complete: bool,
     notice: Option<SharedString>,
@@ -139,12 +142,10 @@ impl MarkdownView {
                         let document = Arc::new(DocumentIndex::build(
                             &source,
                             || cancel.load(Ordering::Relaxed),
-                            |tex| {
-                                if plastext_math::may_number(tex) {
-                                    plastext_math::equation_numbers(tex)
-                                } else {
-                                    0
-                                }
+                            |tex, macros| {
+                                macros.sources().map_or(0, |sources| {
+                                    plastext_math::equation_numbers_with_macros(tex, sources)
+                                })
                             },
                         )?);
                         let symbols = Arc::new(
@@ -217,6 +218,7 @@ impl MarkdownView {
             source_view: None,
             _source_observer: None,
             find: None,
+            reading: selection::State::default(),
             parsing: true,
             preview_complete: false,
             notice: None,
@@ -252,6 +254,7 @@ impl MarkdownView {
                 if let Some(find) = &mut self.find {
                     find.reset();
                 }
+                self.reading = selection::State::default();
                 self.document = document;
                 self.pages.clear();
                 self.pending_pages.clear();
@@ -452,6 +455,7 @@ impl MarkdownView {
             }
             self.focus.focus(window);
         }
+        self.reading.stop();
         self.rendered = !self.rendered;
         if !self.rendered {
             self.diagrams.clear(cx.entity_id(), cx);
@@ -505,7 +509,7 @@ impl MarkdownView {
         &self,
         block: &Block,
         range: std::ops::Range<usize>,
-        id: usize,
+        id: (usize, usize),
         mono: bool,
         theme: Theme,
         cx: &Context<Self>,
@@ -517,6 +521,7 @@ impl MarkdownView {
         let mut links = Vec::new();
         let mut targets = Vec::new();
         let mut slots = Vec::new();
+        let mut replacements = Vec::new();
         let mut at = range.start;
         let bold = matches!(
             block.kind,
@@ -540,10 +545,15 @@ impl MarkdownView {
                 && let Some((count, formula)) = self.inline_slot(
                     block,
                     &block.text[start..end],
+                    span.source.start,
                     math::inline_color(style, theme),
                 )
             {
                 let slot = math::Slot::new(text.len(), count, formula);
+                replacements.push(selection::Replacement {
+                    source: start - range.start..end - range.start,
+                    display: slot.range(),
+                });
                 if let Some(target) = &style.link {
                     links.push(slot.range());
                     targets.push(target.clone());
@@ -603,20 +613,25 @@ impl MarkdownView {
         let weak = cx.entity().downgrade();
         let tooltip_targets = targets.clone();
         let tooltip_ranges = links.clone();
-        // Find can't match inside placeholders: blank them, keeping offsets.
-        let mut searchable = text.clone();
-        for slot in &slots {
-            let range = slot.range();
-            searchable.replace_range(range.clone(), &"\u{1}".repeat(range.len()));
-        }
-        let runs = self.highlight_matches(&searchable, runs, theme);
+        let runs = self.highlight_matches(&block.text[range.clone()], runs, &replacements, theme);
+        let runs = selection::highlight_runs(
+            runs,
+            self.selected_range(id.0, range.clone(), &replacements),
+            theme.selection.into(),
+        );
         math::Slot::set_line_starts(&mut slots, &text);
         let styled = StyledText::new(text).with_runs(runs);
         let layout = styled.layout().clone();
-        let text = InteractiveText::new(("md-text", id), styled)
+        let text = InteractiveText::new(("md-text", id.1), styled)
             .on_click(links, move |ix, _, cx| {
-                weak.update(cx, |view, cx| view.open_link(&targets[ix], cx))
-                    .ok();
+                weak.update(cx, |view, cx| {
+                    if !view.reading.suppress_link
+                        && !view.reading.selected.range().is_some_and(|r| !r.is_empty())
+                    {
+                        view.open_link(&targets[ix], cx);
+                    }
+                })
+                .ok();
             })
             .tooltip(move |ix, _, cx| {
                 let link = tooltip_ranges
@@ -625,7 +640,16 @@ impl MarkdownView {
                 let text: SharedString = tooltip_targets[link].to_string().into();
                 Some(cx.new(|_| LinkTooltip(text)).into())
             });
-        self.with_inline_math(block, text, layout, slots)
+        let content = self.with_inline_math(block, text, layout.clone(), slots);
+        self.selectable(
+            id.0,
+            range.start,
+            block.text[range].to_owned().into(),
+            Some(layout),
+            replacements,
+            content,
+            cx,
+        )
     }
     fn image(
         &mut self,
@@ -862,10 +886,33 @@ impl MarkdownView {
             })
             .unwrap_or_default();
         let highlights = self.highlight_code_matches(&block.text, highlights, theme);
-        div()
-            .font_family(self.text_style.font_family.clone())
-            .child(StyledText::new(block.text.clone()).with_highlights(highlights))
-            .into_any_element()
+        let highlights = gpui::combine_highlights(
+            highlights,
+            self.selected_range(ix, 0..block.text.len(), &[])
+                .map(|range| {
+                    (
+                        range,
+                        gpui::HighlightStyle {
+                            background_color: Some(theme.selection.into()),
+                            ..Default::default()
+                        },
+                    )
+                }),
+        )
+        .collect::<Vec<_>>();
+        let text = StyledText::new(block.text.clone()).with_highlights(highlights);
+        let layout = text.layout().clone();
+        self.selectable(
+            ix,
+            0,
+            block.text.clone().into(),
+            Some(layout),
+            Vec::new(),
+            div()
+                .font_family(self.text_style.font_family.clone())
+                .child(text),
+            cx,
+        )
     }
 
     fn copy_fence(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1068,7 +1115,7 @@ impl MarkdownView {
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
                     .text_size(px(math::text_size(&block.kind) * self.zoom))
                     .font_weight(FontWeight::BOLD)
-                    .child(self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx))
+                    .child(self.rich_text(&block, 0..block.text.len(), (ix, 0), false, theme, cx))
                     .child(
                         div()
                             .id(("md-anchor", ix))
@@ -1121,21 +1168,14 @@ impl MarkdownView {
                             Some(plastext_markdown::Alignment::Right) => d.text_right(),
                             _ => d,
                         })
-                        .child(self.rich_text(
-                            &block,
-                            range.clone(),
-                            ix.wrapping_mul(4096) + cell,
-                            false,
-                            theme,
-                            cx,
-                        ))
+                        .child(self.rich_text(&block, range.clone(), (ix, cell), false, theme, cx))
                 }))
                 .into_any_element(),
             BlockKind::Image { destination, .. } => {
                 self.image(destination, &block.text, ix, theme, cx)
             }
             BlockKind::Math => self.display_math(&block, ix, theme, window, cx),
-            _ => self.rich_text(&block, 0..block.text.len(), ix, false, theme, cx),
+            _ => self.rich_text(&block, 0..block.text.len(), (ix, 0), false, theme, cx),
         };
         // List items are laid out as roots, so their auto margins do not
         // center them. Give each row a full-width flex parent instead.
@@ -1264,6 +1304,7 @@ impl Focusable for MarkdownView {
 }
 impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.reading.hits = Default::default();
         if self.diagrams.begin_frame(cx.entity_id(), cx) {
             let view = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| {
@@ -1414,14 +1455,22 @@ impl Render for MarkdownView {
                     .flex_1()
                     .min_h_0()
                     .when(self.rendered, |d| {
-                        d.key_context("MarkdownPreview")
+                        d.relative()
+                            .key_context("MarkdownPreview")
+                            .on_action(cx.listener(Self::copy_selection))
+                            .on_action(cx.listener(Self::select_all))
+                            .on_action(cx.listener(Self::clear_selection))
                             .track_focus(&self.focus)
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
-                                cx.listener(|this, _, window, _| this.focus.focus(window)),
+                                cx.listener(|this, _, window, cx| {
+                                    this.focus.focus(window);
+                                    this.clear_selection(&selection::Clear, window, cx);
+                                }),
                             )
                     })
-                    .child(body),
+                    .child(body)
+                    .when(self.rendered, |d| d.child(self.selection_layer(cx))),
             )
     }
 }

@@ -5,6 +5,7 @@ M2 is in progress. The accepted M1 performance baseline is commit `01fcbb3`; the
 ## Available now
 
 - Markdown extensions route to a native GPUI preview. CommonMark/GFM parsing supplies paragraphs, headings and unique anchors, lists/tasks, aligned table rows, strikethrough, footnotes, definition lists and GitHub alerts. YAML/TOML front matter renders as a collapsible key/value table with independent virtualized rows. Basic safe inline HTML is styled; comments disappear and unsupported HTML stays inert source.
+- [Rendered selection and copy](markdown-reading.md) work across prose, headings, tables, code and formulas. Math uses document-scoped macros in source order, including headings; formulas copy as TeX and find highlights matching formulas. Clipboard reads are paged, cancellable and capped at 64 MB.
 - Heading navigation uses the existing outline and symbol picker. Local links open in plastext, including heading and `#L42` destinations; supported external links open in the browser. Hover shows link targets, and headings offer copy-anchor links.
 - `⇧⌘V` switches between rendered and source views at the corresponding source position. Split panes can independently show either view. This is not the synchronized Markdown split/edit mode planned for M3.
 - Mermaid fences render a bounded native subset on demand in an isolated worker. Source/Preview and Copy remain available; find reveals matching source. Unsupported syntax keeps the complete code. See [supported diagrams and limits](mermaid.md) and the [fixture](fixtures/mermaid.md).
@@ -257,6 +258,22 @@ The [native 10,000-frame run](benchmarks/m2-2026-10-28-indexed-native.summary.js
 
 Draw/submit p99 was **8.77 ms**, above the 8 ms target (`complete: true`, `passed: false`). Frame-interval p99 was 10.69 ms. The memory reduction is established on this fixture; scrolling certification remains open. Earlier baseline artifacts are unchanged. The source-backed parser/cache tests cover page boundaries, late and duplicate definitions, footnotes, headings, metadata, nested containers, equation prefixes, large tables/fences, Unicode/CRLF, cancellation, source changes and eviction.
 
+## Markdown reading validation — 2026-11-03
+
+Rendered-text selection/copy and document-scoped math macros now complete the
+three named features in roadmap item 3. Heading math is covered at 80%, 90% and
+100% zoom, including macro definitions from earlier source pages. Tests cover
+reverse page visits, equation numbering, document isolation, recursive/invalid
+macros, Unicode selection, empty table cells, paged copying, cancellation and
+changed-file rejection. See the [reading guide](markdown-reading.md).
+
+The [100 MB core check](benchmarks/m2-2026-11-03-markdown-reading.summary.json)
+passes: the index retains **14.92 MiB**, unchanged from the compact-index model;
+the parsed cache remains below **32 MiB** in both traversal directions. Indexing
+took 1.93 seconds; page parsing was 1.02 ms at p99. Core-process peak RSS was
+108.81 MiB. These numbers exclude native layout, formula rendering and reference
+hardware certification. Raw samples and generated fixtures remain local.
+
 ## Remaining M2 work
 
 See the [current roadmap](roadmap.md) for priorities and additional preview candidates.
@@ -269,8 +286,7 @@ save batching, cancellation, private build inputs and retention of the last succ
 downloads and large-project certification remain pending; see the
 [local TeX increment](pdf-and-tex-preview.md#local-tex-increment).
 
-- Document-scoped macros, formula selection and copy, and highlighting find matches inside formulas.
-- Full safe HTML subset, remote-image opt-in and host allowlist, and rendered-text selection/copy.
+- Full safe HTML subset, remote-image opt-in and host allowlist; rich-text/HTML clipboard output is a “should” follow-up.
 - Expanded image EXIF inspection (a “should” requirement); image codecs and interaction still need verification on reference hardware and future platform ports.
 - Validate memory and scrolling on the reference M1 Air, run native 20M-row CSV scrolling tests, and visually review light/dark themes and anchoring. The 8 ms scrolling budget still needs a passing 10,000-frame run.
 

@@ -112,6 +112,7 @@ pub struct DocumentIndex {
     pub warnings: Vec<String>,
     pub pages: Vec<Page>,
     pub equation_starts: HashMap<usize, u32>,
+    pub macros: crate::MacroHistory,
     references: References,
     footnotes: HashSet<UniCase<String>>,
 }
@@ -119,7 +120,12 @@ pub struct DocumentIndex {
 impl DocumentIndex {
     /// Used only for the bounded first-screen preview while indexing runs.
     pub fn initial(document: &Document, bytes: usize) -> Self {
+        let mut macros = crate::MacroHistory::default();
+        for block in &document.blocks {
+            macros.collect(block);
+        }
         Self {
+            macros,
             blocks: document
                 .blocks
                 .iter()
@@ -143,7 +149,7 @@ impl DocumentIndex {
     pub fn build(
         source: &FileSource,
         cancelled: impl Fn() -> bool,
-        equations: impl Fn(&str) -> u32,
+        equations: impl Fn(&str, &crate::MacroContext) -> u32,
     ) -> io::Result<Self> {
         let mut index = Self::default();
         let mut at = 0;
@@ -207,12 +213,13 @@ impl DocumentIndex {
             let first = index.blocks.len();
             for (local, block) in document.blocks.iter().enumerate() {
                 if matches!(block.kind, BlockKind::Math) {
-                    let count = equations(&block.text);
+                    let count = equations(&block.text, &index.macros.at(block.source.start));
                     if count > 0 {
                         index.equation_starts.insert(index.blocks.len(), equation);
                         equation = equation.saturating_add(count);
                     }
                 }
+                index.macros.collect(block);
                 index.blocks.push(BlockEntry::new(block, page_id, local));
             }
             index.headings.extend(document.headings);
@@ -278,6 +285,7 @@ impl DocumentIndex {
                 .map(|key| key.as_ref().len() + 64)
                 .sum::<usize>()
             + self.equation_starts.capacity() * 24
+            + self.macros.retained_bytes()
     }
     pub fn parse_page(
         &self,
