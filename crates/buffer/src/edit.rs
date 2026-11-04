@@ -67,6 +67,30 @@ impl TextSnapshot {
         })
     }
 
+    /// Stream exact bytes with a reusable 64 KiB buffer, bypassing the reading
+    /// cache. Blocks: run on a worker. Cancellation never changes this snapshot.
+    pub fn write_to(
+        &self,
+        output: &mut impl Write,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(u64, u64),
+    ) -> io::Result<()> {
+        check_cancel(cancel)?;
+        let mut buffer = vec![0; piece_tree::LEAF_BYTES];
+        let mut written = 0;
+        progress(0, self.len());
+        piece_tree::visit(&self.root, 0..self.len(), 0, &mut |piece, range, _| {
+            check_cancel(cancel)?;
+            let bytes = &mut buffer[..(range.end - range.start) as usize];
+            piece.read_uncached(range, bytes)?;
+            output.write_all(bytes)?;
+            written += bytes.len() as u64;
+            progress(written, self.len());
+            Ok::<_, io::Error>(())
+        })?;
+        check_cancel(cancel)
+    }
+
     fn check_range(&self, range: &Range<u64>) {
         assert!(
             range.start <= range.end && range.end <= self.len(),
@@ -394,7 +418,7 @@ fn summaries(bytes: &[u8]) -> Vec<(u64, u64, UnicodeSummary)> {
         .collect()
 }
 
-fn check_cancel(cancel: &AtomicBool) -> io::Result<()> {
+pub(super) fn check_cancel(cancel: &AtomicBool) -> io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
         Err(io::ErrorKind::Interrupted.into())
     } else {

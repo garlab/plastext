@@ -32,19 +32,21 @@ it. Keep new backends optional and initialize them only when used.
 The [M3 foundation](m3-progress.md) now includes a headless persistent piece tree,
 immutable snapshots, bounded grouped undo/redo, Unicode/UTF-16 addressing and
 resumable grapheme navigation. A shared document model provides independent
-pane selections and rejects stale background commands. It does not enable GUI
-editing or saving yet. Existing read-mode paths remain unchanged; core
-performance diagnostics are recorded separately from the accepted baselines.
+pane selections and rejects stale background commands. The
+[save backend](m3-saving.md) supports streaming atomic/in-place saves, metadata,
+symlinks and clean reload/dirty conflict handling. GUI editing and saving are not
+enabled yet. Existing read-mode paths remain unchanged; core performance
+diagnostics are recorded separately from the accepted baselines.
 
 Next, in order:
 
-1. Implement streaming/atomic saves and external-change handling, including
-   stale-save completion, symlinks, permissions and concurrent agent rewrites.
-   Resolve this before exposing file writes in the UI.
-2. Add encoding conversion and line-ending semantics, then connect shared
+1. Add encoding conversion and line-ending semantics, then connect shared
    sessions to split panes. Keep disk I/O and bulk history reclamation off the UI
    thread. Wire edit mode, caret/selection/IME, multi-cursor, find/replace,
    indentation and EditorConfig into the text view.
+2. Integrate save/reload jobs with debounced filesystem events, explicit
+   conflict/recovery choices and new-file/Save As handling before enabling GUI
+   writes. Validate native platform behavior and injected save failures.
 3. Add synchronized Markdown source/preview, double-click-to-source, tail mode
    and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
 

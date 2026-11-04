@@ -5350,8 +5350,10 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "memchr",
+ "rustix 1.1.5",
  "tempfile",
  "unicode-segmentation",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

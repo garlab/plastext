@@ -98,6 +98,17 @@ impl Piece {
         }
         Ok(())
     }
+
+    pub fn read_uncached(&self, local: Range<u64>, buffer: &mut [u8]) -> std::io::Result<()> {
+        let range = self.range.start + local.start..self.range.start + local.end;
+        match &self.source {
+            Source::Original(file) => file.read_uncached(range, buffer),
+            Source::Added(bytes) => {
+                buffer.copy_from_slice(&bytes[range.start as usize..range.end as usize]);
+                Ok(())
+            }
+        }
+    }
 }
 
 pub(super) fn original(source: Arc<FileSource>, leaves: &[(u64, u64, UnicodeSummary)]) -> Tree {

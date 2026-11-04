@@ -1,0 +1,42 @@
+{
+  "file": "m3-save-1gb.log",
+  "bytes": 1000000086,
+  "saved_bytes": 1000000113,
+  "scope": "headless streaming saves of a private copy; atomic replacement and in-place recovery backup; excludes GUI, cold-cache and crash-durability certification",
+  "fixture_copy_ms": 0.123833,
+  "private_original_preparation_ms": 650.337583,
+  "source_cache_budget_bytes": 8388608,
+  "stream_buffer_bytes": 65536,
+  "runs": [
+    {
+      "in_place": false,
+      "save_ms": 1018.3317499999999,
+      "byte_verification_ms": 512.4259169999999,
+      "passed": true
+    },
+    {
+      "in_place": true,
+      "save_ms": 2468.3583750000003,
+      "byte_verification_ms": 222.404584,
+      "passed": true
+    }
+  ],
+  "complete": true,
+  "passed": true,
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 16.765625,
+      "last": 14.0,
+      "sample_count": 39
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 39
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}

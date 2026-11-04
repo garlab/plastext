@@ -20,6 +20,7 @@ mod memory;
 mod native_log;
 mod preview;
 mod report;
+mod save;
 
 #[derive(Parser)]
 #[command(
@@ -33,6 +34,12 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Stream atomic/in-place saves of a private file copy and verify every byte.
+    Save {
+        file: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Measure piece-tree edits and snapshots; excludes UI input, painting and saving.
     Edit {
         file: PathBuf,
@@ -136,6 +143,7 @@ fn main() -> ExitCode {
         };
     }
     let result = match Args::parse().command {
+        Commands::Save { file, output } => save::run(&file, output.as_deref()),
         Commands::Edit {
             file,
             edits,

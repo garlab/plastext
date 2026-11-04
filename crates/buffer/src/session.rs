@@ -302,6 +302,32 @@ impl DocumentSession {
         accepted
     }
 
+    /// Install an external version only while the originating version is still
+    /// current. Dirty content needs an explicit discard. Retire the old buffer
+    /// off the UI thread.
+    pub(super) fn reload(
+        &mut self,
+        base: &DocumentSnapshot,
+        buffer: EditBuffer,
+        discard_edits: bool,
+    ) -> Result<EditBuffer, Box<EditBuffer>> {
+        if (self.is_dirty() && !discard_edits) || !self.is_current(base) {
+            return Err(Box::new(buffer));
+        }
+        let len = crate::ByteSource::len(&buffer.snapshot());
+        let retired = std::mem::replace(&mut self.buffer, buffer);
+        for pane in self.panes.values_mut() {
+            pane.selection.anchor.offset = pane.selection.anchor.offset.min(len);
+            pane.selection.head.offset = pane.selection.head.offset.min(len);
+            if pane.selection.anchor.offset == pane.selection.head.offset {
+                pane.selection = Selection::caret(pane.selection.head.offset);
+            }
+        }
+        self.last_actor = None;
+        self.changed();
+        Ok(retired)
+    }
+
     fn validate(&self, base: &PaneSnapshot) -> Result<(), SessionError> {
         let pane = self.panes.get(&base.id).ok_or(SessionError::UnknownPane)?;
         if !self.is_current(&base.document) || pane.epoch != base.epoch {

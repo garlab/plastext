@@ -1,8 +1,8 @@
 # M3 editing
 
 M3 has started with the headless buffer and shared document model. The app remains
-a reader: these APIs do not expose GUI editing or write back to user files. M2's
-open [validation checks](m2-validation.md) and large-diagram controls can proceed
+a reader: GUI editing and saving are not enabled yet. M2's open
+[validation checks](m2-validation.md) and large-diagram controls can proceed
 independently; they do not block work on the editing model.
 
 ## Implemented
@@ -60,6 +60,13 @@ deletion use the bounded grapheme search and apply only after checking those
 generations again. This is a headless model; the existing GPUI split panes have
 not been connected to it yet.
 
+`FileDocument` now adds [streaming saves and external-change handling](m3-saving.md):
+atomic replacement, symlink write-through, in-place hard-link saves with recovery
+copies, metadata preservation and clean reload/dirty conflict decisions. Save and
+reload jobs run separately from the session owner; stale completions cannot clean
+newer typing or replace it. Explicit overwrite/discard requests also carry version
+checks. The backend is tested independently of GUI commands and watchers.
+
 ## Validation
 
 The buffer tests compare 38,400 randomized edit/undo/redo operations against a
@@ -71,11 +78,14 @@ misses, cancellation, atomic path replacement during preparation and external
 overwrite/truncation after preparation. The workspace passes strict Clippy;
 the buffer also cross-compiles with its tests for Linux and Windows.
 
-The 42 buffer tests include 1,200 randomized raw-byte edits checked against
+The buffer tests also include 1,200 randomized raw-byte edits checked against
 independent scalar/UTF-16 coordinates, every split of representative valid and
 malformed strings, and a 1.2 MB grapheme crossing evicted source-cache blocks.
 Session tests cover independent selections, grouped history, stale commands,
 closed panes, cross-document requests and asynchronous save checkpoints.
+The macOS run passes 66 buffer tests and 7 benchmark tests, including the new
+save/conflict cases. The [save diagnostic](m3-saving.md#validation) verifies
+100 MB and 1 GB files in both save modes with bounded streaming memory.
 
 Run the core checks and performance diagnostic with:
 
@@ -124,15 +134,15 @@ session selection rebasing, sustained typing history or native input/painting.
 
 ## Next work and limits
 
-- Implement the save/external-change state machine before enabling GUI writes:
-  streaming and cancellation, fsync/atomic replacement, permission/xattr and
-  symlink/hard-link handling, clean reload and dirty conflict handling.
 - Add encoding detection/conversion and CR-only/mixed-ending editing semantics.
   The current line index counts LF; grapheme navigation treats CRLF as one unit.
 - Connect the shared session to GPUI panes and background jobs, then integrate
   input/IME, multi-cursor and editing commands. History currently rebases pane
   anchors rather than restoring historical selections. Existing reading views
   still use `FileSource` and are not rebuilt for each edit.
+- Wire save/reload jobs to debounced filesystem events, conflict/recovery UI and
+  new-file/Save As handling before exposing GUI writes. Complete native Windows/
+  Linux and crash/failure validation; see the [save limits](m3-saving.md).
 - Add Markdown synchronization, tail mode and `--wait`, then fuzz targets and
   native typing/performance tests.
 

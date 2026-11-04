@@ -1,0 +1,42 @@
+{
+  "file": "large.md",
+  "bytes": 100000000,
+  "saved_bytes": 100000027,
+  "scope": "headless streaming saves of a private copy; atomic replacement and in-place recovery backup; excludes GUI, cold-cache and crash-durability certification",
+  "fixture_copy_ms": 0.098541,
+  "private_original_preparation_ms": 125.42649999999999,
+  "source_cache_budget_bytes": 8388608,
+  "stream_buffer_bytes": 65536,
+  "runs": [
+    {
+      "in_place": false,
+      "save_ms": 62.724208000000004,
+      "byte_verification_ms": 31.067959,
+      "passed": true
+    },
+    {
+      "in_place": true,
+      "save_ms": 146.66933300000002,
+      "byte_verification_ms": 19.242167000000002,
+      "passed": true
+    }
+  ],
+  "complete": true,
+  "passed": true,
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 11.140625,
+      "last": 11.140625,
+      "sample_count": 5
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 5
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}
