@@ -1,0 +1,88 @@
+{
+  "file": "large.md",
+  "bytes": 100000000,
+  "edits": 10000,
+  "scope": "headless byte edits, UTF-16 roundtrips and one bounded grapheme poll; separately timed prefetch; excludes UI, save and reference-machine certification",
+  "private_original_preparation_ms": 91.352125,
+  "chunked_original": true,
+  "source_cache_budget_bytes": 8388608,
+  "max_history_charge_bytes": 31971,
+  "retained_snapshots": 64,
+  "complete": true,
+  "passed": true,
+  "grapheme_polls_pending": 0,
+  "metrics": [
+    {
+      "name": "prefetch",
+      "unit": "ms",
+      "p50": 0.000166,
+      "p99": 0.031334,
+      "max": 0.061500000000000006,
+      "sample_count": 10000
+    },
+    {
+      "name": "cached replace",
+      "unit": "ms",
+      "p50": 0.011042,
+      "p99": 0.023667,
+      "max": 0.062583,
+      "sample_count": 10000
+    },
+    {
+      "name": "snapshot",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000125,
+      "max": 0.006917,
+      "sample_count": 10000
+    },
+    {
+      "name": "undo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.00025,
+      "sample_count": 10000
+    },
+    {
+      "name": "redo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.004541,
+      "sample_count": 10000
+    },
+    {
+      "name": "UTF-16 roundtrip",
+      "unit": "ms",
+      "p50": 0.056291,
+      "p99": 0.12354099999999998,
+      "max": 0.28487500000000004,
+      "sample_count": 10000
+    },
+    {
+      "name": "one grapheme poll",
+      "unit": "ms",
+      "p50": 0.0020829999999999998,
+      "p99": 0.003291,
+      "max": 0.0165,
+      "sample_count": 10000
+    }
+  ],
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 42.390625,
+      "last": 42.390625,
+      "sample_count": 9
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 9
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}

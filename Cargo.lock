@@ -5351,6 +5351,7 @@ dependencies = [
  "bytes",
  "memchr",
  "tempfile",
+ "unicode-segmentation",
 ]
 
 [[package]]

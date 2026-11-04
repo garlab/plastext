@@ -1,20 +1,32 @@
-//! Piece-tree text buffer, chunked file source, line index, undo, encoding and saving (spec §5.2).
+//! Persistent text buffers, bounded file reads and Unicode navigation (spec §5.2).
 //!
 //! [`FileSource`] provides bounded reads, [`LineIndex`] builds a sparse line map,
 //! and [`rows`] splits text into bounded display rows. [`EditBuffer`] supplies
 //! persistent byte edits, immutable snapshots and bounded undo/redo for M3.
+//! [`DocumentSession`] shares that history across pane-local selections, with
+//! indexed Unicode coordinates and resumable [`GraphemeSearch`] navigation.
 
 mod edit;
+mod grapheme;
 mod line_index;
 mod piece_tree;
 pub mod rows;
+mod session;
 mod source;
+mod text;
+mod unicode_summary;
 
 use std::{io, path::Path, sync::Arc};
 
 pub use edit::{EditBuffer, EditError, TextSnapshot, UndoGroup};
+pub use grapheme::{Direction, GraphemeSearch};
 pub use line_index::{LineIndex, Progress};
+pub use session::{
+    Anchor, CursorCommand, DocumentSession, DocumentSnapshot, PaneId, PaneSnapshot, PendingCommand,
+    Selection, SessionError,
+};
 pub use source::{BLOCK_SIZE, ByteSource, FileSource, OpenOptions, ReadError};
+pub use text::{Bias, TextError};
 
 /// How much of a file [`looks_binary`] looks at.
 pub const SNIFF_LEN: u64 = 8192;

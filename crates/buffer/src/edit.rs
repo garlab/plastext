@@ -18,6 +18,7 @@ use memchr::memchr_iter;
 use crate::{
     ByteSource, FileSource, OpenOptions, ReadError,
     piece_tree::{self, Tree},
+    unicode_summary::UnicodeSummary,
 };
 
 const HISTORY_BUDGET: u64 = 128 * 1024 * 1024;
@@ -26,12 +27,15 @@ const HISTORY_BUDGET: u64 = 128 * 1024 * 1024;
 /// Background consumers retain their version even while the buffer is edited.
 #[derive(Clone)]
 pub struct TextSnapshot {
-    root: Tree,
+    pub(super) root: Tree,
     owner: Arc<()>,
     revision: u64,
 }
 
 impl TextSnapshot {
+    pub fn same_version(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.owner, &other.owner) && self.revision == other.revision
+    }
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -101,6 +105,22 @@ struct Change {
     before: TextSnapshot,
     after: TextSnapshot,
     charge: u64,
+    edits: Vec<EditDelta>,
+}
+
+#[derive(Clone)]
+pub(super) struct EditDelta {
+    pub range: Range<u64>,
+    pub inserted: u64,
+}
+
+impl EditDelta {
+    pub fn inverse(&self) -> Self {
+        Self {
+            range: self.range.start..self.range.start + self.inserted,
+            inserted: self.range.end - self.range.start,
+        }
+    }
 }
 
 /// Persistent piece-tree buffer with bounded undo/redo. It never writes to the
@@ -185,7 +205,7 @@ impl EditBuffer {
         Ok(Self::from_original(Arc::new(source), &leaves))
     }
 
-    fn from_original(source: Arc<FileSource>, leaves: &[(u64, u64)]) -> Self {
+    fn from_original(source: Arc<FileSource>, leaves: &[(u64, u64, UnicodeSummary)]) -> Self {
         Self {
             current: TextSnapshot {
                 root: piece_tree::original(source.clone(), leaves),
@@ -282,8 +302,13 @@ impl EditBuffer {
         let heights = u64::from(before.root.as_ref().map_or(0, |n| n.height))
             + u64::from(root.as_ref().map_or(0, |n| n.height))
             + 1;
-        let charge =
-            payload.saturating_add(heights * 8 * (size_of::<piece_tree::Node>() as u64 + 32));
+        let charge = payload
+            .saturating_add(heights * 8 * (size_of::<piece_tree::Node>() as u64 + 32))
+            .saturating_add(2 * size_of::<EditDelta>() as u64);
+        let edit = EditDelta {
+            range,
+            inserted: bytes.len() as u64,
+        };
         let after = TextSnapshot {
             root,
             owner: before.owner.clone(),
@@ -301,11 +326,13 @@ impl EditBuffer {
         if let Some(previous) = self.undo.back_mut().filter(|_| coalesce) {
             previous.after = after.clone();
             previous.charge = previous.charge.saturating_add(charge);
+            previous.edits.push(edit);
         } else {
             self.undo.push_back(Change {
                 before,
                 after: after.clone(),
                 charge,
+                edits: vec![edit],
             });
         }
         self.current = after;
@@ -315,21 +342,31 @@ impl EditBuffer {
     }
 
     pub fn undo(&mut self) -> bool {
+        self.undo_with(|_| {})
+    }
+
+    pub(super) fn undo_with(&mut self, changed: impl FnOnce(&[EditDelta])) -> bool {
         self.break_undo_group();
         let Some(change) = self.undo.pop_back() else {
             return false;
         };
         self.current = change.before.clone();
+        changed(&change.edits);
         self.redo.push_back(change);
         true
     }
 
     pub fn redo(&mut self) -> bool {
+        self.redo_with(|_| {})
+    }
+
+    pub(super) fn redo_with(&mut self, changed: impl FnOnce(&[EditDelta])) -> bool {
         self.break_undo_group();
         let Some(change) = self.redo.pop_back() else {
             return false;
         };
         self.current = change.after.clone();
+        changed(&change.edits);
         self.undo.push_back(change);
         true
     }
@@ -344,10 +381,16 @@ impl EditBuffer {
     }
 }
 
-fn summaries(bytes: &[u8]) -> Vec<(u64, u64)> {
+fn summaries(bytes: &[u8]) -> Vec<(u64, u64, UnicodeSummary)> {
     bytes
         .chunks(piece_tree::LEAF_BYTES)
-        .map(|chunk| (chunk.len() as u64, memchr_iter(b'\n', chunk).count() as u64))
+        .map(|chunk| {
+            (
+                chunk.len() as u64,
+                memchr_iter(b'\n', chunk).count() as u64,
+                UnicodeSummary::new(chunk),
+            )
+        })
         .collect()
 }
 

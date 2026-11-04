@@ -11,6 +11,7 @@ publish.workspace = true
 bytes.workspace = true
 memchr.workspace = true
 tempfile.workspace = true
+unicode-segmentation.workspace = true
 
 [lints]
 workspace = true

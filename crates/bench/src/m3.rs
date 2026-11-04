@@ -1,6 +1,6 @@
 use std::{hint::black_box, io, path::Path, sync::atomic::AtomicBool, time::Instant};
 
-use plastext_buffer::{ByteSource, EditBuffer, OpenOptions, UndoGroup};
+use plastext_buffer::{Bias, ByteSource, Direction, EditBuffer, OpenOptions, UndoGroup};
 use serde_json::{Value, json};
 
 pub fn run(file: &Path, edits: u32, output: Option<&Path>) -> io::Result<()> {
@@ -23,6 +23,9 @@ pub fn run(file: &Path, edits: u32, output: Option<&Path>) -> io::Result<()> {
     let mut snapshot = Vec::new();
     let mut undo = Vec::new();
     let mut redo = Vec::new();
+    let mut coordinates = Vec::new();
+    let mut grapheme = Vec::new();
+    let mut pending_graphemes = 0;
     let mut retained = Vec::new();
     let mut max_history_bytes = 0;
     for i in 0..edits {
@@ -34,6 +37,26 @@ pub fn run(file: &Path, edits: u32, output: Option<&Path>) -> io::Result<()> {
         original.load(offset.saturating_sub(65_536)..(end + 65_536).min(original.len()))?;
         prefetch.push(elapsed(started));
         let before = original.bytes(offset..end).map_err(debug_error)?;
+        let cursor = original
+            .clip_to_scalar(offset, Bias::Before)
+            .map_err(debug_error)?;
+        let started = Instant::now();
+        let utf16 = original.byte_to_utf16(cursor).map_err(debug_error)?;
+        let roundtrip = original
+            .utf16_to_byte(utf16, Bias::Before)
+            .map_err(debug_error)?;
+        coordinates.push(elapsed(started));
+        if roundtrip != cursor {
+            return Err(io::Error::other("UTF-16 coordinate roundtrip failed"));
+        }
+        let started = Instant::now();
+        let mut navigation = original
+            .grapheme_search(cursor, Direction::Forward)
+            .map_err(debug_error)?;
+        if navigation.poll(1).map_err(debug_error)?.is_none() {
+            pending_graphemes += 1;
+        }
+        grapheme.push(elapsed(started));
         let started = Instant::now();
         buffer
             .replace(offset..end, "λ\n".as_bytes(), UndoGroup::New)
@@ -87,12 +110,14 @@ pub fn run(file: &Path, edits: u32, output: Option<&Path>) -> io::Result<()> {
     }
     let result = json!({
         "file": file, "bytes": original.len(), "edits": edits,
-        "scope": "headless byte edits with separately timed prefetch; excludes UI, grapheme/UTF-16 mapping, save and reference-machine certification",
+        "scope": "headless byte edits, UTF-16 roundtrips and one bounded grapheme poll; separately timed prefetch; excludes UI, save and reference-machine certification",
         "private_original_preparation_ms": prepare_ms, "chunked_original": buffer.is_chunked(),
         "source_cache_budget_bytes": cache_budget, "max_history_charge_bytes": max_history_bytes,
         "retained_snapshots": retained.len(), "complete": true, "passed": true,
+        "grapheme_polls_pending": pending_graphemes,
         "metrics": [metric("prefetch", prefetch), metric("cached replace", replace),
-            metric("snapshot", snapshot), metric("undo", undo), metric("redo", redo)],
+            metric("snapshot", snapshot), metric("undo", undo), metric("redo", redo),
+            metric("UTF-16 roundtrip", coordinates), metric("one grapheme poll", grapheme)],
         "sampled_rss": memory.finish()?,
     });
     let summary = crate::report::LocalRun::new("m3-edit")?.save(&result, output)?;

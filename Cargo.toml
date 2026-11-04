@@ -44,6 +44,7 @@ memchr = "2"
 nucleo = "0.5"
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
+unicode-segmentation = "1.13.3"
 toml = "1"
 
 [workspace.lints.rust]
