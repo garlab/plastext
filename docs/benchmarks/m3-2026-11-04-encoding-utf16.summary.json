@@ -1,0 +1,45 @@
+{
+  "file": "m3-encoding-100mb.utf16.txt",
+  "bytes": 100000000,
+  "encoding": "auto",
+  "working_utf8_bytes": 107142882,
+  "saved_bytes": 100000054,
+  "scope": "headless streaming saves of a private copy; atomic replacement and in-place recovery backup; excludes GUI, cold-cache and crash-durability certification",
+  "fixture_copy_ms": 0.520208,
+  "private_original_preparation_ms": 1096.212125,
+  "source_cache_budget_bytes": 8388608,
+  "stream_buffer_bytes": 65536,
+  "output_buffer_bytes": 65536,
+  "runs": [
+    {
+      "in_place": false,
+      "save_ms": 493.490208,
+      "byte_verification_ms": 35.235625,
+      "passed": true
+    },
+    {
+      "in_place": true,
+      "save_ms": 574.58325,
+      "byte_verification_ms": 17.613375,
+      "passed": true
+    }
+  ],
+  "complete": true,
+  "passed": true,
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 12.015625,
+      "last": 12.015625,
+      "sample_count": 20
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 20
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}

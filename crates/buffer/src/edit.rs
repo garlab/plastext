@@ -12,11 +12,12 @@ use std::{
     },
 };
 
+use crate::line_summary::LineSummary;
 use bytes::Bytes;
-use memchr::memchr_iter;
 
 use crate::{
-    ByteSource, FileSource, OpenOptions, ReadError,
+    ByteSource, EncodingHint, FileSource, LineEnding, LineEndings, OpenOptions, ReadError,
+    TextFormat,
     piece_tree::{self, Tree},
     unicode_summary::UnicodeSummary,
 };
@@ -30,6 +31,7 @@ pub struct TextSnapshot {
     pub(super) root: Tree,
     owner: Arc<()>,
     revision: u64,
+    format: TextFormat,
 }
 
 impl TextSnapshot {
@@ -40,11 +42,26 @@ impl TextSnapshot {
         self.revision
     }
 
-    /// Editor lines are zero-based. A final LF starts an empty, editable line.
-    /// CRLF bytes are preserved; encoding and other newline conventions are
-    /// handled by the future text/input layer, not by this byte tree.
+    pub fn format(&self) -> TextFormat {
+        self.format
+    }
+    pub fn line_endings(&self) -> LineEndings {
+        self.root
+            .as_ref()
+            .map_or_else(LineEndings::default, |node| node.lines.counts)
+    }
+    pub fn preferred_line_ending(&self) -> LineEnding {
+        self.format
+            .line_ending()
+            .unwrap_or_else(|| self.line_endings().preferred())
+    }
+
+    /// Editor lines are zero-based. LF, CRLF and CR each end one line.
+    /// A trailing terminator starts an empty, editable line.
     pub fn line_count(&self) -> u64 {
-        self.root.as_ref().map_or(1, |node| node.newlines + 1)
+        self.root
+            .as_ref()
+            .map_or(1, |node| node.lines.counts.count() + 1)
     }
 
     /// Cached-only line lookup. On Missing, load that snapshot-relative range
@@ -67,8 +84,9 @@ impl TextSnapshot {
         })
     }
 
-    /// Stream exact bytes with a reusable 64 KiB buffer, bypassing the reading
-    /// cache. Blocks: run on a worker. Cancellation never changes this snapshot.
+    /// Stream this version using its output encoding/newline settings, with
+    /// bounded scratch space and no read-cache pollution. Progress counts UTF-8
+    /// input bytes, not encoded output bytes. Blocks: run on a worker.
     pub fn write_to(
         &self,
         output: &mut impl Write,
@@ -76,19 +94,20 @@ impl TextSnapshot {
         mut progress: impl FnMut(u64, u64),
     ) -> io::Result<()> {
         check_cancel(cancel)?;
+        let mut output = crate::serialize::Serializer::new(output, self.format)?;
         let mut buffer = vec![0; piece_tree::LEAF_BYTES];
         let mut written = 0;
         progress(0, self.len());
         piece_tree::visit(&self.root, 0..self.len(), 0, &mut |piece, range, _| {
             check_cancel(cancel)?;
-            let bytes = &mut buffer[..(range.end - range.start) as usize];
-            piece.read_uncached(range, bytes)?;
-            output.write_all(bytes)?;
-            written += bytes.len() as u64;
+            let len = range.end - range.start;
+            piece.serialize(range, &mut buffer, &mut output)?;
+            written += len;
             progress(written, self.len());
             Ok::<_, io::Error>(())
         })?;
-        check_cancel(cancel)
+        check_cancel(cancel)?;
+        output.finish()
     }
 
     fn check_range(&self, range: &Range<u64>) {
@@ -155,6 +174,7 @@ pub struct EditBuffer {
     // Retain the original independently of history. Its read cache has its own
     // budget, and deleting everything must not hide its cost in undo history.
     original: Arc<FileSource>,
+    chunked: bool,
     next_revision: u64,
     saved_revision: u64,
     undo: VecDeque<Change>,
@@ -229,13 +249,18 @@ impl EditBuffer {
         Ok(Self::from_original(Arc::new(source), &leaves))
     }
 
-    fn from_original(source: Arc<FileSource>, leaves: &[(u64, u64, UnicodeSummary)]) -> Self {
+    fn from_original(
+        source: Arc<FileSource>,
+        leaves: &[(u64, LineSummary, UnicodeSummary)],
+    ) -> Self {
         Self {
             current: TextSnapshot {
-                root: piece_tree::original(source.clone(), leaves),
+                root: piece_tree::original(source.clone(), leaves, 0),
                 owner: Arc::new(()),
                 revision: 0,
+                format: TextFormat::default(),
             },
+            chunked: !source.is_in_memory(),
             original: source,
             next_revision: 1,
             saved_revision: 0,
@@ -247,6 +272,92 @@ impl EditBuffer {
         }
     }
 
+    /// Decode an immutable original into the editor's UTF-8 coordinate space.
+    /// Blocks off the UI thread. Progress reserves half for copying and half
+    /// for decoding (skipped for UTF-8), measured in original-source bytes.
+    pub fn open_text(
+        path: &Path,
+        options: OpenOptions,
+        hint: EncodingHint,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(u64, u64),
+    ) -> io::Result<Self> {
+        let mut size = 0;
+        let buffer = Self::open(path, options, cancel, |done, total| {
+            size = total;
+            progress(done, total.saturating_mul(2));
+        })?;
+        let total = size.saturating_mul(2);
+        let buffer = buffer.decode(options, hint, cancel, &mut |done, _| {
+            progress(size.saturating_add(done), total);
+        })?;
+        check_cancel(cancel)?;
+        progress(total, total);
+        Ok(buffer)
+    }
+
+    /// Blocking decoding for supplied bytes; run off the UI thread.
+    pub fn from_encoded_bytes(bytes: impl Into<Bytes>, hint: EncodingHint) -> io::Result<Self> {
+        Self::from_bytes(bytes).decode(
+            OpenOptions::default(),
+            hint,
+            &AtomicBool::new(false),
+            &mut |_, _| {},
+        )
+    }
+
+    fn decode(
+        mut self,
+        options: OpenOptions,
+        hint: EncodingHint,
+        cancel: &AtomicBool,
+        progress: &mut impl FnMut(u64, u64),
+    ) -> io::Result<Self> {
+        check_cancel(cancel)?;
+        let (format, skip) = crate::encoding::detect(&self.original, hint)?;
+        if format.encoding() == crate::TextEncoding::UTF8 {
+            if skip != 0 {
+                self.original.load(0..skip)?;
+                self.current.root = piece_tree::split(self.current.root, skip)
+                    .map_err(|_| io::Error::other("cannot read byte-order mark"))?
+                    .1;
+            }
+        } else {
+            let (source, leaves) = crate::encoding::DecodedSource::prepare(
+                self.original.clone(),
+                format.encoding(),
+                skip,
+                options,
+                cancel,
+                progress,
+            )?;
+            self.chunked |= !source.text.is_in_memory();
+            self.current.root = piece_tree::decoded(source, &leaves);
+        }
+        self.current.format = format;
+        Ok(self)
+    }
+
+    /// An undoable output-setting transaction. Does no I/O or text rewriting.
+    pub fn set_format(&mut self, format: TextFormat) -> bool {
+        if self.current.format == format {
+            return false;
+        }
+        let before = self.current.clone();
+        let mut after = before.clone();
+        after.format = format;
+        after.revision = self.next_revision;
+        self.record(
+            before,
+            after,
+            size_of::<Change>() as u64,
+            None,
+            UndoGroup::New,
+        );
+        self.break_undo_group();
+        true
+    }
+
     pub fn snapshot(&self) -> TextSnapshot {
         self.current.clone()
     }
@@ -254,7 +365,7 @@ impl EditBuffer {
         self.current.revision != self.saved_revision
     }
     pub fn is_chunked(&self) -> bool {
-        !self.original.is_in_memory()
+        self.chunked
     }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
@@ -337,7 +448,20 @@ impl EditBuffer {
             root,
             owner: before.owner.clone(),
             revision: self.next_revision,
+            format: before.format,
         };
+        self.record(before, after, charge, Some(edit), group);
+        Ok(())
+    }
+
+    fn record(
+        &mut self,
+        before: TextSnapshot,
+        after: TextSnapshot,
+        charge: u64,
+        edit: Option<EditDelta>,
+        group: UndoGroup,
+    ) {
         self.next_revision = self
             .next_revision
             .checked_add(1)
@@ -350,19 +474,20 @@ impl EditBuffer {
         if let Some(previous) = self.undo.back_mut().filter(|_| coalesce) {
             previous.after = after.clone();
             previous.charge = previous.charge.saturating_add(charge);
-            previous.edits.push(edit);
+            if let Some(edit) = edit {
+                previous.edits.push(edit);
+            }
         } else {
             self.undo.push_back(Change {
                 before,
                 after: after.clone(),
                 charge,
-                edits: vec![edit],
+                edits: edit.into_iter().collect(),
             });
         }
         self.current = after;
         self.group_open = true;
         self.trim_history();
-        Ok(())
     }
 
     pub fn undo(&mut self) -> bool {
@@ -405,13 +530,13 @@ impl EditBuffer {
     }
 }
 
-fn summaries(bytes: &[u8]) -> Vec<(u64, u64, UnicodeSummary)> {
+fn summaries(bytes: &[u8]) -> Vec<(u64, LineSummary, UnicodeSummary)> {
     bytes
         .chunks(piece_tree::LEAF_BYTES)
         .map(|chunk| {
             (
                 chunk.len() as u64,
-                memchr_iter(b'\n', chunk).count() as u64,
+                LineSummary::new(chunk),
                 UnicodeSummary::new(chunk),
             )
         })

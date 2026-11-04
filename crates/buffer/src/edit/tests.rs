@@ -9,13 +9,11 @@ fn assert_model(buffer: &EditBuffer, expected: &[u8]) {
     piece_tree::check(&snapshot.root);
     assert_eq!(contents(&snapshot), expected);
     let mut starts = vec![0];
-    starts.extend(
-        expected
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| **b == b'\n')
-            .map(|(i, _)| i as u64 + 1),
-    );
+    for (i, &byte) in expected.iter().enumerate() {
+        if byte == b'\n' || (byte == b'\r' && expected.get(i + 1) != Some(&b'\n')) {
+            starts.push(i as u64 + 1);
+        }
+    }
     assert_eq!(snapshot.line_count(), starts.len() as u64);
     for (line, &offset) in starts.iter().enumerate() {
         assert_eq!(snapshot.line_start(line as u64).unwrap(), Some(offset));
@@ -25,7 +23,7 @@ fn assert_model(buffer: &EditBuffer, expected: &[u8]) {
     for offset in (0..=expected.len()).step_by((expected.len() / 13).max(1)) {
         assert_eq!(
             snapshot.line_at(offset as u64).unwrap(),
-            expected[..offset].iter().filter(|&&b| b == b'\n').count() as u64
+            starts.partition_point(|&start| start <= offset as u64) as u64 - 1
         );
     }
 }

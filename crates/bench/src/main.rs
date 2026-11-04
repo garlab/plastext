@@ -37,6 +37,9 @@ enum Commands {
     /// Stream atomic/in-place saves of a private file copy and verify every byte.
     Save {
         file: PathBuf,
+        /// Decode a text original (auto, UTF-16LE, windows-1252, etc.). Omit for raw bytes.
+        #[arg(long)]
+        encoding: Option<String>,
         #[arg(long)]
         output: Option<PathBuf>,
     },
@@ -143,7 +146,11 @@ fn main() -> ExitCode {
         };
     }
     let result = match Args::parse().command {
-        Commands::Save { file, output } => save::run(&file, output.as_deref()),
+        Commands::Save {
+            file,
+            encoding,
+            output,
+        } => save::run(&file, encoding.as_deref(), output.as_deref()),
         Commands::Edit {
             file,
             edits,

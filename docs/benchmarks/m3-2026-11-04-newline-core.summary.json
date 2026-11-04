@@ -1,0 +1,88 @@
+{
+  "file": "large.md",
+  "bytes": 100000000,
+  "edits": 10000,
+  "scope": "headless byte edits, UTF-16 roundtrips and one bounded grapheme poll; separately timed prefetch; excludes UI, save and reference-machine certification",
+  "private_original_preparation_ms": 97.230583,
+  "chunked_original": true,
+  "source_cache_budget_bytes": 8388608,
+  "max_history_charge_bytes": 35331,
+  "retained_snapshots": 64,
+  "complete": true,
+  "passed": true,
+  "grapheme_polls_pending": 0,
+  "metrics": [
+    {
+      "name": "prefetch",
+      "unit": "ms",
+      "p50": 0.000167,
+      "p99": 0.03375,
+      "max": 1.5991250000000001,
+      "sample_count": 10000
+    },
+    {
+      "name": "cached replace",
+      "unit": "ms",
+      "p50": 0.012041999999999999,
+      "p99": 0.025042,
+      "max": 0.059125000000000004,
+      "sample_count": 10000
+    },
+    {
+      "name": "snapshot",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000125,
+      "max": 0.003333,
+      "sample_count": 10000
+    },
+    {
+      "name": "undo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.0022500000000000003,
+      "sample_count": 10000
+    },
+    {
+      "name": "redo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.00025,
+      "sample_count": 10000
+    },
+    {
+      "name": "UTF-16 roundtrip",
+      "unit": "ms",
+      "p50": 0.057791,
+      "p99": 0.12520799999999999,
+      "max": 0.27754199999999996,
+      "sample_count": 10000
+    },
+    {
+      "name": "one grapheme poll",
+      "unit": "ms",
+      "p50": 0.002125,
+      "p99": 0.003708,
+      "max": 0.168333,
+      "sample_count": 10000
+    }
+  ],
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 42.515625,
+      "last": 42.515625,
+      "sample_count": 9
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 9
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}

@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    DiskVersion, DocumentSession, DocumentSnapshot, EditBuffer, OpenOptions, SaveFailure,
-    SaveFailureKind, SaveOptions, SaveProgress, SaveReceipt, save_snapshot,
+    DiskVersion, DocumentSession, DocumentSnapshot, EditBuffer, EncodingHint, OpenOptions,
+    SaveFailure, SaveFailureKind, SaveOptions, SaveProgress, SaveReceipt, save_snapshot,
 };
 
 pub struct FileDocument {
@@ -17,6 +17,7 @@ pub struct FileDocument {
     epoch: u64,
     saving: Weak<()>,
     conflict: bool,
+    encoding_hint: EncodingHint,
 }
 
 impl FileDocument {
@@ -27,14 +28,25 @@ impl FileDocument {
         cancel: &AtomicBool,
         progress: impl FnMut(u64, u64),
     ) -> io::Result<Self> {
+        Self::open_with_encoding(path, options, EncodingHint::Auto, cancel, progress)
+    }
+
+    pub fn open_with_encoding(
+        path: &Path,
+        options: OpenOptions,
+        hint: EncodingHint,
+        cancel: &AtomicBool,
+        progress: impl FnMut(u64, u64),
+    ) -> io::Result<Self> {
         let disk = DiskVersion::read(path)?;
-        let buffer = open_version(&disk, options, cancel, progress)?;
+        let buffer = open_version(&disk, options, hint, cancel, progress)?;
         Ok(Self {
             session: DocumentSession::new(buffer),
             disk,
             epoch: 0,
             saving: Weak::new(),
             conflict: false,
+            encoding_hint: hint,
         })
     }
 
@@ -107,6 +119,8 @@ impl FileDocument {
                     return Err(stale_save());
                 }
                 self.disk = receipt.version.clone();
+                self.encoding_hint =
+                    EncodingHint::Explicit(completion.snapshot.text().format().encoding());
                 self.conflict = false;
                 Ok(receipt.clone())
             }
@@ -128,6 +142,8 @@ impl FileDocument {
             epoch: self.epoch,
             clean: !self.session.is_dirty(),
             discard_edits: false,
+            force_reload: false,
+            encoding_hint: self.encoding_hint,
             options,
         }
     }
@@ -140,6 +156,23 @@ impl FileDocument {
             discard_edits: true,
             ..self.external_check(options)
         }
+    }
+
+    /// Reinterpret a clean document on a worker. Never implicitly discard dirty
+    /// edits; edits or newer requests made while decoding invalidate this job.
+    pub fn reopen_with_encoding(
+        &mut self,
+        hint: EncodingHint,
+        options: OpenOptions,
+    ) -> Option<ExternalCheck> {
+        if self.session.is_dirty() || self.is_saving() {
+            return None;
+        }
+        Some(ExternalCheck {
+            force_reload: true,
+            encoding_hint: hint,
+            ..self.external_check(options)
+        })
     }
 
     /// No I/O. Return unused/replaced buffers so callers can retire potentially
@@ -166,7 +199,9 @@ impl FileDocument {
                     ExternalState::Missing
                 }
                 Err(error) => ExternalState::Failed(error.to_string()),
-                Ok(current) if current == &self.disk && !discard_edits => {
+                Ok(current)
+                    if current == &self.disk && !discard_edits && !observation.force_reload =>
+                {
                     self.conflict = false;
                     ExternalState::Unchanged
                 }
@@ -179,6 +214,7 @@ impl FileDocument {
                         return match self.session.reload(base, buffer, *discard_edits) {
                             Ok(retired) => {
                                 self.disk = current.clone();
+                                self.encoding_hint = observation.encoding_hint;
                                 self.conflict = false;
                                 self.advance();
                                 ExternalResult {
@@ -262,6 +298,8 @@ pub struct ExternalCheck {
     epoch: u64,
     clean: bool,
     discard_edits: bool,
+    force_reload: bool,
+    encoding_hint: EncodingHint,
     options: OpenOptions,
 }
 impl ExternalCheck {
@@ -272,8 +310,14 @@ impl ExternalCheck {
         let observed = (|| {
             crate::edit::check_cancel(cancel)?;
             let current = DiskVersion::read(self.expected.path())?;
-            if (current != self.expected || self.discard_edits) && self.clean {
-                buffer = Some(open_version(&current, self.options, cancel, progress)?);
+            if (current != self.expected || self.discard_edits || self.force_reload) && self.clean {
+                buffer = Some(open_version(
+                    &current,
+                    self.options,
+                    self.encoding_hint,
+                    cancel,
+                    progress,
+                )?);
             }
             Ok(current)
         })();
@@ -284,6 +328,8 @@ impl ExternalCheck {
             observed,
             buffer,
             discard_edits: self.discard_edits,
+            force_reload: self.force_reload,
+            encoding_hint: self.encoding_hint,
         }
     }
 }
@@ -295,6 +341,8 @@ pub struct ExternalObservation {
     observed: io::Result<DiskVersion>,
     buffer: Option<EditBuffer>,
     discard_edits: bool,
+    force_reload: bool,
+    encoding_hint: EncodingHint,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -316,10 +364,11 @@ pub struct ExternalResult {
 fn open_version(
     disk: &DiskVersion,
     options: OpenOptions,
+    hint: EncodingHint,
     cancel: &AtomicBool,
     progress: impl FnMut(u64, u64),
 ) -> io::Result<EditBuffer> {
-    let buffer = EditBuffer::open(disk.target(), options, cancel, progress)?;
+    let buffer = EditBuffer::open_text(disk.target(), options, hint, cancel, progress)?;
     if !disk.is_current()? {
         return Err(io::Error::other("file changed while preparing reload"));
     }

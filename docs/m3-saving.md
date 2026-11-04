@@ -15,10 +15,13 @@ Completion methods borrow their jobs so the caller can retire the job snapshots
 and any returned buffers together on a worker, avoiding large tree destruction
 on the UI thread. Cancel superseded reload jobs to avoid parallel file copies.
 
-The writer streams exact bytes through a reusable 64 KiB buffer. It bypasses the
-source cache rather than evicting viewport data. Invalid bytes, BOMs and line
-endings pass through unchanged. Progress reports staging, recovery-copy creation
-and commit separately.
+The writer uses reusable 64 KiB input/output buffers and bypasses the source
+cache. Original bytes, BOMs and line endings are preserved unless output settings
+change. [Encoding and newline choices](m3-encoding.md) are versioned with the
+snapshot; staging rejects lossy conversions before commit. Progress reports
+staging, recovery-copy creation and commit separately. Staging counts working
+input bytes; commit counts actual encoded output bytes, including conversion
+and BOMs. In-place copying and truncation use the encoded staging file's length.
 
 For ordinary files, saving writes a temporary file in the destination directory,
 preserves metadata, syncs the file, replaces the destination and syncs its parent

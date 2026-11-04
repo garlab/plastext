@@ -7,12 +7,15 @@
 //! indexed Unicode coordinates and resumable [`GraphemeSearch`] navigation.
 
 mod edit;
+mod encoding;
 mod file_document;
 mod grapheme;
 mod line_index;
+mod line_summary;
 mod piece_tree;
 pub mod rows;
 mod save;
+mod serialize;
 mod session;
 mod source;
 mod text;
@@ -21,12 +24,14 @@ mod unicode_summary;
 use std::{io, path::Path, sync::Arc};
 
 pub use edit::{EditBuffer, EditError, TextSnapshot, UndoGroup};
+pub use encoding::{EncodingHint, TextEncoding, TextFormat};
 pub use file_document::{
     ExternalCheck, ExternalObservation, ExternalResult, ExternalState, FileDocument,
     SaveCompletion, SaveJob,
 };
 pub use grapheme::{Direction, GraphemeSearch};
 pub use line_index::{LineIndex, Progress};
+pub use line_summary::{LineEnding, LineEndings};
 pub use save::{
     DiskVersion, SaveFailure, SaveFailureKind, SaveOptions, SavePhase, SaveProgress, SaveReceipt,
     save_snapshot,

@@ -9,9 +9,9 @@ independently; they do not block work on the editing model.
 
 `plastext-buffer::EditBuffer` stores a persistent AVL piece tree over immutable
 original bytes and bounded added chunks. Unchanged subtrees are shared across
-versions. Leaves contain at most 64 KiB; byte edits and LF line lookups descend
-the tree and scan only the relevant boundary leaves. A trailing LF exposes an
-empty final editor line. Invalid bytes and existing line-ending bytes are kept
+versions. Leaves contain at most 64 KiB; byte edits and CR/LF/CRLF line lookups
+descend the tree and scan only the relevant boundary leaves. A trailing line
+terminator exposes an empty final editor line. Invalid bytes and existing line-ending bytes are kept
 exactly; indexing does not normalize or rewrite the document.
 
 `TextSnapshot` implements the existing nonblocking `ByteSource` interface.
@@ -43,7 +43,7 @@ scalar spans storage pieces. Splits scan only the shorter side and derive the
 other count from the original summary. Each malformed UTF-8 byte remains one
 independently addressable unit. Text edits reject byte offsets inside valid
 scalars, and UTF-16 offsets inside surrogate pairs require an explicit rounding
-bias. UTF-16 addressing does not yet provide UTF-16-encoded file loading.
+bias. UTF-16-encoded files use a separate UTF-8 editing projection.
 
 `GraphemeSearch` implements resumable extended-grapheme movement, using the
 existing `unicode-segmentation` dependency. Each work unit visits at most 4 KiB
@@ -67,6 +67,14 @@ reload jobs run separately from the session owner; stale completions cannot clea
 newer typing or replace it. Explicit overwrite/discard requests also carry version
 checks. The backend is tested independently of GUI commands and watchers.
 
+[Encoding and newline handling](m3-encoding.md) now adds BOM/legacy detection,
+lossless UTF-16 and legacy originals, explicit clean reopens, and undoable output
+settings. Mixed endings remain intact unless conversion is requested. Format
+changes preserve pane selections and share the same stale-command/save checks
+as text edits. Conversion failures leave the destination unchanged. The
+[encoding diagnostic](m3-encoding.md#validation) records bounded-memory 100 MB
+UTF-16 saves and a new edit-core comparison.
+
 ## Validation
 
 The buffer tests compare 38,400 randomized edit/undo/redo operations against a
@@ -83,8 +91,8 @@ independent scalar/UTF-16 coordinates, every split of representative valid and
 malformed strings, and a 1.2 MB grapheme crossing evicted source-cache blocks.
 Session tests cover independent selections, grouped history, stale commands,
 closed panes, cross-document requests and asynchronous save checkpoints.
-The macOS run passes 66 buffer tests and 7 benchmark tests, including the new
-save/conflict cases. The [save diagnostic](m3-saving.md#validation) verifies
+The macOS run passes 82 buffer tests and 7 benchmark tests, including save,
+conflict and encoding cases. The [save diagnostic](m3-saving.md#validation) verifies
 100 MB and 1 GB files in both save modes with bounded streaming memory.
 
 Run the core checks and performance diagnostic with:
@@ -134,8 +142,6 @@ session selection rebasing, sustained typing history or native input/painting.
 
 ## Next work and limits
 
-- Add encoding detection/conversion and CR-only/mixed-ending editing semantics.
-  The current line index counts LF; grapheme navigation treats CRLF as one unit.
 - Connect the shared session to GPUI panes and background jobs, then integrate
   input/IME, multi-cursor and editing commands. History currently rebases pane
   anchors rather than restoring historical selections. Existing reading views

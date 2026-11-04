@@ -160,8 +160,7 @@ pub fn save_snapshot(
         return Err(SaveFailure::conflict());
     }
     // Request write permission without truncation, even for atomic replacement.
-    let mut original = platform::open(&expected.target, true)?;
-    original.try_lock().map_err(io::Error::other)?;
+    let mut original = SaveLock::new(platform::open(&expected.target, true)?)?;
     expected.verify(&original)?;
     let parent = expected.target.parent().unwrap();
     let mut staged = tempfile::Builder::new()
@@ -174,6 +173,7 @@ pub fn save_snapshot(
             total,
         });
     })?;
+    let encoded_len = staged.as_file().metadata()?.len();
     let in_place = !options.atomic || expected.stamp.links > 1;
     let mut backup = if in_place {
         let mut backup = tempfile::Builder::new()
@@ -205,7 +205,7 @@ pub fn save_snapshot(
     progress(SaveProgress {
         phase: SavePhase::Committing,
         completed: 0,
-        total: snapshot_len(snapshot),
+        total: encoded_len,
     });
     check_cancel(cancel)?;
     expected.verify(&original)?;
@@ -225,7 +225,7 @@ pub fn save_snapshot(
             copy_exact(
                 staged.as_file_mut(),
                 &mut original,
-                snapshot_len(snapshot),
+                encoded_len,
                 &AtomicBool::new(false),
                 |completed, total| {
                     if completed != 0 {
@@ -237,7 +237,7 @@ pub fn save_snapshot(
                     }
                 },
             )?;
-            original.set_len(snapshot_len(snapshot))?;
+            original.set_len(encoded_len)?;
             // Restore metadata that writing can clear (e.g. Unix mode bits).
             platform::copy_metadata(staged.as_file(), &original, &AtomicBool::new(false))?;
             original.sync_all()?;
@@ -273,8 +273,30 @@ pub fn save_snapshot(
     }
 }
 
-fn snapshot_len(snapshot: &TextSnapshot) -> u64 {
-    crate::ByteSource::len(snapshot)
+// Explicitly unlock on every exit. Closing our descriptor alone can leave a
+// flock alive briefly when another thread forks a child during the save.
+struct SaveLock(File);
+impl SaveLock {
+    fn new(file: File) -> io::Result<Self> {
+        file.try_lock().map_err(io::Error::other)?;
+        Ok(Self(file))
+    }
+}
+impl std::ops::Deref for SaveLock {
+    type Target = File;
+    fn deref(&self) -> &File {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for SaveLock {
+    fn deref_mut(&mut self) -> &mut File {
+        &mut self.0
+    }
+}
+impl Drop for SaveLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
 }
 
 fn copy_exact(

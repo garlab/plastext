@@ -274,3 +274,74 @@ fn older_unchanged_observation_cannot_clear_a_newer_conflict() {
 fn apply_external(doc: &mut FileDocument, mut observation: ExternalObservation) -> ExternalResult {
     doc.finish_external(&mut observation)
 }
+
+#[test]
+fn reopen_encoding_is_explicit_clean_only_and_rejects_newer_input() {
+    use crate::TextEncoding;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("encoding.txt");
+    fs::write(&path, b"caf\xe9").unwrap();
+    let mut doc = FileDocument::open_with_encoding(
+        &path,
+        OpenOptions::default(),
+        EncodingHint::Explicit(TextEncoding::UTF8),
+        &cancel(),
+        |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(text(&doc), b"caf\xe9");
+    let hint = EncodingHint::Explicit(TextEncoding::for_label("windows-1252").unwrap());
+    let job = doc
+        .reopen_with_encoding(hint, OpenOptions::default())
+        .unwrap();
+    assert_eq!(
+        apply_external(&mut doc, job.run(&cancel(), |_, _| {})).state,
+        ExternalState::Reloaded
+    );
+    assert_eq!(text(&doc), "café".as_bytes());
+    let job = doc
+        .reopen_with_encoding(
+            EncodingHint::Explicit(TextEncoding::UTF8),
+            OpenOptions::default(),
+        )
+        .unwrap();
+    append(&mut doc, " edited");
+    assert!(
+        doc.reopen_with_encoding(hint, OpenOptions::default())
+            .is_none()
+    );
+    assert_eq!(
+        apply_external(&mut doc, job.run(&cancel(), |_, _| {})).state,
+        ExternalState::Conflict
+    );
+    assert_eq!(text(&doc), "café edited".as_bytes());
+}
+
+#[test]
+fn a_saved_format_is_the_checkpoint_and_the_encoding_for_later_reload() {
+    use crate::{TextEncoding, TextFormat};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("format.txt");
+    fs::write(&path, b"hello").unwrap();
+    let mut doc = open(&path);
+    let latin = TextEncoding::for_label("windows-1252").unwrap();
+    let format = TextFormat::new(latin, false).unwrap();
+    let base = doc.session().snapshot();
+    doc.session_mut().set_format(&base, format).unwrap();
+    append(&mut doc, " café");
+    let job = doc.begin_save(SaveOptions::default()).unwrap();
+    let base = doc.session().snapshot();
+    doc.session_mut()
+        .set_format(&base, TextFormat::default())
+        .unwrap();
+    doc.finish_save(&job.run(&cancel(), |_| {})).unwrap();
+    assert!(doc.session().is_dirty());
+    let pane = doc.session_mut().attach_pane(Selection::caret(0)).unwrap();
+    let base = doc.session().pane_snapshot(pane).unwrap();
+    doc.session_mut().undo(&base).unwrap();
+    assert!(!doc.session().is_dirty());
+    fs::write(&path, b"Fran\xe7ais").unwrap();
+    assert_eq!(check(&mut doc).state, ExternalState::Reloaded);
+    assert_eq!(text(&doc), "Français".as_bytes());
+    assert_eq!(doc.session().snapshot().text().format().encoding(), latin);
+}

@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, ops::Range};
 
 use crate::{
-    Bias, Direction, EditBuffer, GraphemeSearch, TextError, TextSnapshot, UndoGroup,
+    Bias, Direction, EditBuffer, GraphemeSearch, TextError, TextFormat, TextSnapshot, UndoGroup,
     edit::EditDelta,
 };
 
@@ -249,6 +249,30 @@ impl DocumentSession {
         self.last_actor = Some(base.id);
         self.changed();
         Ok(())
+    }
+
+    pub fn insert_newline(&mut self, base: &PaneSnapshot) -> Result<(), SessionError> {
+        self.validate(base)?;
+        let ending = base.document.text.preferred_line_ending().as_str();
+        self.replace(base, base.selection.range(), ending, UndoGroup::New)
+    }
+
+    /// Output settings are shared by all panes. Stale menus/jobs cannot change
+    /// a newer document; undo/redo restores settings without moving selections.
+    pub fn set_format(
+        &mut self,
+        base: &DocumentSnapshot,
+        format: TextFormat,
+    ) -> Result<bool, SessionError> {
+        if !self.is_current(base) {
+            return Err(SessionError::Stale);
+        }
+        let changed = self.buffer.set_format(format);
+        if changed {
+            self.changed();
+            self.last_actor = None;
+        }
+        Ok(changed)
     }
 
     pub fn undo(&mut self, base: &PaneSnapshot) -> Result<bool, SessionError> {

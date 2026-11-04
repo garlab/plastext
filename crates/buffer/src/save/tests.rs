@@ -472,3 +472,72 @@ fn oversized_resource_fork_fails_before_replacing_the_file() {
     assert_eq!(fs::read(&path).unwrap(), b"original");
     assert_eq!(entries(dir.path()), 1);
 }
+
+#[test]
+fn encoded_saves_use_output_length_and_conversion_failure_never_reaches_commit() {
+    use crate::{LineEnding, TextEncoding, TextFormat};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("converted.txt");
+    for atomic in [true, false] {
+        fs::write(&path, b"original").unwrap();
+        let mut buffer = EditBuffer::from_bytes("a\nb\r\nc\r😀");
+        buffer.set_format(
+            TextFormat::new(TextEncoding::UTF16_LE, true)
+                .unwrap()
+                .with_line_ending(Some(LineEnding::CrLf)),
+        );
+        let receipt = save_snapshot(
+            &buffer.snapshot(),
+            &DiskVersion::read(&path).unwrap(),
+            SaveOptions { atomic },
+            &cancelled(),
+            |_| {},
+        )
+        .unwrap();
+        assert!(receipt.version.is_current().unwrap());
+        let mut expected = vec![0xff, 0xfe];
+        for word in "a\r\nb\r\nc\r\n😀".encode_utf16() {
+            expected.extend(word.to_le_bytes());
+        }
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        buffer.set_format(
+            TextFormat::new(TextEncoding::for_label("windows-1252").unwrap(), false).unwrap(),
+        );
+        let failure = save_snapshot(
+            &buffer.snapshot(),
+            &receipt.version,
+            SaveOptions { atomic },
+            &cancelled(),
+            |p| assert_eq!(p.phase, SavePhase::Writing),
+        )
+        .unwrap_err();
+        assert!(!failure.target_may_have_changed);
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        assert_eq!(entries(dir.path()), 1);
+        // A shorter encoded output must also truncate in-place correctly.
+        buffer
+            .replace_text(0..buffer.snapshot().len(), "x\n", UndoGroup::New)
+            .unwrap();
+        save_snapshot(
+            &buffer.snapshot(),
+            &receipt.version,
+            SaveOptions { atomic },
+            &cancelled(),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"x\n");
+    }
+}
+
+#[test]
+fn dropping_a_save_lock_unlocks_even_when_another_descriptor_survives() {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let locked = SaveLock::new(platform::open(file.path(), true).unwrap()).unwrap();
+    let duplicate = locked.try_clone().unwrap();
+    assert!(SaveLock::new(platform::open(file.path(), true).unwrap()).is_err());
+    drop(locked);
+    let next = SaveLock::new(platform::open(file.path(), true).unwrap()).unwrap();
+    drop(next);
+    drop(duplicate);
+}

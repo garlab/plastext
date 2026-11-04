@@ -2,8 +2,8 @@
 //! edit or line lookup only scans a bounded leaf after its logarithmic descent.
 use std::{ops::Range, sync::Arc};
 
+use crate::line_summary::LineSummary;
 use bytes::{Bytes, BytesMut};
-use memchr::memchr_iter;
 
 use crate::unicode_summary::UnicodeSummary;
 use crate::{ByteSource, FileSource, ReadError};
@@ -15,6 +15,7 @@ const NODE_BYTES: u64 = (size_of::<Node>() + 2 * size_of::<usize>()) as u64;
 #[derive(Clone)]
 enum Source {
     Original(Arc<FileSource>),
+    Decoded(Arc<crate::encoding::DecodedSource>),
     Added(Bytes),
 }
 
@@ -22,12 +23,11 @@ enum Source {
 pub(super) struct Piece {
     source: Source,
     range: Range<u64>,
-    newlines: u64,
 }
 
 pub(super) struct Node {
     pub bytes: u64,
-    pub newlines: u64,
+    pub lines: LineSummary,
     pub unicode: UnicodeSummary,
     pub height: u8,
     // Conservative retained size: shared added chunks may be counted twice.
@@ -41,15 +41,15 @@ enum Kind {
 }
 
 impl Node {
-    fn leaf(piece: Piece, unicode: UnicodeSummary) -> Arc<Self> {
+    fn leaf(piece: Piece, lines: LineSummary, unicode: UnicodeSummary) -> Arc<Self> {
         let retained = NODE_BYTES
             + match &piece.source {
-                Source::Original(_) => 0,
+                Source::Original(_) | Source::Decoded(_) => 0,
                 Source::Added(bytes) => bytes.len() as u64 + 32,
             };
         Arc::new(Self {
             bytes: piece.range.end - piece.range.start,
-            newlines: piece.newlines,
+            lines,
             unicode,
             height: 1,
             retained,
@@ -60,7 +60,7 @@ impl Node {
     fn branch(left: Arc<Self>, right: Arc<Self>) -> Arc<Self> {
         Arc::new(Self {
             bytes: left.bytes + right.bytes,
-            newlines: left.newlines + right.newlines,
+            lines: left.lines.join(right.lines),
             unicode: left.unicode.join(left.bytes, right.unicode, right.bytes),
             height: 1 + left.height.max(right.height),
             retained: left.retained + right.retained + NODE_BYTES,
@@ -88,21 +88,49 @@ impl Piece {
                 ReadError::Missing(_) => ReadError::Missing(local),
                 other => other,
             }),
+            Source::Decoded(file) => file.text.bytes(source).map_err(|error| match error {
+                ReadError::Missing(_) => ReadError::Missing(local),
+                other => other,
+            }),
             Source::Added(bytes) => Ok(bytes.slice(source.start as usize..source.end as usize)),
         }
     }
 
     pub fn load(&self, local: Range<u64>) -> std::io::Result<()> {
-        if let Source::Original(file) = &self.source {
+        let file = match &self.source {
+            Source::Original(file) => Some(file),
+            Source::Decoded(file) => Some(&file.text),
+            Source::Added(_) => None,
+        };
+        if let Some(file) = file {
             file.load(self.range.start + local.start..self.range.start + local.end)?;
         }
         Ok(())
+    }
+
+    pub fn serialize(
+        &self,
+        local: Range<u64>,
+        buffer: &mut [u8],
+        output: &mut crate::serialize::Serializer<impl std::io::Write>,
+    ) -> std::io::Result<()> {
+        if let Source::Decoded(source) = &self.source {
+            output.decoded(
+                source,
+                self.range.start + local.start..self.range.start + local.end,
+            )
+        } else {
+            let bytes = &mut buffer[..(local.end - local.start) as usize];
+            self.read_uncached(local, bytes)?;
+            output.utf8(bytes)
+        }
     }
 
     pub fn read_uncached(&self, local: Range<u64>, buffer: &mut [u8]) -> std::io::Result<()> {
         let range = self.range.start + local.start..self.range.start + local.end;
         match &self.source {
             Source::Original(file) => file.read_uncached(range, buffer),
+            Source::Decoded(file) => file.text.read_uncached(range, buffer),
             Source::Added(bytes) => {
                 buffer.copy_from_slice(&bytes[range.start as usize..range.end as usize]);
                 Ok(())
@@ -111,19 +139,33 @@ impl Piece {
     }
 }
 
-pub(super) fn original(source: Arc<FileSource>, leaves: &[(u64, u64, UnicodeSummary)]) -> Tree {
-    let mut offset = 0;
+pub(super) fn original(
+    source: Arc<FileSource>,
+    leaves: &[crate::encoding::LeafSummary],
+    offset: u64,
+) -> Tree {
+    from_source(Source::Original(source), leaves, offset)
+}
+
+pub(super) fn decoded(
+    source: Arc<crate::encoding::DecodedSource>,
+    leaves: &[crate::encoding::LeafSummary],
+) -> Tree {
+    from_source(Source::Decoded(source), leaves, 0)
+}
+
+fn from_source(source: Source, leaves: &[crate::encoding::LeafSummary], mut offset: u64) -> Tree {
     let pieces = leaves
         .iter()
-        .map(|&(len, newlines, unicode)| {
+        .map(|&(len, lines, unicode)| {
             let range = offset..offset + len;
             offset += len;
             (
                 Piece {
-                    source: Source::Original(source.clone()),
+                    source: source.clone(),
                     range,
-                    newlines,
                 },
+                lines,
                 unicode,
             )
         })
@@ -141,8 +183,8 @@ pub(super) fn added(bytes: &[u8]) -> Tree {
                     // entire large paste after the rest of that paste is deleted.
                     source: Source::Added(Bytes::copy_from_slice(chunk)),
                     range: 0..chunk.len() as u64,
-                    newlines: memchr_iter(b'\n', chunk).count() as u64,
                 },
+                LineSummary::new(chunk),
                 UnicodeSummary::new(chunk),
             )
         })
@@ -150,10 +192,10 @@ pub(super) fn added(bytes: &[u8]) -> Tree {
     build(&pieces)
 }
 
-fn build(pieces: &[(Piece, UnicodeSummary)]) -> Tree {
+fn build(pieces: &[(Piece, LineSummary, UnicodeSummary)]) -> Tree {
     match pieces {
         [] => None,
-        [(piece, unicode)] => Some(Node::leaf(piece.clone(), *unicode)),
+        [(piece, lines, unicode)] => Some(Node::leaf(piece.clone(), *lines, *unicode)),
         _ => {
             let middle = pieces.len() / 2;
             Some(Node::branch(
@@ -236,20 +278,14 @@ pub(super) fn split(tree: Tree, offset: u64) -> Result<(Tree, Tree), ReadError> 
             let bytes = piece.bytes(0..piece.len())?;
             let at = offset as usize;
             let (left_unicode, right_unicode) = node.unicode.split(&bytes, at);
-            let newlines = if at <= bytes.len() - at {
-                memchr_iter(b'\n', &bytes[..at]).count() as u64
-            } else {
-                piece.newlines - memchr_iter(b'\n', &bytes[at..]).count() as u64
-            };
+            let (left_lines, right_lines) = node.lines.split(&bytes, at);
             let mut left = piece.clone();
             left.range.end = piece.range.start + offset;
-            left.newlines = newlines;
             let mut right = piece.clone();
             right.range.start = left.range.end;
-            right.newlines -= newlines;
             Ok((
-                Some(Node::leaf(left, left_unicode)),
-                Some(Node::leaf(right, right_unicode)),
+                Some(Node::leaf(left, left_lines, left_unicode)),
+                Some(Node::leaf(right, right_lines, right_unicode)),
             ))
         }
         Kind::Branch(left, right) => {
@@ -317,25 +353,36 @@ pub(super) fn bytes(tree: &Tree, range: Range<u64>) -> Result<Bytes, ReadError> 
     Ok(bytes.freeze())
 }
 
-pub(super) fn line_at(tree: &Tree, offset: u64) -> Result<u64, ReadError> {
+fn line_prefix(tree: &Tree, offset: u64) -> Result<LineSummary, ReadError> {
     let Some(node) = tree else {
-        return Ok(0);
+        return Ok(LineSummary::new(&[]));
     };
+    if offset == 0 {
+        return Ok(LineSummary::new(&[]));
+    }
     if offset == node.bytes {
-        return Ok(node.newlines);
+        return Ok(node.lines);
     }
     match &node.kind {
-        Kind::Leaf(piece) => Ok(memchr_iter(b'\n', &piece.bytes(0..offset)?).count() as u64),
+        Kind::Leaf(piece) => Ok(LineSummary::new(&piece.bytes(0..offset)?)),
         Kind::Branch(left, right) => {
             if offset < left.bytes {
-                line_at(&Some(left.clone()), offset)
+                line_prefix(&Some(left.clone()), offset)
             } else {
-                line_at(&Some(right.clone()), offset - left.bytes)
-                    .map(|lines| lines + left.newlines)
-                    .map_err(|error| shifted(error, left.bytes))
+                let suffix = line_prefix(&Some(right.clone()), offset - left.bytes)
+                    .map_err(|error| shifted(error, left.bytes))?;
+                Ok(left.lines.join(suffix))
             }
         }
     }
+}
+
+pub(super) fn line_at(tree: &Tree, offset: u64) -> Result<u64, ReadError> {
+    let prefix = line_prefix(tree, offset)?;
+    // The caret between CR and LF still belongs to the preceding line.
+    let crossing =
+        prefix.ends_cr && offset < len(tree) && bytes(tree, offset..offset + 1)?[0] == b'\n';
+    Ok(prefix.counts.count() - u64::from(crossing))
 }
 
 pub(super) fn line_start(tree: &Tree, line: u64) -> Result<Option<u64>, ReadError> {
@@ -345,18 +392,33 @@ pub(super) fn line_start(tree: &Tree, line: u64) -> Result<Option<u64>, ReadErro
     let Some(node) = tree else {
         return Ok(None);
     };
-    if line > node.newlines {
+    if line > node.lines.counts.count() {
         return Ok(None);
     }
     match &node.kind {
-        Kind::Leaf(piece) => Ok(memchr_iter(b'\n', &piece.bytes(0..piece.len())?)
-            .nth(line as usize - 1)
-            .map(|offset| offset as u64 + 1)),
+        Kind::Leaf(piece) => {
+            let bytes = piece.bytes(0..piece.len())?;
+            let mut remaining = line;
+            for at in memchr::memchr2_iter(b'\r', b'\n', &bytes) {
+                if bytes[at] == b'\r' && bytes.get(at + 1) == Some(&b'\n') {
+                    continue;
+                }
+                remaining -= 1;
+                if remaining == 0 {
+                    return Ok(Some(at as u64 + 1));
+                }
+            }
+            unreachable!("line summary matches leaf");
+        }
         Kind::Branch(left, right) => {
-            if line <= left.newlines {
+            let count = left.lines.counts.count();
+            let crossing = left.lines.ends_cr && right.lines.starts_lf;
+            if crossing && line == count {
+                Ok(Some(left.bytes + 1))
+            } else if line <= count {
                 line_start(&Some(left.clone()), line)
             } else {
-                line_start(&Some(right.clone()), line - left.newlines)
+                line_start(&Some(right.clone()), line - count + u64::from(crossing))
                     .map(|offset| offset.map(|offset| offset + left.bytes))
                     .map_err(|error| shifted(error, left.bytes))
             }
@@ -479,8 +541,8 @@ pub(super) fn check(tree: &Tree) {
                 assert!((1..=LEAF_BYTES as u64).contains(&piece.len()));
                 assert_eq!(node.bytes, piece.len());
                 assert_eq!(node.height, 1);
-                assert_eq!(node.newlines, piece.newlines);
                 if let Ok(bytes) = piece.bytes(0..piece.len()) {
+                    assert_eq!(node.lines, LineSummary::new(&bytes));
                     assert_eq!(node.unicode, UnicodeSummary::new(&bytes));
                 }
             }
@@ -490,7 +552,7 @@ pub(super) fn check(tree: &Tree) {
                 assert!(left.height.abs_diff(right.height) <= 1);
                 assert_eq!(node.height, 1 + left.height.max(right.height));
                 assert_eq!(node.bytes, left.bytes + right.bytes);
-                assert_eq!(node.newlines, left.newlines + right.newlines);
+                assert_eq!(node.lines, left.lines.join(right.lines));
                 assert_eq!(
                     node.unicode,
                     left.unicode.join(left.bytes, right.unicode, right.bytes)
