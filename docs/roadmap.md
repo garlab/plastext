@@ -1,7 +1,8 @@
 # Current roadmap
 
 The [milestones in the specification](specs.md#10-roadmap) remain the main plan.
-M2 (Markdown and assets) is in progress. Completed reading and preview features
+M3 (editing) has started; M2's remaining validation is still open. Completed
+reading and preview features
 are documented in [M2 progress](m2-progress.md), [search](search.md),
 [images](images.md), [Markdown reading](markdown-reading.md), [Go](sgf.md) and
 [chess](chess.md). The accepted [M1 performance baseline](m1-performance.md)
@@ -26,7 +27,28 @@ icon-theme loading remain application concerns. TeX compilation stays with
 project/tool orchestration. Defer PDF extraction until another consumer needs
 it. Keep new backends optional and initialize them only when used.
 
-## Remaining M2 work
+## M3 editing
+
+The first [M3 increment](m3-progress.md) adds a headless persistent piece tree,
+immutable file snapshots and bounded, grouped undo/redo. It does not enable GUI
+editing or saving yet. Existing read-mode paths and performance baselines remain
+unchanged.
+
+Next, in order:
+
+1. Add Unicode/grapheme and UTF-16 addressing, and a shared document session for
+   split panes. Keep reads and input independent of disk I/O.
+2. Implement streaming/atomic saves and external-change handling, including
+   stale-save completion, symlinks, permissions and concurrent agent rewrites.
+   Resolve this before exposing file writes in the UI.
+3. Wire edit mode, caret/selection/IME, multi-cursor, find/replace, indentation
+   and EditorConfig into the text view.
+4. Add synchronized Markdown source/preview, double-click-to-source, tail mode
+   and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
+
+M4 Git review and M5 release hardening follow M3.
+
+## M2 follow-ups
 
 - Finish the [large-workload checks](m2-validation.md): local 10,000-frame
   Markdown and CSV runs now pass the 8 ms target. Reference M1 Air measurements
@@ -35,9 +57,8 @@ it. Keep new backends optional and initialize them only when used.
   detail, and expose more specific renderer rejection reasons. Preserve the
   [existing diagram limits](mermaid.md#resource-bounds).
 
-These precede M3 editing (undo/redo, reliable saves, external changes and a
-synchronized Markdown source/preview), then M4 Git review and M5 release
-hardening and packaging.
+These remain tracked independently of M3 development. Local passes do not
+certify M2's reference-machine exit requirements.
 
 ## Additional previews
 

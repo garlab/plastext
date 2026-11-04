@@ -1,15 +1,18 @@
 //! Piece-tree text buffer, chunked file source, line index, undo, encoding and saving (spec §5.2).
 //!
-//! So far: [`FileSource`] reads files of any size without loading them whole,
-//! [`LineIndex`] maps lines to offsets as it scans in the background, and
-//! [`rows`] splits text into display rows of bounded length.
+//! [`FileSource`] provides bounded reads, [`LineIndex`] builds a sparse line map,
+//! and [`rows`] splits text into bounded display rows. [`EditBuffer`] supplies
+//! persistent byte edits, immutable snapshots and bounded undo/redo for M3.
 
+mod edit;
 mod line_index;
+mod piece_tree;
 pub mod rows;
 mod source;
 
 use std::{io, path::Path, sync::Arc};
 
+pub use edit::{EditBuffer, EditError, TextSnapshot, UndoGroup};
 pub use line_index::{LineIndex, Progress};
 pub use source::{BLOCK_SIZE, ByteSource, FileSource, OpenOptions, ReadError};
 

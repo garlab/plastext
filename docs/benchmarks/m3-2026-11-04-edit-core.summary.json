@@ -1,0 +1,71 @@
+{
+  "file": "large.md",
+  "bytes": 100000000,
+  "edits": 10000,
+  "scope": "headless byte edits with separately timed prefetch; excludes UI, grapheme/UTF-16 mapping, save and reference-machine certification",
+  "private_original_preparation_ms": 473.16075,
+  "chunked_original": true,
+  "source_cache_budget_bytes": 8388608,
+  "max_history_charge_bytes": 26883,
+  "retained_snapshots": 64,
+  "complete": true,
+  "passed": true,
+  "metrics": [
+    {
+      "name": "prefetch",
+      "unit": "ms",
+      "p50": 0.000166,
+      "p99": 0.026333,
+      "max": 0.0975,
+      "sample_count": 10000
+    },
+    {
+      "name": "cached replace",
+      "unit": "ms",
+      "p50": 0.002875,
+      "p99": 0.0050420000000000005,
+      "max": 0.017542,
+      "sample_count": 10000
+    },
+    {
+      "name": "snapshot",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000084,
+      "max": 0.00025,
+      "sample_count": 10000
+    },
+    {
+      "name": "undo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.000167,
+      "sample_count": 10000
+    },
+    {
+      "name": "redo",
+      "unit": "ms",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "max": 0.00025,
+      "sample_count": 10000
+    }
+  ],
+  "sampled_rss": {
+    "interval_ms": 100,
+    "final_sample": true,
+    "parent_mib": {
+      "max": 26.84375,
+      "last": 26.84375,
+      "sample_count": 7
+    },
+    "helpers_mib": {
+      "max": 0.0,
+      "last": 0.0,
+      "sample_count": 7
+    }
+  },
+  "schema": 2,
+  "artifact": "summary"
+}

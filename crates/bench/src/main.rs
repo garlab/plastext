@@ -15,6 +15,7 @@ use plastext_settings::ByteSize;
 
 mod m1;
 mod m2;
+mod m3;
 mod memory;
 mod native_log;
 mod preview;
@@ -32,6 +33,14 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Measure piece-tree edits and snapshots; excludes UI input, painting and saving.
+    Edit {
+        file: PathBuf,
+        #[arg(long, default_value_t = 10000, value_parser = clap::value_parser!(u32).range(1..=1000000))]
+        edits: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Exercise isolated PDF snapshots, page lookup and bounded raster tiles.
     Pdf {
         file: PathBuf,
@@ -127,6 +136,11 @@ fn main() -> ExitCode {
         };
     }
     let result = match Args::parse().command {
+        Commands::Edit {
+            file,
+            edits,
+            output,
+        } => m3::run(&file, edits, output.as_deref()),
         Commands::Pdf {
             file,
             rounds,
