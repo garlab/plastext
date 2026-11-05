@@ -33,8 +33,12 @@ cache budget. New edits cancel obsolete refreshes; late results cannot replace
 newer content. `Cmd-S` also works while Preview is focused. Continuous source/preview
 scroll synchronization and double-clicking rendered blocks to edit remain to do.
 
-Code uses bounded lexical highlighting after editing begins; syntax-tree folding,
-outline and sticky definitions await incremental parsing of edited snapshots.
+Entering edit mode preserves syntax highlighting. Edits refresh it on a worker
+after a 40 ms pause, reusing unchanged syntax-tree nodes; newer edits cancel older
+work. Parsing retains the configured file-size limit. While a refresh is pending,
+changed rows use lexical highlighting; unchanged rows at the same offsets retain
+their parsed colors. Syntax-tree folding, outline and sticky definitions are not
+yet connected to edited snapshots.
 
 Saves run on a worker, preserve the existing encoding and line endings, and keep
 undo history. Typing during a save remains dirty until that newer version is

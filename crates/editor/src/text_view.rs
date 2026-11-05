@@ -55,6 +55,7 @@ actions!(
 );
 
 mod editing;
+mod syntax;
 use editing::Editing;
 
 const KEY_CONTEXT: &str = "TextView";
@@ -166,8 +167,11 @@ pub struct TextView {
     index: Arc<LineIndex>,
     style: TextStyle,
     language: Option<&'static Language>,
-    /// Set once the background parse finishes.
+    /// The latest completed background parse.
     syntax: Option<Arc<SyntaxTree>>,
+    /// The exact input paired with the tree; shared with the reader until edits.
+    syntax_text: Option<Bytes>,
+    _edit_parse: Option<Task<()>>,
     syntax_folds: Option<Arc<Vec<Fold>>>,
     /// The file's definitions, found after parsing.
     symbols: Option<Arc<Vec<Symbol>>>,
@@ -272,6 +276,10 @@ impl TextView {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_release(|this: &mut Self, cx| {
+            this.cancel_parse.store(true, Ordering::Relaxed);
+            if let Some(task) = this._edit_parse.take() {
+                task.detach();
+            }
             if let Some(editing) = this.editing.take() {
                 editing.release(cx);
             }
@@ -283,9 +291,11 @@ impl TextView {
                     snapshot: None,
                 }),
             );
+            let syntax = this.syntax.take();
+            let text = this.syntax_text.take();
             cx.background_executor()
                 .spawn(async move {
-                    drop(source);
+                    drop((source, syntax, text));
                 })
                 .detach();
         })
@@ -310,6 +320,7 @@ impl TextView {
             .in_memory()
             .filter(|text| text.len() as u64 <= style.max_parse_size)
             .cloned();
+        let syntax_text = language.and(parsable.clone());
         let parse = language.zip(parsable).map(|(language, text)| {
             let cancel = cancel_parse.clone();
             cx.spawn(async move |this, cx| {
@@ -329,6 +340,9 @@ impl TextView {
                 let Some(mut tree) = initial else { return };
                 if this
                     .update(cx, |this, cx| {
+                        if cancel.load(Ordering::Relaxed) {
+                            return;
+                        }
                         this.syntax = Some(tree.clone());
                         cx.notify();
                     })
@@ -354,6 +368,9 @@ impl TextView {
                     tree = full;
                     if this
                         .update(cx, |this, cx| {
+                            if cancel.load(Ordering::Relaxed) {
+                                return;
+                            }
                             this.syntax = Some(tree.clone());
                             cx.notify();
                         })
@@ -378,6 +395,9 @@ impl TextView {
                     .await;
                 if let Some((symbols, folds)) = structures {
                     this.update(cx, |this, cx| {
+                        if this.source.snapshot.is_some() {
+                            return;
+                        }
                         this.symbols = Some(Arc::new(symbols));
                         this.syntax_folds = folds.map(Arc::new);
                         cx.notify();
@@ -395,6 +415,8 @@ impl TextView {
             style,
             language,
             syntax: None,
+            syntax_text,
+            _edit_parse: None,
             syntax_folds: None,
             symbols: None,
             cancel_parse,
@@ -530,6 +552,7 @@ impl TextView {
         let index = self.index.clone();
         let style = self.style.clone();
         let syntax = self.syntax.clone();
+        let syntax_text = self.syntax_text.clone();
         let syntax_folds = self.syntax_folds.clone();
         let symbols = self.symbols.clone();
         let language = self.language;
@@ -551,6 +574,7 @@ impl TextView {
             let mut view = Self::new(source.original.clone(), index, style, parse, cx);
             view.language = language;
             view.syntax = syntax;
+            view.syntax_text = syntax_text;
             view.syntax_folds = syntax_folds;
             view.symbols = symbols;
             view.top = top;
@@ -1557,7 +1581,7 @@ impl TextView {
         let Some(language) = self.language else {
             return Vec::new();
         };
-        let syntax = self.syntax.as_deref().zip(self.source.in_memory());
+        let syntax = self.syntax.as_deref().zip(self.syntax_text.as_deref());
         let mut ranges: Vec<Range<u64>> = Vec::new();
         let mut spans = Vec::new();
         for (start, bytes, starts_line) in rows {
@@ -1566,7 +1590,10 @@ impl TextView {
             }
             let line = &bytes[..bytes.len().min(HIGHLIGHT_LINE_LIMIT as usize)];
             let end = start + line.len() as u64;
-            if syntax.is_some_and(|(tree, _)| end <= tree.parsed_len() as u64) {
+            if syntax.is_some_and(|(tree, text)| {
+                end <= tree.parsed_len() as u64
+                    && text.get(*start as usize..end as usize) == Some(line)
+            }) {
                 match ranges.last_mut() {
                     Some(last) if last.end == *start => last.end = end,
                     _ => ranges.push(*start..end),

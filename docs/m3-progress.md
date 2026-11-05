@@ -144,6 +144,12 @@ The GUI integration adds regression tests for independent split selections,
 shared undo, composition grouping and UTF-16 replacement ranges, delayed input,
 stale composition rejection, CR/LF/CRLF and empty trailing rows, key dispatch,
 horizontal caret visibility, save completion during typing, and disk conflicts.
+Syntax tests check that entering edit mode preserves reader colors in Markdown,
+Rust and embedded HTML languages, and that typing and undo match a fresh parse.
+Edited snapshots are copied and incrementally parsed on workers after a 40 ms
+pause, within the existing syntax-size limit; cancellation and version checks
+reject obsolete results. Tests also cover crossing that limit and undoing back
+below it. Folding, outline and sticky definitions still need editing integration.
 Markdown tests exercise Source → edit via keyboard/double-click, unsaved preview
 and reference resolution, debounced split previews, shared dirty state, save from
 Preview and close confirmation. Markdown's existing page index now also reads

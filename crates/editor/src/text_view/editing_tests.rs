@@ -338,3 +338,145 @@ fn a_delayed_cursor_resumes_against_another_panes_edit(cx: &mut TestAppContext) 
         assert_eq!(view.selection.unwrap().head, text.len() as u64);
     });
 }
+
+fn highlighted_rows(
+    cx: &TestAppContext,
+    view: &Entity<TextView>,
+) -> Vec<(Range<u64>, plastext_syntax::Highlight)> {
+    cx.update(|cx| {
+        let view = view.read(cx);
+        let (ranges, error) = view.source.visible_rows(&Folds::default(), 0, 100);
+        assert_eq!(error, None);
+        let rows: Vec<_> = ranges
+            .into_iter()
+            .map(|range| (range.start, view.source.bytes(range).unwrap(), true))
+            .collect();
+        view.highlights(&rows)
+    })
+}
+
+#[gpui::test]
+fn edit_mode_keeps_read_colors_and_refreshes_unsaved_syntax(cx: &mut TestAppContext) {
+    for (name, original, changed) in [
+        (
+            "document.md",
+            "# Heading\n\n```rust\nlet value = 1;\n```\n",
+            "## New heading\n\n> quote\n",
+        ),
+        (
+            "code.rs",
+            "fn main() { let s = \"café\"; }\n",
+            "// comment\nfn changed() { let n = 42; }\n",
+        ),
+        (
+            "page.html",
+            "<script>const n = 1;</script>\n",
+            "<script type='application/json'>{\"n\":true}</script>\n",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, original).unwrap();
+        let (source, index) = plastext_buffer::open(&path, OpenOptions::default()).unwrap();
+        let language = plastext_syntax::detect(&path, original.as_bytes()).unwrap();
+        let document =
+            cx.update(|cx| EditingDocument::shared(path.clone(), OpenOptions::default(), cx));
+        let view = cx.update(|cx| {
+            cx.new(|cx| {
+                let mut view = TextView::new(
+                    source,
+                    index,
+                    TextStyle {
+                        font_family: "Menlo".into(),
+                        font_size: px(14.),
+                        line_height: 1.4,
+                        tab_size: 4,
+                        sticky_scroll: false,
+                        max_parse_size: 1024 * 1024,
+                    },
+                    Some(language),
+                    cx,
+                );
+                view.set_editing_document(document.clone(), cx);
+                view
+            })
+        });
+        cx.run_until_parked();
+        let before = highlighted_rows(cx, &view);
+        assert!(!before.is_empty(), "{name}");
+        // Publish the prepared original but do not run the editing parser yet:
+        // the first edit-mode frame must retain the existing colors.
+        let file = FileDocument::open(
+            &path,
+            OpenOptions::default(),
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        cx.update(|cx| {
+            document.update(cx, |doc, cx| {
+                doc.file = Some(file);
+                doc.active = true;
+                cx.notify();
+            })
+        });
+        assert_eq!(highlighted_rows(cx, &view), before, "entry: {name}");
+        cx.run_until_parked();
+        assert_eq!(highlighted_rows(cx, &view), before, "prepared: {name}");
+        send(
+            cx,
+            &view,
+            Input::Selection(BufferSelection::new(0, original.len() as u64)),
+        );
+        send(cx, &view, insert(changed));
+        // A second edit supersedes the first scheduled parse.
+        send(cx, &view, insert("\n"));
+        cx.executor().advance_clock(Duration::from_millis(60));
+        cx.run_until_parked();
+        let current = content(cx, &view);
+        let fresh =
+            plastext_syntax::SyntaxTree::parse(language, current.as_bytes(), || false).unwrap();
+        let expected: Vec<_> = fresh
+            .highlights(current.as_bytes(), 0..current.len())
+            .into_iter()
+            .map(|(r, h)| (r.start as u64..r.end as u64, h))
+            .collect();
+        assert_eq!(highlighted_rows(cx, &view), expected, "edited: {name}");
+        send(cx, &view, Input::Undo);
+        cx.executor().advance_clock(Duration::from_millis(60));
+        cx.run_until_parked();
+        assert_eq!(highlighted_rows(cx, &view), before, "undo: {name}");
+    }
+}
+
+#[gpui::test]
+fn edited_syntax_respects_size_limit_and_recovers_after_undo(cx: &mut TestAppContext) {
+    let original = "# Heading\n";
+    let (_dir, view, _other) = setup(cx, original.as_bytes(), false);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.language = plastext_syntax::detect(std::path::Path::new("a.md"), b"");
+            view.style.max_parse_size = 64;
+            view.refresh_edit_syntax(true, cx);
+        });
+    });
+    cx.run_until_parked();
+    let before = highlighted_rows(cx, &view);
+    assert!(!before.is_empty());
+    send(cx, &view, insert("another line\n"));
+    // Cross the limit while that refresh is still pending.
+    send(cx, &view, insert(&"x".repeat(128)));
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert!(view.syntax.is_none());
+        assert!(view.syntax_text.is_none());
+        assert!(view._edit_parse.is_none());
+    });
+    send(cx, &view, Input::Undo);
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), original);
+    assert_eq!(highlighted_rows(cx, &view), before);
+}

@@ -279,10 +279,12 @@ impl TextView {
         let notice = editing.document.read(cx).notice.clone();
         editing.dirty = editing.document.read(cx).is_dirty();
         let mut missing = None;
+        let mut syntax_refresh = None;
         if let Some((snapshot, pane, active)) = state {
             let changed = editing.generation != Some(snapshot.generation());
             editing.active = active;
             if changed {
+                syntax_refresh = Some(editing.generation.is_none());
                 editing.generation = Some(snapshot.generation());
                 // A different pane's edit invalidates composition coordinates.
                 editing.marked = None;
@@ -290,12 +292,11 @@ impl TextView {
                 self.cancel_parse.store(true, Ordering::Relaxed);
                 self._parse = None;
                 self._index_refresh = None;
-                self.syntax = None;
                 self.syntax_folds = None;
                 self.symbols = None;
                 self.folds = Folds::default();
-                // The private editing original replaces the reader cache; do not
-                // retain a second full small-file copy or large-file block cache.
+                // The editing original replaces the reader cache. Syntax keeps
+                // only its paired input until the next parse replaces it.
                 let original = Arc::new(FileSource::from_bytes(Bytes::new()));
                 let old = std::mem::replace(
                     &mut self.source,
@@ -340,6 +341,9 @@ impl TextView {
         }
         if let Some(range) = missing {
             self.load(range, cx);
+        }
+        if let Some(immediate) = syntax_refresh {
+            self.refresh_edit_syntax(immediate, cx);
         }
         cx.notify();
     }

@@ -1,6 +1,8 @@
 use std::ops::{ControlFlow, Range};
 
-use tree_sitter::{ParseOptions, Parser, QueryCursor, StreamingIterator as _, Tree};
+use tree_sitter::{
+    InputEdit, ParseOptions, Parser, Point, QueryCursor, StreamingIterator as _, Tree,
+};
 
 use crate::{
     Language,
@@ -125,6 +127,65 @@ impl SyntaxTree {
         })
     }
 
+    /// Reparse an edited version on a worker, reusing unchanged tree nodes.
+    /// `before` must be the complete byte slice used for this tree.
+    pub fn reparse(
+        &self,
+        before: &[u8],
+        after: &[u8],
+        cancelled: impl Fn() -> bool,
+    ) -> Option<Self> {
+        if before.len() != self.parsed_len {
+            return Self::parse(self.language, after, cancelled);
+        }
+        if cancelled() {
+            return None;
+        }
+        // A single enclosing replacement also handles coalesced edits and undo.
+        let mut start = before.iter().zip(after).take_while(|(a, b)| a == b).count();
+        let continuation =
+            |bytes: &[u8], at: usize| bytes.get(at).is_some_and(|byte| byte & 0xc0 == 0x80);
+        while start > 0 && (continuation(before, start) || continuation(after, start)) {
+            start -= 1;
+        }
+        let mut suffix = before[start..]
+            .iter()
+            .rev()
+            .zip(after[start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if cancelled() {
+            return None;
+        }
+        while suffix > 0
+            && (continuation(before, before.len() - suffix)
+                || continuation(after, after.len() - suffix))
+        {
+            suffix -= 1;
+        }
+        let old_end = before.len() - suffix;
+        let new_end = after.len() - suffix;
+        let start_position = advance(Point::new(0, 0), &before[..start]);
+        let mut old_tree = self.tree.clone();
+        old_tree.edit(&InputEdit {
+            start_byte: start,
+            old_end_byte: old_end,
+            new_end_byte: new_end,
+            start_position,
+            old_end_position: advance(start_position, &before[start..old_end]),
+            new_end_position: advance(start_position, &after[start..new_end]),
+        });
+        let tree = parse_tree_with(self.language, after, Some(&old_tree), &cancelled)?;
+        // Injection boundaries can change after edits to an HTML tag or type.
+        let injections = injections::parse(self.language, &tree, after, &cancelled)?;
+        Some(Self {
+            tree,
+            language: self.language,
+            parsed_len: after.len(),
+            injections,
+        })
+    }
+
     pub fn language(&self) -> &'static Language {
         self.language
     }
@@ -188,6 +249,24 @@ pub(crate) fn parse_tree(
     text: &[u8],
     cancelled: &dyn Fn() -> bool,
 ) -> Option<Tree> {
+    parse_tree_with(language, text, None, cancelled)
+}
+
+fn advance(start: Point, bytes: &[u8]) -> Point {
+    let rows = bytes.iter().filter(|&&byte| byte == b'\n').count();
+    let column = bytes
+        .iter()
+        .rposition(|&byte| byte == b'\n')
+        .map_or(start.column + bytes.len(), |at| bytes.len() - at - 1);
+    Point::new(start.row + rows, column)
+}
+
+fn parse_tree_with(
+    language: &'static Language,
+    text: &[u8],
+    old_tree: Option<&Tree>,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<Tree> {
     if cancelled() {
         return None;
     }
@@ -202,7 +281,7 @@ pub(crate) fn parse_tree(
     };
     let options = ParseOptions::new().progress_callback(&mut progress);
     let mut read = |offset: usize, _| &text[offset.min(text.len())..];
-    let tree = parser.parse_with_options(&mut read, None, Some(options))?;
+    let tree = parser.parse_with_options(&mut read, old_tree, Some(options))?;
     if cancelled() {
         return None;
     }
@@ -266,6 +345,61 @@ mod tests {
             .into_iter()
             .map(|(range, highlight)| (&text[range], highlight))
             .collect()
+    }
+
+    #[test]
+    fn incremental_reparse_matches_fresh_parse_with_unicode_and_injections() {
+        for (name, original, replacements) in [
+            (
+                "a.md",
+                "# Heading\r\n\r\nparagraph\r\n",
+                vec!["## Changed\n\n> quote\n", "", "# é\n", "# ê\n", "# Ω\n"],
+            ),
+            (
+                "a.rs",
+                "fn main() { let café = 1; }\n",
+                vec![
+                    "/* comment\n*/fn main() { let café = 2; }",
+                    "fn renamed() {}\n",
+                    "",
+                ],
+            ),
+            (
+                "a.html",
+                "<script>let a = 1;</script>",
+                vec![
+                    "<script type='application/json'>{\"a\": true}</script>",
+                    "<style>body { color: red; }</style>",
+                    "<p>é</p>",
+                ],
+            ),
+        ] {
+            let language = detect(Path::new(name), b"").unwrap();
+            let mut before = original;
+            let mut tree = SyntaxTree::parse(language, before.as_bytes(), || false).unwrap();
+            for after in replacements.into_iter().chain(std::iter::once(original)) {
+                let next = tree
+                    .reparse(before.as_bytes(), after.as_bytes(), || false)
+                    .unwrap();
+                let fresh = SyntaxTree::parse(language, after.as_bytes(), || false).unwrap();
+                assert_eq!(
+                    next.highlights(after.as_bytes(), 0..after.len()),
+                    fresh.highlights(after.as_bytes(), 0..after.len()),
+                    "{name}: {after}"
+                );
+                assert_eq!(
+                    next.symbols(after.as_bytes()),
+                    fresh.symbols(after.as_bytes())
+                );
+                assert_eq!(next.folds(after.as_bytes()), fresh.folds(after.as_bytes()));
+                assert!(
+                    tree.reparse(before.as_bytes(), after.as_bytes(), || true)
+                        .is_none()
+                );
+                tree = next;
+                before = after;
+            }
+        }
     }
 
     #[test]
