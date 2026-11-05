@@ -48,6 +48,7 @@ actions!(
     workspace,
     [
         CloseTab,
+        NewFile,
         SplitRight,
         SplitDown,
         OpenQuickOpen,
@@ -89,6 +90,7 @@ pub fn init(cx: &mut App) {
     crate::picker::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
+        KeyBinding::new("cmd-n", NewFile, context),
         KeyBinding::new("cmd-p", OpenQuickOpen, context),
         KeyBinding::new("ctrl-g", GoToLine, context),
         KeyBinding::new("cmd-shift-f", SearchProject, context),
@@ -1824,6 +1826,7 @@ impl Render for Workspace {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(Self::new_file))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::open_quick_open))

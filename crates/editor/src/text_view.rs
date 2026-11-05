@@ -10,8 +10,8 @@ use std::{
 use bytes::Bytes;
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, ContentMask, Context, DispatchPhase, Entity,
-    FocusHandle, Focusable, Font, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
+    AnyElement, App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
+    Entity, FocusHandle, Focusable, Font, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Rgba, ScrollWheelEvent, ShapedLine, SharedString, Subscription, Task,
     TextRun, Window, WindowTextSystem, actions, canvas, div, fill, font, point, prelude::*, px,
     size,
@@ -1727,10 +1727,31 @@ impl Render for TextView {
                     {
                         let view = view.clone();
                         move |bounds, window, cx| {
-                            view.update(cx, |view, cx| view.layout(bounds, window, cx))
+                            view.update(cx, |view, cx| {
+                                let layout = view.layout(bounds, window, cx);
+                                let cursor = view.is_editing().then(|| {
+                                    let left =
+                                        (bounds.left() + layout.gutter_width).min(bounds.right());
+                                    let top = (bounds.top()
+                                        + layout.line_height * layout.sticky.len() as f32)
+                                        .min(bounds.bottom());
+                                    let area = Bounds::from_corners(
+                                        point(left, top),
+                                        point(
+                                            (bounds.right() - px(SCROLLBAR_WIDTH)).max(left),
+                                            bounds.bottom(),
+                                        ),
+                                    );
+                                    window.insert_hitbox(area, gpui::HitboxBehavior::Normal)
+                                });
+                                (layout, cursor)
+                            })
                         }
                     },
-                    move |bounds, layout, window, cx| {
+                    move |bounds, (layout, cursor), window, cx| {
+                        if let Some(cursor) = cursor {
+                            window.set_cursor_style(CursorStyle::IBeam, &cursor);
+                        }
                         layout.paint(bounds, view.clone(), window, cx);
                         view.update(cx, |view, cx| view.profile_painted(window, cx));
                     },

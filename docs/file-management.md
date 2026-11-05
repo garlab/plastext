@@ -7,6 +7,7 @@ editor. Up and Down change the selected file.
 Right-click empty space in the file pane for **New File**, **New Folder** and
 **Paste File**. These actions target the project root, regardless of the previous
 selection. Paste File is disabled when the clipboard contains no file.
+**⌘N** opens the same New File dialog from the editor or navigation pane.
 
 New File and New Folder ask for a name, validate it inline and refuse to replace
 an existing item. New files open in a tab; new Markdown files open in Source.

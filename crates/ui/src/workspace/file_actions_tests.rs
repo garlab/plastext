@@ -527,3 +527,63 @@ fn background_paste_uses_root_and_row_context_menu_still_targets_the_entry(
         .unwrap();
     close(cx, window);
 }
+
+#[gpui::test]
+fn new_file_shortcut_works_from_editor_and_navigation_without_saving_existing_edits(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("existing.txt");
+    std::fs::write(&source, "original").unwrap();
+    let window = open(cx, dir.path());
+    click_row(cx, window, 0);
+    cx.simulate_keystrokes(window.into(), "enter x cmd-n");
+    window
+        .update(cx, |workspace, window, cx| {
+            let prompt = workspace.file_prompt.as_ref().unwrap();
+            assert!(matches!(prompt.kind, PromptKind::NewFile));
+            assert_eq!(prompt.path, dir.path());
+            assert!(prompt.input.focus_handle(cx).is_focused(window));
+            assert!(
+                workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .unwrap()
+                    .view
+                    .is_dirty(cx)
+            );
+        })
+        .unwrap();
+    // Repeating the shortcut must not replace a name already being entered.
+    cx.simulate_keystrokes(window.into(), "n cmd-n");
+    window
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(
+                workspace
+                    .file_prompt
+                    .as_ref()
+                    .unwrap()
+                    .input
+                    .read(cx)
+                    .text(),
+                "n"
+            );
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "escape");
+    select(cx, window, &source);
+    cx.simulate_keystrokes(window.into(), "cmd-n");
+    enter_name(cx, window, "new.txt");
+    assert!(dir.path().join("new.txt").is_file());
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "original");
+    window
+        .update(cx, |workspace, _, cx| {
+            let old = workspace.panes[&workspace.active_pane]
+                .tabs
+                .iter()
+                .find(|tab| tab.path == source)
+                .unwrap();
+            assert!(old.view.is_dirty(cx));
+        })
+        .unwrap();
+    close(cx, window);
+}

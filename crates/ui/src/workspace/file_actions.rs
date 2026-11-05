@@ -127,6 +127,20 @@ fn name_error(name: &str, folder: bool) -> Option<&'static str> {
 }
 
 impl Workspace {
+    pub(super) fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_busy || self.close_prompt || self.file_prompt.is_some() {
+            return;
+        }
+        let Some(root) = self.root.clone() else {
+            self.show_notice("Open a folder to create a new file.", cx);
+            return;
+        };
+        self.close_quick_open(window, cx);
+        self.dismiss_tab_menu(window, cx);
+        self.dismiss_file_menu(window, cx);
+        self.sidebar = Sidebar::Files;
+        self.show_file_prompt(root, PromptKind::NewFile, window, cx);
+    }
     pub(super) fn file_action(
         &mut self,
         action: FileAction,

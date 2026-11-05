@@ -38,7 +38,7 @@ const ITEMS: [(Command, &str, &str); 9] = [
 ];
 
 const BACKGROUND_ITEMS: [(Command, &str, &str); 3] = [
-    (Command::CreateFile, "New File", ""),
+    (Command::CreateFile, "New File", "⌘N"),
     (Command::CreateFolder, "New Folder", ""),
     (Command::PasteInto, "Paste File", "⌘V"),
 ];
@@ -134,6 +134,10 @@ impl Workspace {
     fn file_menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         window.prevent_default();
+        if event.keystroke.modifiers.platform && event.keystroke.key == "n" {
+            self.new_file(&NewFile, window, cx);
+            return;
+        }
         let Some(menu) = &self.file_menu else { return };
         let items = menu.items();
         if event.keystroke.modifiers.platform {
