@@ -1,4 +1,5 @@
 use super::*;
+use crate::file_tree::FileAction;
 use gpui::{ClipboardItem, KeyDownEvent, anchored};
 
 pub(super) struct FileMenu {
@@ -14,9 +15,21 @@ enum CopyPath {
     Absolute,
     Relative,
 }
-const ITEMS: [(CopyPath, &str); 2] = [
-    (CopyPath::Absolute, "Copy Path"),
-    (CopyPath::Relative, "Copy Relative Path"),
+#[derive(Clone, Copy)]
+enum Command {
+    File(FileAction),
+    Path(CopyPath),
+}
+const ITEMS: [(Command, &str, &str); 9] = [
+    (Command::File(FileAction::Duplicate), "Duplicate", ""),
+    (Command::File(FileAction::Copy), "Copy", "⌘C"),
+    (Command::File(FileAction::Cut), "Cut", "⌘X"),
+    (Command::File(FileAction::Paste), "Paste", "⌘V"),
+    (Command::File(FileAction::Rename), "Rename…", "F2"),
+    (Command::File(FileAction::Move), "Move…", ""),
+    (Command::File(FileAction::Trash), "Delete", "⌘⌫"),
+    (Command::Path(CopyPath::Absolute), "Copy Path", ""),
+    (Command::Path(CopyPath::Relative), "Copy Relative Path", ""),
 ];
 
 impl CopyPath {
@@ -65,32 +78,67 @@ impl Workspace {
         }
     }
 
-    fn copy_file_path(&mut self, action: CopyPath, window: &mut Window, cx: &mut Context<Self>) {
+    fn file_menu_enabled(&self, command: Command, cx: &App) -> bool {
+        match command {
+            Command::Path(_) => true,
+            Command::File(FileAction::Paste) => !self.file_busy && Self::can_paste_file(cx),
+            Command::File(_) => !self.file_busy,
+        }
+    }
+    fn file_menu_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.file_menu_enabled(command, cx) {
+            return;
+        }
         let Some(menu) = &self.file_menu else { return };
-        // Capture the right-clicked path, not the active tab or a mutable tree row index.
-        let text = action.text(&menu.path, self.root.as_deref());
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        let path = menu.path.clone();
         self.dismiss_file_menu(window, cx);
+        match command {
+            Command::Path(action) => cx.write_to_clipboard(ClipboardItem::new_string(
+                action.text(&path, self.root.as_deref()),
+            )),
+            Command::File(action) => self.file_action_at(action, path, window, cx),
+        }
     }
 
     fn file_menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         window.prevent_default();
+        if event.keystroke.modifiers.platform {
+            let index = match event.keystroke.key.as_str() {
+                "c" => 1,
+                "x" => 2,
+                "v" => 3,
+                "backspace" => 6,
+                _ => return,
+            };
+            self.file_menu_command(ITEMS[index].0, window, cx);
+            return;
+        }
         match event.keystroke.key.as_str() {
             "escape" => self.dismiss_file_menu(window, cx),
             "enter" | "space" => {
                 if let Some(index) = self.file_menu.as_ref().and_then(|menu| menu.selected) {
-                    self.copy_file_path(ITEMS[index].0, window, cx);
+                    self.file_menu_command(ITEMS[index].0, window, cx);
                 }
             }
             "up" | "down" => {
+                let enabled: Vec<_> = ITEMS
+                    .iter()
+                    .map(|(command, _, _)| self.file_menu_enabled(*command, cx))
+                    .collect();
                 if let Some(menu) = &mut self.file_menu {
-                    menu.selected = Some(
-                        menu.selected
-                            .map_or(if event.keystroke.key == "down" { 0 } else { 1 }, |index| {
-                                1 - index
-                            }),
-                    );
+                    let down = event.keystroke.key == "down";
+                    let count = ITEMS.len();
+                    let current = menu.selected.unwrap_or(if down { count - 1 } else { 0 });
+                    menu.selected = (1..=count)
+                        .map(|step| {
+                            if down {
+                                (current + step) % count
+                            } else {
+                                (current + count - step) % count
+                            }
+                        })
+                        .find(|&index| enabled[index]);
                     cx.notify();
                 }
             }
@@ -114,7 +162,7 @@ impl Workspace {
                         .id("file-context-menu")
                         .track_focus(&menu.focus)
                         .occlude()
-                        .w(px(200.))
+                        .w(px(240.))
                         .p_1()
                         .flex()
                         .flex_col()
@@ -125,30 +173,37 @@ impl Workspace {
                         .border_color(theme.border)
                         .rounded_md()
                         .shadow_lg()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                         .on_mouse_down_out(
                             cx.listener(|this, _, window, cx| this.dismiss_file_menu(window, cx)),
                         )
                         .on_key_down(cx.listener(Self::file_menu_key))
-                        .children(
-                            ITEMS
-                                .into_iter()
-                                .enumerate()
-                                .map(|(index, (action, label))| {
-                                    div()
-                                        .id(("file-menu-item", index))
-                                        .px_3()
-                                        .py_1()
-                                        .rounded_sm()
-                                        .child(label)
-                                        .cursor_pointer()
-                                        .when(selected == Some(index), |item| item.bg(theme.border))
-                                        .hover(|item| item.bg(theme.border))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            cx.stop_propagation();
-                                            this.copy_file_path(action, window, cx);
-                                        }))
-                                }),
-                        ),
+                        .children(ITEMS.into_iter().enumerate().map(
+                            |(index, (action, label, shortcut))| {
+                                let enabled = self.file_menu_enabled(action, cx);
+                                div()
+                                    .id(("file-menu-item", index))
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .when(index == 4 || index == 7, |item| {
+                                        item.mt_1().border_t_1().border_color(theme.border)
+                                    })
+                                    .flex()
+                                    .justify_between()
+                                    .child(label)
+                                    .child(div().text_color(theme.text_muted).child(shortcut))
+                                    .when(!enabled, |item| item.opacity(0.5))
+                                    .cursor_pointer()
+                                    .when(selected == Some(index), |item| item.bg(theme.border))
+                                    .hover(|item| item.bg(theme.border))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.file_menu_command(action, window, cx);
+                                    }))
+                            },
+                        )),
                 )
                 .into_any_element(),
         )

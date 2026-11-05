@@ -36,6 +36,7 @@ use crate::{
 
 mod tab_menu;
 use tab_menu::TabMenu;
+mod file_actions;
 mod file_menu;
 use file_menu::FileMenu;
 mod editing;
@@ -133,6 +134,8 @@ pub struct Workspace {
     picker: Option<(Entity<Picker>, Subscription)>,
     tab_menu: Option<TabMenu>,
     file_menu: Option<FileMenu>,
+    file_prompt: Option<file_actions::FilePrompt>,
+    file_busy: bool,
     outline: Outline,
     open_options: OpenOptions,
     text_style: TextStyle,
@@ -277,7 +280,7 @@ impl Workspace {
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
                     FileTreeEvent::Open { path, preview } => {
                         this.record_jump(cx);
-                        this.open_with_kind(
+                        this.open_with_focus(
                             path.clone(),
                             None,
                             if *preview {
@@ -285,10 +288,12 @@ impl Workspace {
                             } else {
                                 OpenKind::Keep
                             },
+                            !preview,
                             window,
                             cx,
                         );
                     }
+                    FileTreeEvent::Action(action) => this.file_action(*action, window, cx),
                     FileTreeEvent::ContextMenu { path, position } => {
                         this.open_file_menu(path.clone(), *position, window, cx);
                     }
@@ -315,6 +320,8 @@ impl Workspace {
             picker: None,
             tab_menu: None,
             file_menu: None,
+            file_prompt: None,
+            file_busy: false,
             outline: Outline::default(),
             open_options: OpenOptions {
                 large_file_threshold: settings.limits.large_file_threshold.0,
@@ -393,6 +400,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_with_focus(path, target, kind, true, window, cx);
+    }
+
+    fn open_with_focus(
+        &mut self,
+        path: PathBuf,
+        target: Option<Target>,
+        kind: OpenKind,
+        focus_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let pane = self.active_pane;
         if let Some(index) = self.panes[&pane]
             .tabs
@@ -404,7 +423,7 @@ impl Workspace {
             if kind == OpenKind::Keep {
                 state.tabs[index].preview = false;
             }
-            self.activate(pane, index, window, cx);
+            self.activate_with_focus(pane, index, focus_editor, window, cx);
             let view = self.panes[&pane].tabs[index].view.clone();
             scroll_to(&view, target, cx);
             return;
@@ -414,7 +433,9 @@ impl Workspace {
         if target.is_some() {
             pending.cancel(&path);
         }
-        let Some(request) = pending.begin(&path, kind) else {
+        let request = pending.begin(&path, kind);
+        pending.set_focus(&path, focus_editor);
+        let Some(request) = request else {
             return;
         };
         let options = self.open_options;
@@ -478,6 +499,10 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let opened = opening.await;
             this.update_in(cx, |this, window, cx| {
+                let focus_editor = this
+                    .panes
+                    .get(&pane)
+                    .is_some_and(|pane| pane.opening.focus_editor(&path));
                 let Some((kind, activate)) = this
                     .panes
                     .get_mut(&pane)
@@ -590,6 +615,7 @@ impl Workspace {
                                 pane,
                                 kind,
                                 activate,
+                                focus_editor,
                             },
                             window,
                             cx,
@@ -630,7 +656,13 @@ impl Workspace {
                 self.panes.get_mut(&destination.pane).unwrap().tabs[index].preview = false;
             }
             if destination.activate && self.active_pane == destination.pane {
-                self.activate(destination.pane, index, window, cx);
+                self.activate_with_focus(
+                    destination.pane,
+                    index,
+                    destination.focus_editor,
+                    window,
+                    cx,
+                );
             }
             cx.notify();
             return;
@@ -715,22 +747,36 @@ impl Workspace {
             pane.active = Some(index);
         }
         if destination.activate && self.active_pane == pane_id {
-            self.activate(pane_id, index, window, cx);
+            self.activate_with_focus(pane_id, index, destination.focus_editor, window, cx);
         } else {
             cx.notify();
         }
     }
 
     fn activate(&mut self, pane: usize, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.tab_menu = None;
-        self.file_menu = None;
+        self.activate_with_focus(pane, index, true, window, cx);
+    }
+    fn activate_with_focus(
+        &mut self,
+        pane: usize,
+        index: usize,
+        focus_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if focus_editor {
+            self.tab_menu = None;
+            self.file_menu = None;
+        }
         let Some(tab) = self.panes.get_mut(&pane).and_then(|pane_state| {
             pane_state.active = Some(index);
             pane_state.tabs.get(index)
         }) else {
             return;
         };
-        tab.view.focus_handle(cx).focus(window);
+        if focus_editor {
+            tab.view.focus_handle(cx).focus(window);
+        }
         let path = tab.path.clone();
         self.recent.retain(|recent| *recent != path);
         self.recent.push(path);
@@ -738,7 +784,9 @@ impl Workspace {
             self.recent.remove(0);
         }
         self.active_pane = pane;
-        self.sync_tree_selection(cx);
+        if focus_editor {
+            self.sync_tree_selection(cx);
+        }
         cx.notify();
     }
 
@@ -1012,8 +1060,11 @@ impl Workspace {
         )
     }
 
-    fn show_files(&mut self, _: &ShowFiles, _: &mut Window, cx: &mut Context<Self>) {
+    fn show_files(&mut self, _: &ShowFiles, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar = Sidebar::Files;
+        if let Some(tree) = &self.tree {
+            tree.focus_handle(cx).focus(window);
+        }
         cx.notify();
     }
 
@@ -1413,6 +1464,7 @@ impl Workspace {
                     pane: new_pane,
                     kind: OpenKind::Keep,
                     activate: true,
+                    focus_editor: true,
                 },
                 window,
                 cx,
@@ -1861,6 +1913,7 @@ impl Render for Workspace {
             }))
             .children(self.render_tab_menu(theme, cx))
             .children(self.render_file_menu(theme, cx))
+            .children(self.render_file_prompt(theme, cx))
     }
 }
 

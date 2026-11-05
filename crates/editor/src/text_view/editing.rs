@@ -402,7 +402,12 @@ impl TextView {
         cx.notify();
     }
     fn queue_input(&mut self, input: Input, cx: &mut Context<Self>) {
-        if !self.is_editing() {
+        if !self.is_editing()
+            || self
+                .editing
+                .as_ref()
+                .is_some_and(|editing| editing.document.read(cx).file_operation_pending())
+        {
             return;
         }
         self.reset_caret_blink(cx);

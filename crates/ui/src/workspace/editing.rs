@@ -4,6 +4,7 @@ use std::time::Duration;
 
 #[derive(Clone)]
 pub(super) enum CloseTarget {
+    FileOperation(super::file_actions::Operation),
     Tabs {
         pane: usize,
         paths: Vec<PathBuf>,
@@ -61,6 +62,10 @@ impl Workspace {
     }
     fn close_documents(&self, target: &CloseTarget, cx: &App) -> Vec<Entity<EditingDocument>> {
         let mut documents = match target {
+            CloseTarget::FileOperation(operation) => EditingDocument::all(cx)
+                .into_iter()
+                .filter(|doc| doc.read(cx).path().starts_with(&operation.source))
+                .collect(),
             CloseTarget::Quit => EditingDocument::all(cx),
             CloseTarget::Window => self
                 .panes
@@ -92,11 +97,20 @@ impl Workspace {
             return;
         }
         let documents = self.close_documents(&target, cx);
-        if documents
-            .iter()
-            .any(|doc| doc.read(cx).has_pending_input() || doc.read(cx).is_saving())
-        {
-            self.show_notice("Finish the pending edit or save before closing.", cx);
+        if documents.iter().any(|doc| {
+            doc.read(cx).has_pending_input()
+                || doc.read(cx).is_saving()
+                || (matches!(target, CloseTarget::FileOperation(_)) && doc.read(cx).is_preparing())
+                || doc.read(cx).file_operation_pending()
+        }) {
+            self.show_notice(
+                if matches!(target, CloseTarget::FileOperation(_)) {
+                    "Finish the pending edit, save or file operation first."
+                } else {
+                    "Finish the pending edit or save before closing."
+                },
+                cx,
+            );
             return;
         }
         let dirty: Vec<_> = documents
@@ -111,7 +125,11 @@ impl Workspace {
         self.close_prompt = true;
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
-            "Save changes before closing?",
+            if matches!(target, CloseTarget::FileOperation(_)) {
+                "Save changes before changing this file?"
+            } else {
+                "Save changes before closing?"
+            },
             Some("Discarding will lose the unsaved changes."),
             &["Save", "Cancel", "Discard"],
             cx,
@@ -173,6 +191,9 @@ impl Workspace {
     }
     fn finish_close(&mut self, target: CloseTarget, window: &mut Window, cx: &mut Context<Self>) {
         match target {
+            CloseTarget::FileOperation(operation) => {
+                self.start_file_operation(operation, window, cx)
+            }
             CloseTarget::Quit => quit(cx),
             CloseTarget::Window => window.remove_window(),
             CloseTarget::Tabs {

@@ -5,6 +5,11 @@ Text and code files open ready to edit. Markdown opens in Preview; choosing
 mode, including after Escape or saving. Read-only files and binary/hex views
 remain non-editable. Write-access checks and preparation run on a worker.
 
+A single click in the navigation pane previews a file while keeping focus on
+the selected file. Click the editor, double-click the file or press Enter to
+focus the editor. See [file management](file-management.md) for navigation-pane
+Copy/Cut/Paste, Rename, Move and Delete shortcuts.
+
 The status bar shows **EDIT**, and an unsaved tab gets a dot. A modified preview
 tab becomes permanent. Saving is explicit: press **Cmd-S**. There is no autosave;
 typing, waiting, switching tabs and switching to Preview leave the disk file alone.

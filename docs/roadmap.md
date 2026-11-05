@@ -42,6 +42,9 @@ caret/selection, native input and composition, shared undo/redo, background save
 and dirty-file close guards. Markdown previews refresh from unsaved snapshots,
 with debounced updates in visible split panes. Existing read-mode opening keeps its original path;
 core performance diagnostics remain separate from the accepted baselines.
+[File management](file-management.md) adds Duplicate, Copy/Cut/Paste, Rename,
+Move and system-Bin deletion, with separate navigation-pane focus and guards
+for unsaved edits.
 
 Next, in order:
 

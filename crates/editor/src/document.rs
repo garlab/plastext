@@ -25,6 +25,7 @@ pub struct EditingDocument {
     options: OpenOptions,
     cancel: Arc<AtomicBool>,
     task: Option<Task<()>>,
+    file_operation: bool,
 }
 impl EditingDocument {
     pub fn path(&self) -> &std::path::Path {
@@ -64,6 +65,7 @@ impl EditingDocument {
                 options,
                 cancel: Arc::new(AtomicBool::new(false)),
                 task: None,
+                file_operation: false,
             }
         });
         let documents = &mut cx.global_mut::<Documents>().0;
@@ -94,6 +96,16 @@ impl EditingDocument {
     pub fn has_pending_input(&self) -> bool {
         self.pending_inputs != 0
     }
+    pub fn file_operation_pending(&self) -> bool {
+        self.file_operation
+    }
+    pub fn is_preparing(&self) -> bool {
+        self.preparing
+    }
+    pub fn set_file_operation_pending(&mut self, pending: bool, cx: &mut Context<Self>) {
+        self.file_operation = pending;
+        cx.notify();
+    }
     pub fn all(cx: &App) -> Vec<Entity<Self>> {
         cx.try_global::<Documents>()
             .map(|documents| {
@@ -120,6 +132,9 @@ impl EditingDocument {
         self.active
     }
     pub fn begin_edit(&mut self, offset: u64, cx: &mut Context<Self>) {
+        if self.file_operation {
+            return;
+        }
         if self.file.is_some() {
             self.active = true;
             cx.notify();
@@ -201,6 +216,9 @@ impl EditingDocument {
         cx.notify();
     }
     pub fn save(&mut self, cx: &mut Context<Self>) {
+        if self.file_operation {
+            return;
+        }
         let Some(job) = self
             .file
             .as_mut()

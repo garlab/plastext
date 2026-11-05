@@ -43,12 +43,14 @@ pub(super) struct Destination {
     pub pane: usize,
     pub kind: OpenKind,
     pub activate: bool,
+    pub focus_editor: bool,
 }
 
 #[derive(Clone, Copy)]
 struct Pending {
     id: u64,
     kind: OpenKind,
+    focus_editor: bool,
 }
 
 /// Per-pane requests: obsolete previews cannot win a race with newer clicks.
@@ -73,7 +75,14 @@ impl Openings {
         }
         self.next += 1;
         let id = self.next;
-        self.pending.insert(path.to_owned(), Pending { id, kind });
+        self.pending.insert(
+            path.to_owned(),
+            Pending {
+                id,
+                kind,
+                focus_editor: true,
+            },
+        );
         self.latest = Some(id);
         Some(id)
     }
@@ -90,6 +99,20 @@ impl Openings {
 
     pub fn cancel(&mut self, path: &Path) {
         self.pending.remove(path);
+    }
+
+    pub fn set_focus(&mut self, path: &Path, focus_editor: bool) {
+        if let Some(pending) = self.pending.get_mut(path) {
+            pending.focus_editor = focus_editor;
+        }
+    }
+    pub fn focus_editor(&self, path: &Path) -> bool {
+        self.pending
+            .get(path)
+            .is_some_and(|pending| pending.focus_editor)
+    }
+    pub fn cancel_under(&mut self, path: &Path) {
+        self.pending.retain(|pending, _| !pending.starts_with(path));
     }
 
     /// Explicit tab selection/closure supersedes outstanding preview navigation.

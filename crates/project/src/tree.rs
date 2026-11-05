@@ -164,6 +164,15 @@ impl FileTree {
     pub fn is_loaded(&self, dir: &Path) -> bool {
         self.children.contains_key(dir)
     }
+    pub fn expand(&mut self, dir: &Path) {
+        self.expanded.insert(dir.to_owned());
+        self.rebuild();
+    }
+    pub fn forget(&mut self, path: &Path) {
+        self.children.retain(|dir, _| !dir.starts_with(path));
+        self.expanded.retain(|dir| !dir.starts_with(path));
+        self.rebuild();
+    }
 
     /// Records the listing of `dir`, as returned by [`read_dir`].
     pub fn set_children(&mut self, dir: &Path, entries: Vec<DirEntry>) {
