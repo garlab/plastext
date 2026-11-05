@@ -23,6 +23,10 @@ edit mode. Backspace/Delete move through complete grapheme clusters. Return
 uses the document's preferred line ending; Tab inserts a tab. Native input uses
 UTF-16 coordinates and supports marked text for IME composition.
 
+Keyboard movement and typing scroll just enough to keep three lines of context
+above and below the caret. Short panes reduce that margin automatically. Clicking
+or selecting text with the mouse leaves the viewport in place.
+
 Split panes share content, saved state and undo history, with independent
 selections and scroll positions. Find searches the current unsaved version.
 Markdown Preview reads the unsaved version. Switching back to Preview refreshes

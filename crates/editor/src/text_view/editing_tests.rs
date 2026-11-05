@@ -239,6 +239,91 @@ fn dispatched_keys_use_edit_context_and_reveal_the_caret(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn caret_scrolls_one_row_at_a_time_with_space_at_both_edges(cx: &mut TestAppContext) {
+    let text: String = (0..100).map(|line| format!("line {line}\n")).collect();
+    let (_dir, view, _other) = setup(cx, text.as_bytes(), false);
+    cx.update(|cx| view.update(cx, |view, _| view.page_rows = 12));
+    let top_line = |cx: &TestAppContext| {
+        cx.update(|cx| {
+            let view = view.read(cx);
+            view.source.line_at(&view.index, view.top).unwrap().unwrap()
+        })
+    };
+    for line in 1u64..=45 {
+        send(cx, &view, Input::Vertical(1, false));
+        assert_eq!(top_line(cx), line.saturating_sub(8));
+    }
+    let mut top = top_line(cx);
+    for line in (0u64..45).rev() {
+        send(cx, &view, Input::Vertical(-1, true));
+        top = top.min(line.saturating_sub(3));
+        assert_eq!(top_line(cx), top);
+    }
+    // Large jumps include the empty EOF row, and typing there follows it too.
+    send(cx, &view, Input::DocumentEdge(true, false));
+    assert_eq!(top_line(cx), 92);
+    send(cx, &view, Input::Newline);
+    assert_eq!(top_line(cx), 93);
+    send(cx, &view, Input::DocumentEdge(false, false));
+    assert_eq!(top_line(cx), 0);
+}
+
+#[gpui::test]
+fn caret_scrolling_preserves_wheel_offsets_and_scales_to_short_panes(cx: &mut TestAppContext) {
+    let text = "line\n".repeat(100);
+    let (_dir, view, _other) = setup(cx, text.as_bytes(), false);
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.page_rows = 12;
+            view.top = 50;
+            view.top_offset = px(7.);
+        });
+    });
+    // Pointer selection at the bottom must not scroll text away from the mouse.
+    send(cx, &view, Input::Selection(BufferSelection::caret(100)));
+    cx.update(|cx| {
+        assert_eq!(view.read(cx).top, 50);
+        assert_eq!(view.read(cx).top_offset, px(7.));
+    });
+    send(cx, &view, Input::Selection(BufferSelection::caret(80)));
+    send(cx, &view, Input::Vertical(-1, false));
+    cx.update(|cx| {
+        assert_eq!(view.read(cx).top, 50);
+        assert_eq!(view.read(cx).top_offset, px(7.));
+    });
+    for rows in 1..=7 {
+        cx.update(|cx| view.update(cx, |view, _| view.page_rows = rows));
+        send(cx, &view, Input::DocumentEdge(true, false));
+        cx.update(|cx| {
+            let view = view.read(cx);
+            let top = view.source.line_at(&view.index, view.top).unwrap().unwrap();
+            assert!(top <= 100 && 100 - top < rows as u64);
+            assert_eq!(view.top_offset, px(0.));
+        });
+        send(cx, &view, Input::DocumentEdge(false, false));
+        cx.update(|cx| assert_eq!(view.read(cx).top, 0));
+    }
+}
+
+#[gpui::test]
+fn replacing_text_above_the_viewport_keeps_top_on_a_row_boundary(cx: &mut TestAppContext) {
+    let (_dir, view, _other) = setup(cx, "line\n".repeat(100).as_bytes(), false);
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.page_rows = 12;
+            view.top = 50;
+        });
+    });
+    send(cx, &view, Input::Selection(BufferSelection::new(0, 95)));
+    send(cx, &view, insert(&"abcdef\n".repeat(14)));
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.top, 49);
+        assert_eq!(view.source.row_start(view.top).unwrap(), view.top);
+    });
+}
+
+#[gpui::test]
 fn save_completion_keeps_later_typing_dirty_and_conflicts_keep_disk(cx: &mut TestAppContext) {
     let (dir, a, b) = setup(cx, b"abc", false);
     let path = dir.path().join("edit.txt");

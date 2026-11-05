@@ -40,6 +40,7 @@ actions!(
     ]
 );
 const CONTEXT: &str = "EditingText";
+const CARET_SCROLL_MARGIN: usize = 3;
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
@@ -679,9 +680,13 @@ impl TextView {
             let marked = self.editing.as_ref().unwrap().marked.clone();
             self.sync_editing(cx);
             self.editing.as_mut().unwrap().marked = marked;
-            self.editing.as_mut().unwrap().reveal_caret = true;
-            if let Some(selection) = self.selection {
-                self.jump(Jump::Reveal(selection.head), cx);
+            // Clicking or dragging within the viewport must not move the text
+            // away from the pointer. Keyboard movement uses a small scroll margin.
+            if !matches!(input, Input::Selection(_)) {
+                self.editing.as_mut().unwrap().reveal_caret = true;
+                if let Some(selection) = self.selection {
+                    self.jump(Jump::Caret(selection.head), cx);
+                }
             }
         }
         result
@@ -719,6 +724,36 @@ impl TextView {
                 cx.notify();
             });
         }
+    }
+    pub(super) fn caret_scroll_target(
+        &self,
+        offset: u64,
+    ) -> Result<ScrollPosition<u64>, ReadError> {
+        // Clamp the current top between the earliest and latest rows that keep
+        // the caret inside the margins. Only one viewport of rows is visited,
+        // even for a jump to the other end of a large file.
+        let margin = CARET_SCROLL_MARGIN.min(self.page_rows.saturating_sub(1) / 2);
+        let mut earliest = self.source.row_start(offset)?;
+        let mut latest = earliest;
+        for preceding in 1..=self.page_rows.saturating_sub(margin + 1) {
+            let Some(previous) = self.source.previous(&self.folds, earliest)? else {
+                break;
+            };
+            earliest = previous;
+            if preceding <= margin {
+                latest = previous;
+            }
+        }
+        // A replacement may have moved line boundaries before the old top.
+        let top = self.source.row_start(self.top)?.clamp(earliest, latest);
+        // Preserve fractional wheel scrolling while the caret is safely inside
+        // the margins. At the upper margin its row must be fully visible.
+        let offset = if top == self.top && top < latest {
+            self.top_offset
+        } else {
+            px(0.)
+        };
+        Ok(ScrollPosition { top, offset })
     }
     pub(super) fn reveal_caret_x(&mut self, width: Pixels) {
         if !self

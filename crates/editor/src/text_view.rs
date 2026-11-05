@@ -228,6 +228,8 @@ enum Jump {
     Offset(u64),
     /// Scroll the offset into view, a third of the way down, if it's not visible.
     Reveal(u64),
+    /// Keep an editing caret inside the viewport's scroll margin.
+    Caret(u64),
     /// Show the last page.
     End,
 }
@@ -1187,13 +1189,13 @@ impl TextView {
         let Some(jump) = self.pending_jump else {
             return;
         };
-        if let Jump::Offset(offset) | Jump::Reveal(offset) = jump {
+        if let Jump::Offset(offset) | Jump::Reveal(offset) | Jump::Caret(offset) = jump {
             self.folds.reveal(offset);
         }
         match self.jump_target(jump) {
-            Ok(top) => {
-                self.top = top;
-                self.top_offset = px(0.);
+            Ok(position) => {
+                self.top = position.top;
+                self.top_offset = position.offset;
                 self.pending_jump = None;
             }
             Err(err) => {
@@ -1205,12 +1207,16 @@ impl TextView {
         }
     }
 
-    fn jump_target(&self, jump: Jump) -> Result<u64, ReadError> {
-        match jump {
-            Jump::Offset(offset) => self.source.row_start(offset),
+    fn jump_target(&self, jump: Jump) -> Result<ScrollPosition<u64>, ReadError> {
+        let top = match jump {
+            Jump::Caret(offset) => return self.caret_scroll_target(offset),
+            Jump::Offset(offset) => self.source.row_start(offset)?,
             Jump::Reveal(offset) => {
                 if (self.top..self.top + self.visible_len.saturating_sub(1)).contains(&offset) {
-                    return Ok(self.top);
+                    return Ok(ScrollPosition {
+                        top: self.top,
+                        offset: self.top_offset,
+                    });
                 }
                 let mut top = self.source.row_start(offset)?;
                 for _ in 0..self.page_rows / 3 {
@@ -1219,7 +1225,7 @@ impl TextView {
                         None => break,
                     }
                 }
-                Ok(top)
+                top
             }
             Jump::End => {
                 let last = self.source.len().saturating_sub(1);
@@ -1233,9 +1239,13 @@ impl TextView {
                         None => break,
                     }
                 }
-                Ok(top)
+                top
             }
-        }
+        };
+        Ok(ScrollPosition {
+            top,
+            offset: px(0.),
+        })
     }
 
     fn handle_read_error(&mut self, err: ReadError, cx: &mut Context<Self>) {
