@@ -1,7 +1,7 @@
 # Shared rendering release checks
 
 `document-graphics` is maintained in its own repository and published on
-crates.io from version tags. Plastext pins published 0.1.5; `katex-native` also
+crates.io from version tags. Plastext pins published 0.1.7; `katex-native` also
 comes from the registry. Use a
 [local override](local-development.md#shared-rendering-libraries) only when
 reviewing changes before a library release.
@@ -52,7 +52,8 @@ Keep generated PNGs, timing samples and other review artifacts in ignored
 
 ## Manual checks
 
-In Plastext, open `docs/fixtures/mermaid.md` and `docs/fixtures/m2.md` using the
+In Plastext, open `docs/fixtures/mermaid.md`, `docs/fixtures/gantt.md`,
+`docs/fixtures/gantt-time.md` and `docs/fixtures/m2.md` using the
 isolated development launch described in [local development](local-development.md#run-development-independently).
 
 - Check diagrams and math in light and dark appearances, including labels,

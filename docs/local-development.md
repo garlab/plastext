@@ -61,7 +61,7 @@ crate, maintained in [its own repository](https://github.com/garlab/document-gra
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
 
-Plastext pins published `document-graphics` 0.1.5 with `sgf`, `chess` and
+Plastext pins published `document-graphics` 0.1.7 with `sgf`, `chess` and
 `image-native`. The Mermaid backend and math dependencies also resolve from
 crates.io. Normal builds need no local dependency overrides.
 

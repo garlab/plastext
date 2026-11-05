@@ -17,14 +17,28 @@ mermaid = false
 
 ## Supported syntax
 
-The native subset covers flowcharts (`flowchart` / `graph`), sequence, class and state diagrams, ER relationships and attribute tables, pie charts, mind maps, timelines without sections, user journeys and quadrant charts. Rendering uses [document-graphics](https://crates.io/crates/document-graphics) and its [Mermaid renderer fork](https://crates.io/crates/document-graphics-mermaid), with bundled KaTeX/Noto Sans fonts and resvg. No browser, Node installation, external command, download or network access is needed.
+The native subset covers flowcharts (`flowchart` / `graph`), sequence, class and state diagrams, ER relationships and attribute tables, pie charts, mind maps, timelines without sections, user journeys, quadrant charts and Gantt schedules. Rendering uses [document-graphics](https://crates.io/crates/document-graphics) and its [Mermaid renderer fork](https://crates.io/crates/document-graphics-mermaid), with bundled KaTeX/Noto Sans fonts and resvg. No browser, Node installation, external command, download or network access is needed.
 
 This is partial Mermaid compatibility. Labels support Latin (including accents), Greek and Cyrillic. Missing glyphs such as CJK/emoji, timeline sections, other diagram families, embedded icons, clickable nodes, front matter, initialization directives, invalid syntax and oversized diagrams retain their complete source. Layout can differ from Mermaid.js. The source is never rewritten.
 
+### Gantt schedules
+
+Gantt supports calendar dates, clock/date-time formats down to milliseconds,
+explicit end times, durations, dependencies, sections, combined status tags and
+milestones. Weekend and holiday exclusions require dated input. Clock-only
+schedules can cross midnight using durations. No current-date marker is drawn.
+See the [calendar fixture](fixtures/gantt.md) and [time fixture](fixtures/gantt-time.md).
+
+Timezones, unknown or cyclic dependencies, unsupported scheduling options and
+calendar exclusions in clock-only schedules retain source. The native subset is
+limited to 128 tasks, 16 sections, 128 excluded dates, 1 KiB labels/titles,
+128-byte axis formats and a 36,600-day task/chart span, within the general diagram
+limits below.
+
 ## Resource bounds
 
-Plastext uses the published `document-graphics` 0.1.3 and
-`document-graphics-mermaid` 0.1.3 releases for the limits below. No local
+Plastext uses the published `document-graphics` 0.1.7 and
+`document-graphics-mermaid` 0.2.0 releases for the limits below. No local
 dependency overrides are needed.
 
 The Markdown parser keeps diagram fences whole up to 16 KiB / 1,024 lines. Larger fences remain bounded, virtualized source chunks; no partial diagram is rendered. Ordinary code fences keep their existing 32-line chunks.

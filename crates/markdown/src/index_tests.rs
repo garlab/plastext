@@ -19,6 +19,8 @@ fn compact_records_and_small_document_parity() {
         include_str!("../../../docs/fixtures/safe-html.md"),
         include_str!("../../../docs/fixtures/math-headings.md"),
         include_str!("../../../docs/fixtures/sgf.md"),
+        include_str!("../../../docs/fixtures/gantt.md"),
+        include_str!("../../../docs/fixtures/gantt-time.md"),
         "# Title\n\n**Hello** *world* &amp; café\n\n> quote\n>\n> - nested\n>   - deeper\n\n---\n",
         "---\ntitle: café\nitems: [one, two]\n---\n# Body\n\n- [x] done\n- next\n\n```rust\nlet x = 42;\n```\n",
         "+++\nname = 'test'\n[table]\na = 1\n+++\n# Body\n\nTerm\n: definition\n",

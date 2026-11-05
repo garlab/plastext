@@ -65,6 +65,46 @@ fn main() {
             "quadrantChart\n title Work\n x-axis Low effort --> High effort\n y-axis Low value --> High value\n Task A: [0.2, 0.8]\n Task B: [0.8, 0.3]",
         ),
     ];
+    let mut cases: Vec<_> = cases
+        .into_iter()
+        .map(|(name, source)| (name.to_owned(), source.to_owned()))
+        .collect();
+    let mut fallbacks = Vec::new();
+    // Keep the Markdown examples on the same parser -> worker path as the app,
+    // including quoted fences and the deliberately unsupported final examples.
+    for (name, markdown, previews, rejected) in [
+        (
+            "gantt",
+            include_str!("../../../docs/fixtures/gantt.md"),
+            3,
+            2,
+        ),
+        (
+            "gantt-time",
+            include_str!("../../../docs/fixtures/gantt-time.md"),
+            4,
+            2,
+        ),
+    ] {
+        let document = plastext_markdown::parse(markdown);
+        let mut count = 0;
+        for block in &document.blocks {
+            if let plastext_markdown::BlockKind::Code {
+                language, first, ..
+            } = &block.kind
+            {
+                assert!(first, "{name}: chart source must remain whole");
+                assert_eq!(language, "mermaid");
+                if count < previews {
+                    cases.push((format!("{name}-{}", count + 1), block.text.clone()));
+                } else {
+                    fallbacks.push(block.text.clone());
+                }
+                count += 1;
+            }
+        }
+        assert_eq!(count, previews + rejected);
+    }
     let output = (std::env::args().nth(1).as_deref() == Some("--render-dir"))
         .then(|| std::env::args_os().nth(2).map(std::path::PathBuf::from))
         .flatten();
@@ -84,9 +124,9 @@ fn main() {
     for (name, source) in cases {
         for light in [false, true] {
             let start = Instant::now();
-            let p = mermaid::render(source, light, &cancel)
+            let p = mermaid::render(&source, light, &cancel)
                 .unwrap()
-                .expect(name);
+                .expect(&name);
             let elapsed = start.elapsed().as_secs_f64() * 1000.;
             times.push(elapsed);
             assert!(p.width as usize * p.height as usize <= document_graphics::MAX_PIXELS);
@@ -109,11 +149,14 @@ fn main() {
             );
         }
     }
-    assert!(
-        mermaid::render("gantt\nTask: 2025-01-01, 1d\n", false, &cancel)
-            .unwrap()
-            .is_none()
-    );
+    for source in fallbacks {
+        for light in [false, true] {
+            assert!(
+                mermaid::render(&source, light, &cancel).unwrap().is_none(),
+                "unsupported Gantt syntax must retain source: {source}"
+            );
+        }
+    }
     assert!(
         mermaid::render("flowchart LR\n A[中文]-->B\n", false, &cancel)
             .unwrap()

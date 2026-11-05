@@ -1,6 +1,6 @@
 # Shared image extraction
 
-Bounded image decoding lives in published `document-graphics` 0.1.5. Plastext
+Bounded image decoding moved into `document-graphics` in release 0.1.5. Plastext
 enables `sgf`, `chess` and `image-native`; mdviewer enables only `images`.
 Applications retain file-access policy, queues, caches,
 fitting, playback and idle retirement. No new crate or service was introduced.
@@ -79,9 +79,9 @@ requests now stop and reap the child before returning to a public caller. The
 portable API also enforces tiny output budgets for extremely narrow images.
 Native GUI zoom/playback interactions still need manual review.
 
-Both consumers pin published 0.1.5, with registry sources and checksums in their
-lockfiles. Normal builds need no local overrides. The Mermaid backend and math
-dependency versions are unchanged.
+The migration was validated with both consumers pinned to published 0.1.5,
+with registry sources and checksums in their lockfiles and no local overrides.
+The Mermaid backend and math dependency versions were unchanged at that stage.
 
 ## Private worker cleanup
 
