@@ -81,6 +81,12 @@ impl FileTreeView {
     pub fn selected(&self) -> Option<PathBuf> {
         self.selected.clone()
     }
+    pub fn is_directory(&self, path: &std::path::Path) -> bool {
+        self.tree
+            .rows()
+            .iter()
+            .any(|row| row.entry.path == path && row.entry.kind == EntryKind::Dir)
+    }
     pub fn selected_directory(&self) -> PathBuf {
         self.selected
             .as_ref()

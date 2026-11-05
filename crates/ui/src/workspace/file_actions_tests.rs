@@ -163,17 +163,8 @@ fn rename_dialog_cancels_safely_and_renames_open_files_after_explicit_save(
     cx.simulate_keystrokes(window.into(), "enter x");
     select(cx, window, &source);
     cx.simulate_keystrokes(window.into(), "f2");
-    window
-        .update(cx, |workspace, _, cx| {
-            workspace
-                .file_prompt
-                .as_ref()
-                .unwrap()
-                .input
-                .update(cx, |input, cx| input.set_text("new.rs", cx));
-        })
-        .unwrap();
-    cx.simulate_keystrokes(window.into(), "enter");
+    // Typing replaces only the selected stem, keeping the .rs extension.
+    cx.simulate_keystrokes(window.into(), "n e w enter");
     cx.simulate_prompt_answer("Save");
     cx.run_until_parked();
     cx.executor()
@@ -327,5 +318,70 @@ fn moving_folder_reopens_each_split_at_the_new_path(cx: &mut TestAppContext) {
             );
         })
         .unwrap();
+    close(cx, window);
+}
+
+#[test]
+fn rename_selection_keeps_extensions_and_selects_full_directory_names() {
+    for (name, directory, expected) in [
+        ("Café.md", false, "Café"),
+        ("archive.tar.gz", false, "archive.tar"),
+        (".gitignore", false, ".gitignore"),
+        ("README", false, "README"),
+        ("notes.v2", true, "notes.v2"),
+    ] {
+        assert_eq!(&name[rename_selection(name, directory)], expected);
+    }
+}
+
+#[gpui::test]
+fn rename_validation_stays_in_dialog_and_blocks_keyboard_and_button_submission(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("report.md");
+    std::fs::write(&source, "content").unwrap();
+    let window = open(cx, dir.path());
+    select(cx, window, &source);
+    cx.simulate_keystrokes(window.into(), "f2 cmd-a backspace");
+    for (name, message) in [
+        ("", "Enter a filename."),
+        ("nested/name.md", "Filenames cannot contain a slash (/)."),
+    ] {
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(name.into())));
+        cx.simulate_keystrokes(window.into(), "cmd-a cmd-v enter");
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let button = visual.debug_bounds("confirm-rename").unwrap();
+        visual.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+        window
+            .update(cx, |workspace, window, cx| {
+                let prompt = workspace
+                    .file_prompt
+                    .as_ref()
+                    .expect("invalid names must leave the dialog open");
+                assert_eq!(rename_error(prompt.input.read(cx).text()), Some(message));
+                assert!(prompt.input.focus_handle(cx).is_focused(window));
+                assert!(
+                    workspace.notice.is_none(),
+                    "validation belongs in the dialog"
+                );
+                assert!(!workspace.file_busy);
+            })
+            .unwrap();
+        assert!(source.exists());
+    }
+    // Select All still allows changing the extension; correcting input enables Rename.
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("notes.txt".into())));
+    cx.simulate_keystrokes(window.into(), "cmd-a cmd-v");
+    let mut visual = VisualTestContext::from_window(window.into(), cx);
+    let button = visual.debug_bounds("confirm-rename").unwrap();
+    visual.simulate_click(button.center(), Default::default());
+    cx.run_until_parked();
+    assert!(!source.exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
+        "content"
+    );
     close(cx, window);
 }

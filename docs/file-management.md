@@ -11,7 +11,7 @@ Right-click a file or folder for these actions:
 | Duplicate | Create a sibling named `name copy.ext`, adding a number if needed. |
 | Copy / Cut | Prepare the selected file or folder for Paste. Cut leaves the original in place until the move succeeds. |
 | Paste | Copy or move into the selected folder, or beside the selected file. |
-| Rename… | Enter a new filename. Escape cancels. |
+| Rename… | The filename stem is selected initially; the extension remains editable. Invalid names show an inline message and disable Rename. Escape cancels. |
 | Move… | Choose a destination folder. |
 | Delete | Move to the system Bin. There is no permanent-delete fallback. |
 | Copy Path / Copy Relative Path | Copy the absolute path or the path relative to the project folder. |

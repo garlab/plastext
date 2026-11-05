@@ -98,7 +98,19 @@ impl TextInput {
 
     /// Selects all the text, so typing replaces it.
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
-        self.selected = 0..self.text.len();
+        self.select_range(0..self.text.len(), cx);
+    }
+
+    /// Selects a UTF-8 byte range, clamped to character boundaries in the text.
+    pub fn select_range(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let start = self
+            .text
+            .floor_char_boundary(range.start.min(self.text.len()));
+        let end = self
+            .text
+            .floor_char_boundary(range.end.min(self.text.len()))
+            .max(start);
+        self.selected = start..end;
         self.reversed = false;
         cx.notify();
     }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::file_tree::FileAction;
 use gpui::{ClipboardItem, Global, KeyDownEvent};
-use plastext_editor::{EditingDocument, TextInput};
+use plastext_editor::{EditingDocument, TextInput, TextInputEvent};
 use plastext_platform::files;
 
 #[derive(Clone)]
@@ -44,6 +44,32 @@ impl Global for FileClipboard {}
 pub(super) struct FilePrompt {
     path: PathBuf,
     input: Entity<TextInput>,
+    _input_changes: Subscription,
+}
+
+fn rename_selection(name: &str, directory: bool) -> std::ops::Range<usize> {
+    let end = if directory {
+        name.len()
+    } else {
+        Path::new(name)
+            .file_stem()
+            .map_or(name.len(), |stem| stem.len())
+    };
+    0..end
+}
+
+fn rename_error(name: &str) -> Option<&'static str> {
+    if name.trim().is_empty() {
+        Some("Enter a filename.")
+    } else if name.contains('/') {
+        Some("Filenames cannot contain a slash (/).")
+    } else if name == "." || name == ".." {
+        Some("Choose a name other than . or ..")
+    } else if name.contains('\0') {
+        Some("Filenames cannot contain null characters.")
+    } else {
+        None
+    }
 }
 
 impl Workspace {
@@ -98,14 +124,25 @@ impl Workspace {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .into_owned();
+                let directory = self
+                    .tree
+                    .as_ref()
+                    .is_some_and(|tree| tree.read(cx).is_directory(&path));
+                let selection = rename_selection(&name, directory);
                 let input = cx.new(|cx| {
                     let mut input = TextInput::new("Filename", cx);
                     input.set_text(name, cx);
-                    input.select_all_text(cx);
+                    input.select_range(selection, cx);
                     input
                 });
+                let input_changes =
+                    cx.subscribe(&input, |_, _, TextInputEvent::Changed, cx| cx.notify());
                 input.focus_handle(cx).focus(window);
-                self.file_prompt = Some(FilePrompt { path, input });
+                self.file_prompt = Some(FilePrompt {
+                    path,
+                    input,
+                    _input_changes: input_changes,
+                });
                 cx.notify();
             }
             FileAction::Move => {
@@ -209,8 +246,7 @@ impl Workspace {
             return;
         };
         let name = prompt.input.read(cx).text();
-        if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-            self.show_notice("Enter a filename without a slash.", cx);
+        if rename_error(name).is_some() {
             return;
         }
         let source = prompt.path.clone();
@@ -231,6 +267,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let prompt = self.file_prompt.as_ref()?;
+        let error = rename_error(prompt.input.read(cx).text());
         Some(
             div()
                 .absolute()
@@ -264,7 +301,20 @@ impl Workspace {
                         .flex_col()
                         .gap_3()
                         .child("Rename")
-                        .child(prompt.input.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(prompt.input.clone())
+                                .child(
+                                    div()
+                                        .min_h(px(18.))
+                                        .text_xs()
+                                        .text_color(theme.text)
+                                        .child(error.unwrap_or_default()),
+                                ),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -284,15 +334,20 @@ impl Workspace {
                                 .child(
                                     div()
                                         .id("confirm-rename")
+                                        .debug_selector(|| "confirm-rename".into())
                                         .px_3()
                                         .py_1()
                                         .rounded_sm()
                                         .bg(theme.border)
-                                        .cursor_pointer()
                                         .child("Rename")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.submit_file_prompt(window, cx)
-                                        })),
+                                        .when(error.is_some(), |button| button.opacity(0.5))
+                                        .when(error.is_none(), |button| {
+                                            button.cursor_pointer().on_click(cx.listener(
+                                                |this, _, window, cx| {
+                                                    this.submit_file_prompt(window, cx)
+                                                },
+                                            ))
+                                        }),
                                 ),
                         ),
                 )
