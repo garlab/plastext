@@ -197,7 +197,7 @@ impl MarkdownView {
         let cancel = Arc::new(AtomicBool::new(false));
         self.reading.copy_cancel = cancel.clone();
         let selection = self.reading.selected.clone();
-        let source = self.source.clone();
+        let source = self.preview_source.clone();
         let document = self.document.clone();
         let expanded = self.expanded.clone();
         let work_cancel = cancel.clone();

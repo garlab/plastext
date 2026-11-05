@@ -93,7 +93,7 @@ impl MarkdownView {
         let query = find.query.clone();
         let cancel = find.cancel.clone();
         let document = self.document.clone();
-        let source = self.source.clone();
+        let source = self.preview_source.clone();
         let (send, receive) = async_channel::bounded(4);
         cx.background_executor()
             .spawn({

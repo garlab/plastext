@@ -75,6 +75,16 @@ impl EditingDocument {
                 .as_ref()
                 .is_some_and(|file| file.session().is_dirty())
     }
+    /// Register a tab that owns an embedded source editor or a preview.
+    pub fn retain_view(&mut self) {
+        self.views += 1;
+    }
+    pub fn release_view(&mut self) {
+        self.views = self.views.saturating_sub(1);
+    }
+    pub fn notice(&self) -> Option<SharedString> {
+        self.notice.clone()
+    }
     pub fn view_count(&self) -> usize {
         self.views
     }

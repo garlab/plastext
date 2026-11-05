@@ -116,6 +116,7 @@ struct QueuedInput {
 pub(super) struct Editing {
     document: Entity<EditingDocument>,
     pane: Option<PaneId>,
+    pub(super) owns_view: bool,
     active: bool,
     dirty: bool,
     generation: Option<u64>,
@@ -133,7 +134,9 @@ pub(super) struct Editing {
 impl Editing {
     pub(super) fn release(self, cx: &mut App) {
         self.document.update(cx, |document, _| {
-            document.views = document.views.saturating_sub(1);
+            if self.owns_view {
+                document.release_view();
+            }
             document.pending_inputs = document.pending_inputs.saturating_sub(self.queue.len());
             if let (Some(file), Some(pane)) = (&mut document.file, self.pane) {
                 file.session_mut().detach_pane(pane);
@@ -148,10 +151,28 @@ impl TextView {
         document: Entity<EditingDocument>,
         cx: &mut Context<Self>,
     ) {
+        self.bind_editing_document(document, true, cx);
+    }
+    /// The containing preview tab owns the document's view registration.
+    pub fn set_embedded_editing_document(
+        &mut self,
+        document: Entity<EditingDocument>,
+        cx: &mut Context<Self>,
+    ) {
+        self.bind_editing_document(document, false, cx);
+    }
+    fn bind_editing_document(
+        &mut self,
+        document: Entity<EditingDocument>,
+        owns_view: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.editing.is_some() {
             return;
         }
-        document.update(cx, |document, _| document.views += 1);
+        if owns_view {
+            document.update(cx, |document, _| document.retain_view());
+        }
         let observer = cx.observe(&document, |this, _, cx| {
             this.sync_editing(cx);
             this.drain_input(cx);
@@ -159,6 +180,7 @@ impl TextView {
         self.editing = Some(Editing {
             document,
             pane: None,
+            owns_view,
             active: false,
             dirty: false,
             generation: None,

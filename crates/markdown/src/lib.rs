@@ -10,6 +10,8 @@ mod math_blocks;
 mod metadata;
 mod parser;
 mod search;
+mod source;
+pub use source::DocumentSource;
 pub mod selection;
 
 use std::{ops::Range, path::Path, sync::Arc};

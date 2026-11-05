@@ -1,13 +1,13 @@
 //! Source-backed Markdown pages. No parsed page is retained by the index.
+use crate::DocumentSource;
 use crate::parser::{HeadingIds, References, options, parse_context};
 use crate::{Block, BlockKind, Document, Heading, InlineStyle, Span};
-use plastext_buffer::{ByteSource as _, FileSource};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
 use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     io,
-    ops::{ControlFlow, Range},
+    ops::Range,
     sync::Arc,
 };
 use unicase::UniCase;
@@ -187,7 +187,7 @@ impl DocumentIndex {
     /// Two bounded passes: collect source pages/global definitions, then index
     /// rendered blocks. A page's temporary text and spans die before the next.
     pub fn build(
-        source: &FileSource,
+        source: &(impl DocumentSource + ?Sized),
         cancelled: impl Fn() -> bool,
         equations: impl Fn(&str, &crate::MacroContext) -> u32,
     ) -> io::Result<Self> {
@@ -195,7 +195,7 @@ impl DocumentIndex {
         let mut at = 0;
         let mut carry = None;
         let mut global_bytes = 0;
-        while at < source.len() as usize {
+        while at < source.byte_len() as usize {
             check_cancel(&cancelled)?;
             let (page, next) = next_page(source, at, carry.take())?;
             if matches!(page.mode, Mode::Source) && index.warnings.is_empty() {
@@ -296,7 +296,7 @@ impl DocumentIndex {
             stack.push(i);
         }
         for i in stack {
-            index.headings[i].source.end = source.len() as usize;
+            index.headings[i].source.end = source.byte_len() as usize;
         }
         index.blocks.shrink_to_fit();
         index.pages.shrink_to_fit();
@@ -340,7 +340,7 @@ impl DocumentIndex {
     }
     pub fn parse_page(
         &self,
-        source: &FileSource,
+        source: &(impl DocumentSource + ?Sized),
         page: usize,
         cancelled: impl Fn() -> bool,
     ) -> io::Result<Vec<Arc<Block>>> {
@@ -365,7 +365,7 @@ impl DocumentIndex {
     }
     fn read_page(
         &self,
-        source: &FileSource,
+        source: &(impl DocumentSource + ?Sized),
         page: usize,
         cancelled: &impl Fn() -> bool,
         ids: &mut HeadingIds,
@@ -521,7 +521,7 @@ impl DocumentIndex {
     /// Streams rendered-text matches without touching the viewport cache.
     pub fn search(
         &self,
-        source: &FileSource,
+        source: &(impl DocumentSource + ?Sized),
         query: &str,
         limit: usize,
         cancelled: impl Fn() -> bool,
@@ -578,12 +578,9 @@ fn check_global(bytes: usize) -> io::Result<()> {
         Ok(())
     }
 }
-fn read(source: &FileSource, range: Range<usize>) -> io::Result<String> {
+fn read(source: &(impl DocumentSource + ?Sized), range: Range<usize>) -> io::Result<String> {
     let mut bytes = Vec::with_capacity(range.len());
-    source.scan(range.start as u64..range.end as u64, |chunk| {
-        bytes.extend_from_slice(chunk);
-        ControlFlow::Continue(())
-    })?;
+    source.read_range(range.start as u64..range.end as u64, &mut bytes)?;
     if bytes.len() != range.len() {
         return Err(io::Error::other(
             "Markdown changed while it was being read; reopen the file",
@@ -676,7 +673,7 @@ fn units(text: &str, metadata: bool) -> Vec<Unit> {
 }
 
 fn next_page(
-    source: &FileSource,
+    source: &(impl DocumentSource + ?Sized),
     at: usize,
     carry: Option<Mode>,
 ) -> io::Result<(Page, Option<Mode>)> {
@@ -684,21 +681,18 @@ fn next_page(
 }
 
 fn next_page_window(
-    source: &FileSource,
+    source: &(impl DocumentSource + ?Sized),
     at: usize,
     carry: Option<Mode>,
     window: usize,
 ) -> io::Result<(Page, Option<Mode>)> {
-    let end = (at + window).min(source.len() as usize);
+    let end = (at + window).min(source.byte_len() as usize);
     // Read a few extra bytes so a window never splits a UTF-8 scalar.
     let mut bytes = Vec::new();
-    source.scan(at as u64..end as u64, |chunk| {
-        bytes.extend_from_slice(chunk);
-        ControlFlow::Continue(())
-    })?;
+    source.read_range(at as u64..end as u64, &mut bytes)?;
     let valid = match std::str::from_utf8(&bytes) {
         Ok(text) => text.len(),
-        Err(error) if error.error_len().is_none() && end < source.len() as usize => {
+        Err(error) if error.error_len().is_none() && end < source.byte_len() as usize => {
             error.valid_up_to()
         }
         Err(_) => {
@@ -708,7 +702,7 @@ fn next_page_window(
         }
     };
     let mut raw = std::str::from_utf8(&bytes[..valid]).unwrap();
-    let eof = at + raw.len() == source.len() as usize;
+    let eof = at + raw.len() == source.byte_len() as usize;
     if !eof && let Some(newline) = raw.rfind('\n') {
         raw = &raw[..newline + 1];
     }

@@ -201,3 +201,53 @@ impl Workspace {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{ClipboardItem, TestAppContext};
+
+    #[gpui::test]
+    fn dirty_markdown_preview_is_pinned_and_uses_close_confirmation(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("document.md");
+        std::fs::write(&path, "# Original\n").unwrap();
+        cx.update(crate::init);
+        let window = cx.add_window(|window, cx| {
+            let mut workspace = Workspace::new(None, Arc::default(), window, cx);
+            workspace.open_with_kind(path.clone(), None, OpenKind::Preview, window, cx);
+            workspace
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "cmd-shift-v e");
+        cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("# Unsaved\n".into())));
+        cx.simulate_keystrokes(window.into(), "cmd-a cmd-v");
+        window.update(cx, |workspace, _, cx| {
+            let tab = workspace.panes[&workspace.active_pane].active_tab().unwrap();
+            assert!(tab.view.is_dirty(cx));
+            assert!(!tab.preview);
+            assert!(matches!(tab.view.status(cx), crate::tab_view::TabStatus::Text(status) if status.editing));
+        }).unwrap();
+        cx.simulate_keystrokes(window.into(), "cmd-shift-v cmd-w");
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        window
+            .update(cx, |workspace, _, cx| {
+                let tab = workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .unwrap();
+                assert!(tab.view.is_dirty(cx));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "cmd-w");
+        cx.simulate_prompt_answer("Discard");
+        cx.run_until_parked();
+        window
+            .update(cx, |workspace, window, _| {
+                assert!(workspace.panes[&workspace.active_pane].tabs.is_empty());
+                window.remove_window();
+            })
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "# Original\n");
+    }
+}

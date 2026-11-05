@@ -149,9 +149,12 @@ pub(super) struct Diagrams {
     source: HashSet<usize>,
     rows: HashSet<usize>,
     pending: HashMap<usize, Arc<AtomicBool>>,
-    hidden: bool,
+    pub(super) hidden: bool,
 }
 impl Diagrams {
+    pub(super) fn reset_source_choices(&mut self) {
+        self.source.clear();
+    }
     pub fn begin_frame(&mut self, owner: EntityId, cx: &mut App) -> bool {
         self.rows.clear();
         Cache::begin_frame(owner, cx);
@@ -214,7 +217,11 @@ fn preview_rejection(document: &DocumentIndex, ix: usize, source: &str) -> Optio
 
 impl MarkdownView {
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let changed = self.diagrams.hidden == visible;
         self.diagrams.hidden = !visible;
+        if changed {
+            self.refresh_preview(visible, cx);
+        }
         if !visible {
             self.diagrams.clear(cx.entity_id(), cx);
             self.clear_images(cx);

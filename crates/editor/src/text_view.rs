@@ -535,6 +535,10 @@ impl TextView {
         let language = self.language;
         let top = self.top;
         let document = self.editing_document();
+        let owns_view = self
+            .editing
+            .as_ref()
+            .is_none_or(|editing| editing.owns_view);
         let selection = self.selection;
         cx.new(|cx| {
             // Reuse the parse if it's done; otherwise parse again.
@@ -552,7 +556,11 @@ impl TextView {
             view.top = top;
             view.selection = selection;
             if let Some(document) = document {
-                view.set_editing_document(document, cx);
+                if owns_view {
+                    view.set_editing_document(document, cx);
+                } else {
+                    view.set_embedded_editing_document(document, cx);
+                }
             }
             view
         })

@@ -20,6 +20,7 @@ use std::{
 };
 
 use crate::tab_view::format_size;
+mod editing;
 mod find;
 mod highlights;
 mod math;
@@ -34,6 +35,7 @@ actions!(
     markdown,
     [
         ToggleSource,
+        Save,
         ScrollDown,
         ScrollUp,
         PageDown,
@@ -47,6 +49,7 @@ pub fn init(cx: &mut App) {
     find::init(cx);
     selection::init(cx);
     cx.bind_keys([
+        KeyBinding::new("cmd-s", Save, Some("MarkdownPreview")),
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Markdown")),
         KeyBinding::new("j", ScrollDown, Some("MarkdownPreview")),
         KeyBinding::new("k", ScrollUp, Some("MarkdownPreview")),
@@ -78,6 +81,12 @@ const LINE_HEIGHT: f32 = 1.55;
 pub struct MarkdownView {
     path: PathBuf,
     source: Arc<FileSource>,
+    preview_source: Arc<dyn plastext_markdown::DocumentSource>,
+    editing_document: Option<Entity<plastext_editor::EditingDocument>>,
+    _document_observer: Option<Subscription>,
+    preview_generation: Option<u64>,
+    refresh_generation: Option<u64>,
+    refresh_task: Option<Task<()>>,
     index: Arc<LineIndex>,
     text_style: TextStyle,
     settings: Arc<plastext_settings::Markdown>,
@@ -195,12 +204,36 @@ impl MarkdownView {
         });
         let owner = cx.entity_id();
         cx.on_release(move |this, cx| {
+            this.cancel.store(true, Ordering::Relaxed);
+            // Let cancelled refreshes retire their snapshots/results on a worker.
+            if let Some(task) = this.refresh_task.take() {
+                task.detach();
+            }
             this.diagrams.clear(owner, cx);
             this.clear_images(cx);
+            if let Some(document) = this.editing_document.take() {
+                document.update(cx, |doc, _| doc.release_view());
+            }
+            let source = std::mem::replace(
+                &mut this.preview_source,
+                Arc::new(FileSource::from_bytes(Vec::new())),
+            );
+            let document = std::mem::take(&mut this.document);
+            cx.background_executor()
+                .spawn(async move {
+                    drop((source, document));
+                })
+                .detach();
         })
         .detach();
         Self {
             path,
+            preview_source: source.clone(),
+            editing_document: None,
+            _document_observer: None,
+            preview_generation: None,
+            refresh_generation: None,
+            refresh_task: None,
             source,
             index,
             text_style,
@@ -256,8 +289,8 @@ impl MarkdownView {
                     find.reset();
                 }
                 self.reading = selection::State::default();
-                self.document = document;
-                self.pages.clear();
+                let old_document = std::mem::replace(&mut self.document, document);
+                let old_pages = std::mem::take(&mut self.pages);
                 self.pending_pages.clear();
                 self.failed_pages.clear();
                 self.pages.insert(0, first);
@@ -268,7 +301,12 @@ impl MarkdownView {
                 self.list.reset(self.visible.len());
                 self.parsing = false;
                 self.preview_complete = true;
-                self.symbols = symbols;
+                let old_symbols = std::mem::replace(&mut self.symbols, symbols);
+                cx.background_executor()
+                    .spawn(async move {
+                        drop((old_document, old_pages, old_symbols));
+                    })
+                    .detach();
                 self.list.scroll_to(ListOffset {
                     item_ix: self.visible.row(self.document.block_at(offset)),
                     offset_in_item: within,
@@ -354,6 +392,9 @@ impl MarkdownView {
         cx.notify();
     }
     pub fn scroll_to_line(&mut self, line: u64, cx: &mut Context<Self>) {
+        if self.scroll_edited_line(line, cx) {
+            return;
+        }
         if let Ok(Some(offset)) = self.index.line_start(line.saturating_sub(1), &*self.source) {
             self.scroll_to_offset(offset, cx);
         }
@@ -370,10 +411,15 @@ impl MarkdownView {
             cx.notify();
         }
     }
-    pub fn summary(&self) -> String {
+    pub fn summary(&self, cx: &App) -> String {
         format!(
             "{}    {}    Markdown",
-            format_size(self.source.len()),
+            format_size(
+                self.editing_document
+                    .as_ref()
+                    .and_then(|doc| doc.read(cx).version())
+                    .map_or_else(|| self.source.len(), |version| version.text().len())
+            ),
             if self.parsing {
                 "Rendering…"
             } else if self.rendered {
@@ -383,8 +429,11 @@ impl MarkdownView {
             }
         )
     }
-    pub fn notice(&self) -> Option<SharedString> {
-        self.notice.clone()
+    pub fn notice(&self, cx: &App) -> Option<SharedString> {
+        self.editing_document
+            .as_ref()
+            .and_then(|doc| doc.read(cx).notice())
+            .or_else(|| self.notice.clone())
     }
     pub fn set_zoom(&mut self, factor: f32, font_size: gpui::Pixels, cx: &mut Context<Self>) {
         self.text_style.font_size = font_size;
@@ -413,6 +462,7 @@ impl MarkdownView {
         let offset = self.position(cx);
         let rendered = self.rendered;
         let expanded = self.expanded.clone();
+        let document = self.editing_document.clone();
         let source_view = self
             .source_view
             .as_ref()
@@ -423,6 +473,9 @@ impl MarkdownView {
             view.rendered = rendered;
             view.expanded = expanded;
             view.source_view = source_view;
+            if let Some(document) = document {
+                view.set_editing_document(document, cx);
+            }
             if let Some(source) = &view.source_view {
                 view._source_observer = Some(cx.observe(source, |_, _, cx| cx.notify()));
             }
@@ -435,13 +488,17 @@ impl MarkdownView {
             let view = self.source_view.get_or_insert_with(|| {
                 let language = plastext_syntax::detect(&self.path, b"");
                 cx.new(|cx| {
-                    TextView::new(
+                    let mut view = TextView::new(
                         self.source.clone(),
                         self.index.clone(),
                         self.text_style.clone(),
                         language,
                         cx,
-                    )
+                    );
+                    if let Some(document) = &self.editing_document {
+                        view.set_embedded_editing_document(document.clone(), cx);
+                    }
+                    view
                 })
             });
             if self._source_observer.is_none() {
@@ -453,11 +510,20 @@ impl MarkdownView {
             if let Some(view) = &self.source_view {
                 let offset = view.read(cx).position();
                 self.scroll_to_offset(offset, cx);
+                if self
+                    .editing_document
+                    .as_ref()
+                    .and_then(|doc| doc.read(cx).version())
+                    .is_some_and(|version| self.preview_generation != Some(version.generation()))
+                {
+                    self.pending_offset = Some(offset as usize);
+                }
             }
             self.focus.focus(window);
         }
         self.reading.stop();
         self.rendered = !self.rendered;
+        self.refresh_preview(true, cx);
         if !self.rendered {
             self.diagrams.clear(cx.entity_id(), cx);
             self.clear_images(cx);
@@ -966,7 +1032,7 @@ impl MarkdownView {
 
     fn copy_fence(&mut self, ix: usize, cx: &mut Context<Self>) {
         let document = self.document.clone();
-        let source = self.source.clone();
+        let source = self.preview_source.clone();
         let cancel = self.cancel.clone();
         let copying = cx.background_executor().spawn(async move {
             let end = ix
@@ -1024,7 +1090,7 @@ impl MarkdownView {
         }
         self.pending_pages.insert(page);
         let document = self.document.clone();
-        let source = self.source.clone();
+        let source = self.preview_source.clone();
         let cancel = self.cancel.clone();
         let work = cx.background_executor().spawn({
             let document = document.clone();
@@ -1533,6 +1599,7 @@ impl Render for MarkdownView {
             .flex()
             .flex_col()
             .on_action(cx.listener(Self::toggle_source))
+            .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::next_match))
             .on_action(cx.listener(Self::previous_match))
@@ -1592,6 +1659,10 @@ impl Render for MarkdownView {
                     .border_color(theme.border)
                     .child(if self.parsing {
                         "Markdown · rendering…"
+                    } else if !self.rendered
+                        && self.source_status(cx).is_some_and(|status| !status.editing)
+                    {
+                        "Markdown · press e or Enter to edit"
                     } else {
                         "Markdown"
                     })
@@ -1634,3 +1705,7 @@ impl Render for MarkdownView {
             )
     }
 }
+
+#[cfg(test)]
+#[path = "markdown_view/editing_tests.rs"]
+mod editing_tests;

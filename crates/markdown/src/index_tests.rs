@@ -378,3 +378,51 @@ fn disclosure_parent_indices_preserve_offsets_past_four_gib() {
         &std::collections::HashSet::from([start])
     ));
 }
+
+#[test]
+fn indexes_and_reads_immutable_unsaved_versions_without_filling_the_edit_cache() {
+    use plastext_buffer::{EditBuffer, OpenOptions, UndoGroup};
+    use std::sync::atomic::AtomicBool;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("paged.md");
+    let raw = format!(
+        "# Original\n\n{}[ref]: https://example.com\n",
+        "paragraph [link][ref]\n\n".repeat(50_000)
+    );
+    std::fs::write(&path, &raw).unwrap();
+    let mut buffer = EditBuffer::open(
+        &path,
+        OpenOptions {
+            large_file_threshold: 1,
+            block_cache: 1024 * 1024,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    buffer.snapshot().load(0..64).unwrap();
+    buffer
+        .replace(2..10, b"Unsaved title", UndoGroup::New)
+        .unwrap();
+    let snapshot = buffer.snapshot();
+    let distant = snapshot.len() - 64..snapshot.len();
+    assert!(snapshot.missing(distant.clone()).is_some());
+    let index = DocumentIndex::build(&snapshot, || false, |_, _| 0).unwrap();
+    assert_eq!(index.headings[0].text, "Unsaved title");
+    assert!(index.pages.len() > 1);
+    buffer
+        .replace(2..15, b"Newer title", UndoGroup::New)
+        .unwrap();
+    let page = index.parse_page(&snapshot, 0, || false).unwrap();
+    assert_eq!(page[0].text, "Unsaved title");
+    assert!(
+        page.iter()
+            .flat_map(|b| &b.spans)
+            .any(|span| span.style.link.as_deref() == Some("https://example.com"))
+    );
+    assert!(
+        snapshot.missing(distant).is_some(),
+        "preview scanning bypasses the editor cache"
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), raw);
+}

@@ -234,6 +234,7 @@ struct Tab {
     view: TabView,
     preview: bool,
     _status: Subscription,
+    _editing_status: Option<Subscription>,
     _links: Option<Subscription>,
 }
 
@@ -629,10 +630,18 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if let TabView::Text(text) = &view {
-            let document =
-                plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
-            text.update(cx, |view, cx| view.set_editing_document(document, cx));
+        match &view {
+            TabView::Text(text) => {
+                let document =
+                    plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
+                text.update(cx, |view, cx| view.set_editing_document(document, cx));
+            }
+            TabView::Markdown(markdown) => {
+                let document =
+                    plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
+                markdown.update(cx, |view, cx| view.set_editing_document(document, cx));
+            }
+            _ => {}
         }
         view.set_zoom(self.zoom.factor(), self.text_style.font_size, cx);
         let title = path
@@ -642,8 +651,9 @@ impl Workspace {
                 |name| name.to_string_lossy().into_owned(),
             )
             .into();
-        let status = if let TabView::Text(text) = &view {
-            cx.observe(text, |this, _, cx| {
+        let status = view.observe(cx);
+        let editing_status = view.editing_document(cx).map(|document| {
+            cx.observe(&document, |this, _, cx| {
                 for pane in this.panes.values_mut() {
                     for tab in &mut pane.tabs {
                         if tab.view.is_dirty(cx) {
@@ -653,9 +663,7 @@ impl Workspace {
                 }
                 cx.notify();
             })
-        } else {
-            view.observe(cx)
-        };
+        });
         let links = if let TabView::Markdown(markdown) = &view {
             Some(
                 cx.subscribe_in(markdown, window, |this, _, event, window, cx| {
@@ -680,6 +688,7 @@ impl Workspace {
             view,
             preview: destination.kind == OpenKind::Preview,
             _status: status,
+            _editing_status: editing_status,
             _links: links,
         };
         let index = match placement {

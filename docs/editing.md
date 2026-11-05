@@ -1,7 +1,8 @@
 # Text and code editing
 
 Files still open in read mode. In a plain text or code tab, press `e` or Enter,
-or double-click the content, to enter edit mode. The status bar changes to
+or double-click the content, to enter edit mode. For Markdown, first choose
+**Source** (`Cmd-Shift-V`), then use the same editing controls. The status bar changes to
 **EDIT** and an unsaved tab gets a dot. A modified preview tab becomes permanent.
 Escape returns to read mode after the changes have been saved or undone.
 
@@ -24,6 +25,14 @@ UTF-16 coordinates and supports marked text for IME composition.
 
 Split panes share content, saved state and undo history, with independent
 selections and scroll positions. Find searches the current unsaved version.
+Markdown Preview reads the unsaved version. Switching back to Preview refreshes
+it immediately; a visible preview in another pane updates after a 250 ms pause
+in typing. Hidden previews do not reparse during typing. Each refresh builds the
+compact block index on a worker and only retains parsed pages within the existing
+cache budget. New edits cancel obsolete refreshes; late results cannot replace
+newer content. `Cmd-S` also works while Preview is focused. Continuous source/preview
+scroll synchronization and double-clicking rendered blocks to edit remain to do.
+
 Code uses bounded lexical highlighting after editing begins; syntax-tree folding,
 outline and sticky definitions await incremental parsing of edited snapshots.
 
@@ -43,7 +52,7 @@ input or saves must finish before the document can close.
 
 This is the first GUI editing increment in M3:
 
-- Editing applies to plain text and code tabs. Markdown and other preview/source
+- Editing applies to plain text, code and Markdown Source. Other preview/source
   toggles remain read-only until their synchronization is connected.
 - Multicursor, word movement, replace, indentation commands, EditorConfig,
   new files, Save As and encoding/newline controls remain to implement.

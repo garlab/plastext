@@ -1,7 +1,7 @@
 # M3 editing
 
 M3 now includes a persistent buffer, shared document model and the first
-[text/code editing UI](editing.md), including background saves. M2's open
+[text/code and Markdown Source editing UI](editing.md), including background saves. M2's open
 [validation checks](m2-validation.md) and large-diagram controls can proceed
 independently; they do not block work on the editing model.
 
@@ -144,6 +144,15 @@ The GUI integration adds regression tests for independent split selections,
 shared undo, composition grouping and UTF-16 replacement ranges, delayed input,
 stale composition rejection, CR/LF/CRLF and empty trailing rows, key dispatch,
 horizontal caret visibility, save completion during typing, and disk conflicts.
+Markdown tests exercise Source → edit via keyboard/double-click, unsaved preview
+and reference resolution, debounced split previews, shared dirty state, save from
+Preview and close confirmation. Markdown's existing page index now also reads
+immutable editing versions directly; it neither serializes a temporary copy nor
+fills the editor's viewport cache. Preview parsing remains a bounded-memory full
+index rebuild, runs only for visible previews after a pause, and rejects stale
+completions. Incremental reindexing and continuous scroll synchronization remain
+future work.
+
 Snapshot searches bypass the viewport cache. Evicted undo history and superseded
 view snapshots retire on workers; the original reader cache is released when
 its editing snapshot takes over. Ordinary read-mode opening still prepares no
@@ -159,7 +168,7 @@ editing copy.
   new-file/Save As handling. Saves already reject disk conflicts and preserve
   the dirty buffer. Complete native Windows/
   Linux and crash/failure validation; see the [save limits](m3-saving.md).
-- Add Markdown synchronization, tail mode and `--wait`, then fuzz targets and
+- Add continuous Markdown scroll synchronization, tail mode and `--wait`, then fuzz targets and
   native typing/performance tests.
 
 Preparing a large original currently costs a full copy and temporary disk space

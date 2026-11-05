@@ -1,5 +1,7 @@
 //! Rendered coordinates stay valid when parsed pages leave the cache.
+use crate::DocumentSource;
 use crate::{Block, BlockKind, BlockType, DocumentIndex};
+#[cfg(test)]
 use plastext_buffer::FileSource;
 use std::{collections::HashSet, io, ops::Range};
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -95,7 +97,7 @@ pub fn unit_range(text: &str, at: usize, unit: Unit) -> Range<usize> {
 /// No truncated result reaches the clipboard on cancellation, file changes or limits.
 pub fn copy_selection(
     document: &DocumentIndex,
-    source: &FileSource,
+    source: &(impl DocumentSource + ?Sized),
     selection: &Selection,
     expanded: &HashSet<usize>,
     cancelled: impl Fn() -> bool,

@@ -37,9 +37,10 @@ pane selections and rejects stale background commands. The
 symlinks and clean reload/dirty conflict handling.
 [Encoding support](m3-encoding.md) adds lossless UTF-16/legacy editing originals,
 CR/LF/CRLF indexing and undoable encoding/newline output settings.
-[Text/code editing](editing.md) now connects these sessions to split panes, with
+[Text/code and Markdown Source editing](editing.md) now connects these sessions to split panes, with
 caret/selection, native input and composition, shared undo/redo, background saves,
-and dirty-file close guards. Existing read-mode opening keeps its original path;
+and dirty-file close guards. Markdown previews refresh from unsaved snapshots,
+with debounced updates in visible split panes. Existing read-mode opening keeps its original path;
 core performance diagnostics remain separate from the accepted baselines.
 
 Next, in order:
@@ -51,7 +52,7 @@ Next, in order:
    conflict/recovery choices and new-file/Save As handling. Current saves refuse
    conflicts while retaining edits. Validate native platform behavior and injected
    save failures.
-3. Add synchronized Markdown source/preview, double-click-to-source, tail mode
+3. Add continuous Markdown source/preview scroll sync, double-click-to-source, tail mode
    and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
 
 M4 Git review and M5 release hardening follow M3.

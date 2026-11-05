@@ -5615,6 +5615,7 @@ dependencies = [
  "plastext-settings",
  "plastext-syntax",
  "raw-window-handle",
+ "tempfile",
 ]
 
 [[package]]
