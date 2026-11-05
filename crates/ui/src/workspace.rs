@@ -159,12 +159,13 @@ struct Place {
     offset: u64,
 }
 
-/// Where to scroll a file once it's open.
+/// The initial position or source mode of an opened file.
 #[derive(Clone)]
 enum Target {
     Line(u64),
     Offset(u64),
     Anchor(String),
+    Source,
 }
 
 /// The outline panel on the right: the active file's symbols.
@@ -425,7 +426,7 @@ impl Workspace {
             }
             self.activate_with_focus(pane, index, focus_editor, window, cx);
             let view = self.panes[&pane].tabs[index].view.clone();
-            scroll_to(&view, target, cx);
+            scroll_to(&view, target, window, cx);
             return;
         }
         let pending = &mut self.panes.get_mut(&pane).unwrap().opening;
@@ -607,7 +608,7 @@ impl Workspace {
                                 TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
                             }
                         };
-                        scroll_to(&view, target, cx);
+                        scroll_to(&view, target, window, cx);
                         this.add_tab(
                             path,
                             view,
@@ -1769,11 +1770,16 @@ fn command_name(action: &str) -> String {
     }
 }
 
-fn scroll_to(view: &TabView, target: Option<Target>, cx: &mut App) {
+fn scroll_to(view: &TabView, target: Option<Target>, window: &mut Window, cx: &mut App) {
     match target {
         Some(Target::Line(line)) => view.scroll_to_line(line, cx),
         Some(Target::Offset(offset)) => view.scroll_to_offset(offset, cx),
         Some(Target::Anchor(anchor)) => view.scroll_to_anchor(anchor, cx),
+        Some(Target::Source) => {
+            if let TabView::Markdown(view) = view {
+                view.update(cx, |view, cx| view.show_source(window, cx));
+            }
+        }
         None => {}
     }
 }

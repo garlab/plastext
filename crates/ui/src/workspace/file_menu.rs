@@ -1,3 +1,4 @@
+use super::file_actions::PromptKind;
 use super::*;
 use crate::file_tree::FileAction;
 use gpui::{ClipboardItem, KeyDownEvent, anchored};
@@ -8,6 +9,7 @@ pub(super) struct FileMenu {
     focus: FocusHandle,
     previous_focus: Option<FocusHandle>,
     selected: Option<usize>,
+    background: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -19,6 +21,9 @@ enum CopyPath {
 enum Command {
     File(FileAction),
     Path(CopyPath),
+    CreateFile,
+    CreateFolder,
+    PasteInto,
 }
 const ITEMS: [(Command, &str, &str); 9] = [
     (Command::File(FileAction::Duplicate), "Duplicate", ""),
@@ -31,6 +36,22 @@ const ITEMS: [(Command, &str, &str); 9] = [
     (Command::Path(CopyPath::Absolute), "Copy Path", ""),
     (Command::Path(CopyPath::Relative), "Copy Relative Path", ""),
 ];
+
+const BACKGROUND_ITEMS: [(Command, &str, &str); 3] = [
+    (Command::CreateFile, "New File", ""),
+    (Command::CreateFolder, "New Folder", ""),
+    (Command::PasteInto, "Paste File", "⌘V"),
+];
+
+impl FileMenu {
+    fn items(&self) -> &'static [(Command, &'static str, &'static str)] {
+        if self.background {
+            &BACKGROUND_ITEMS
+        } else {
+            &ITEMS
+        }
+    }
+}
 
 impl CopyPath {
     fn text(self, path: &Path, root: Option<&Path>) -> String {
@@ -47,11 +68,15 @@ impl CopyPath {
 impl Workspace {
     pub(super) fn open_file_menu(
         &mut self,
-        path: PathBuf,
+        path: Option<PathBuf>,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let background = path.is_none();
+        let Some(path) = path.or_else(|| self.root.clone()) else {
+            return;
+        };
         self.dismiss_tab_menu(window, cx);
         self.dismiss_file_menu(window, cx);
         let focus = cx.focus_handle();
@@ -63,6 +88,7 @@ impl Workspace {
             focus,
             previous_focus,
             selected: None,
+            background,
         });
         cx.notify();
     }
@@ -81,8 +107,10 @@ impl Workspace {
     fn file_menu_enabled(&self, command: Command, cx: &App) -> bool {
         match command {
             Command::Path(_) => true,
-            Command::File(FileAction::Paste) => !self.file_busy && Self::can_paste_file(cx),
-            Command::File(_) => !self.file_busy,
+            Command::File(FileAction::Paste) | Command::PasteInto => {
+                !self.file_busy && !self.close_prompt && Self::can_paste_file(cx)
+            }
+            _ => !self.file_busy && !self.close_prompt,
         }
     }
     fn file_menu_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
@@ -97,13 +125,24 @@ impl Workspace {
                 action.text(&path, self.root.as_deref()),
             )),
             Command::File(action) => self.file_action_at(action, path, window, cx),
+            Command::CreateFile => self.show_file_prompt(path, PromptKind::NewFile, window, cx),
+            Command::CreateFolder => self.show_file_prompt(path, PromptKind::NewFolder, window, cx),
+            Command::PasteInto => self.paste_file_into(path, window, cx),
         }
     }
 
     fn file_menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         window.prevent_default();
+        let Some(menu) = &self.file_menu else { return };
+        let items = menu.items();
         if event.keystroke.modifiers.platform {
+            if menu.background {
+                if event.keystroke.key == "v" {
+                    self.file_menu_command(Command::PasteInto, window, cx);
+                }
+                return;
+            }
             let index = match event.keystroke.key.as_str() {
                 "c" => 1,
                 "x" => 2,
@@ -118,17 +157,17 @@ impl Workspace {
             "escape" => self.dismiss_file_menu(window, cx),
             "enter" | "space" => {
                 if let Some(index) = self.file_menu.as_ref().and_then(|menu| menu.selected) {
-                    self.file_menu_command(ITEMS[index].0, window, cx);
+                    self.file_menu_command(items[index].0, window, cx);
                 }
             }
             "up" | "down" => {
-                let enabled: Vec<_> = ITEMS
+                let enabled: Vec<_> = items
                     .iter()
                     .map(|(command, _, _)| self.file_menu_enabled(*command, cx))
                     .collect();
                 if let Some(menu) = &mut self.file_menu {
                     let down = event.keystroke.key == "down";
-                    let count = ITEMS.len();
+                    let count = items.len();
                     let current = menu.selected.unwrap_or(if down { count - 1 } else { 0 });
                     menu.selected = (1..=count)
                         .map(|step| {
@@ -153,6 +192,7 @@ impl Workspace {
     ) -> Option<AnyElement> {
         let menu = self.file_menu.as_ref()?;
         let selected = menu.selected;
+        let background = menu.background;
         Some(
             anchored()
                 .position(menu.position)
@@ -179,7 +219,7 @@ impl Workspace {
                             cx.listener(|this, _, window, cx| this.dismiss_file_menu(window, cx)),
                         )
                         .on_key_down(cx.listener(Self::file_menu_key))
-                        .children(ITEMS.into_iter().enumerate().map(
+                        .children(menu.items().iter().copied().enumerate().map(
                             |(index, (action, label, shortcut))| {
                                 let enabled = self.file_menu_enabled(action, cx);
                                 div()
@@ -187,9 +227,14 @@ impl Workspace {
                                     .px_3()
                                     .py_1()
                                     .rounded_sm()
-                                    .when(index == 4 || index == 7, |item| {
-                                        item.mt_1().border_t_1().border_color(theme.border)
-                                    })
+                                    .when(
+                                        if background {
+                                            index == 2
+                                        } else {
+                                            index == 4 || index == 7
+                                        },
+                                        |item| item.mt_1().border_t_1().border_color(theme.border),
+                                    )
                                     .flex()
                                     .justify_between()
                                     .child(label)

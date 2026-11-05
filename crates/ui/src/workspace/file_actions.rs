@@ -6,6 +6,8 @@ use plastext_platform::files;
 
 #[derive(Clone)]
 pub(super) enum OperationKind {
+    CreateFile,
+    CreateFolder,
     Duplicate,
     CopyInto(PathBuf),
     MoveTo(PathBuf),
@@ -20,8 +22,20 @@ impl Operation {
     fn changes_source(&self) -> bool {
         matches!(self.kind, OperationKind::MoveTo(_) | OperationKind::Trash)
     }
+    fn is_creation(&self) -> bool {
+        matches!(
+            self.kind,
+            OperationKind::CreateFile | OperationKind::CreateFolder
+        )
+    }
     fn run(&self) -> std::io::Result<Option<PathBuf>> {
         match &self.kind {
+            OperationKind::CreateFile => {
+                files::create_file(&self.source).map(|()| Some(self.source.clone()))
+            }
+            OperationKind::CreateFolder => {
+                files::create_folder(&self.source).map(|()| Some(self.source.clone()))
+            }
             OperationKind::Duplicate => files::duplicate(&self.source).map(Some),
             OperationKind::CopyInto(directory) => {
                 files::copy_into(&self.source, directory).map(Some)
@@ -41,8 +55,36 @@ struct FileClipboard {
 }
 impl Global for FileClipboard {}
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PromptKind {
+    Rename,
+    NewFile,
+    NewFolder,
+}
+impl PromptKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Rename => "Rename",
+            Self::NewFile => "New File",
+            Self::NewFolder => "New Folder",
+        }
+    }
+    fn confirm(self) -> &'static str {
+        if self == Self::Rename {
+            "Rename"
+        } else {
+            "Create"
+        }
+    }
+    fn error(self, name: &str) -> Option<&'static str> {
+        name_error(name, self == Self::NewFolder)
+    }
+}
+
 pub(super) struct FilePrompt {
     path: PathBuf,
+    kind: PromptKind,
+    error: Option<SharedString>,
     input: Entity<TextInput>,
     _input_changes: Subscription,
 }
@@ -58,15 +100,27 @@ fn rename_selection(name: &str, directory: bool) -> std::ops::Range<usize> {
     0..end
 }
 
-fn rename_error(name: &str) -> Option<&'static str> {
+fn name_error(name: &str, folder: bool) -> Option<&'static str> {
     if name.trim().is_empty() {
-        Some("Enter a filename.")
+        Some(if folder {
+            "Enter a folder name."
+        } else {
+            "Enter a filename."
+        })
     } else if name.contains('/') {
-        Some("Filenames cannot contain a slash (/).")
+        Some(if folder {
+            "Folder names cannot contain a slash (/)."
+        } else {
+            "Filenames cannot contain a slash (/)."
+        })
     } else if name == "." || name == ".." {
         Some("Choose a name other than . or ..")
     } else if name.contains('\0') {
-        Some("Filenames cannot contain null characters.")
+        Some(if folder {
+            "Folder names cannot contain null characters."
+        } else {
+            "Filenames cannot contain null characters."
+        })
     } else {
         None
     }
@@ -118,33 +172,7 @@ impl Workspace {
                 window,
                 cx,
             ),
-            FileAction::Rename => {
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                let directory = self
-                    .tree
-                    .as_ref()
-                    .is_some_and(|tree| tree.read(cx).is_directory(&path));
-                let selection = rename_selection(&name, directory);
-                let input = cx.new(|cx| {
-                    let mut input = TextInput::new("Filename", cx);
-                    input.set_text(name, cx);
-                    input.select_range(selection, cx);
-                    input
-                });
-                let input_changes =
-                    cx.subscribe(&input, |_, _, TextInputEvent::Changed, cx| cx.notify());
-                input.focus_handle(cx).focus(window);
-                self.file_prompt = Some(FilePrompt {
-                    path,
-                    input,
-                    _input_changes: input_changes,
-                });
-                cx.notify();
-            }
+            FileAction::Rename => self.show_file_prompt(path, PromptKind::Rename, window, cx),
             FileAction::Move => {
                 let selection = cx.prompt_for_paths(gpui::PathPromptOptions {
                     files: false,
@@ -180,6 +208,55 @@ impl Workspace {
                 .detach();
             }
         }
+    }
+    pub(super) fn show_file_prompt(
+        &mut self,
+        path: PathBuf,
+        kind: PromptKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = if kind == PromptKind::Rename {
+            path.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            String::new()
+        };
+        let directory = self
+            .tree
+            .as_ref()
+            .is_some_and(|tree| tree.read(cx).is_directory(&path));
+        let selection = rename_selection(&name, directory);
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new(
+                if kind == PromptKind::NewFolder {
+                    "Folder name"
+                } else {
+                    "Filename"
+                },
+                cx,
+            );
+            input.set_text(name, cx);
+            input.select_range(selection, cx);
+            input
+        });
+        let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
+            if let Some(prompt) = &mut this.file_prompt {
+                prompt.error = None;
+            }
+            cx.notify();
+        });
+        input.focus_handle(cx).focus(window);
+        self.file_prompt = Some(FilePrompt {
+            path,
+            kind,
+            error: None,
+            input,
+            _input_changes: input_changes,
+        });
+        cx.notify();
     }
     fn copy_file(path: PathBuf, cut: bool, cx: &mut App) {
         let item = ClipboardItem::new_string_with_metadata(
@@ -217,14 +294,22 @@ impl Workspace {
         Self::clipboard_file(cx).is_some()
     }
     fn paste_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((source, cut)) = Self::clipboard_file(cx) else {
-            return;
-        };
         let Some(directory) = self
             .tree
             .as_ref()
             .map(|tree| tree.read(cx).selected_directory())
         else {
+            return;
+        };
+        self.paste_file_into(directory, window, cx);
+    }
+    pub(super) fn paste_file_into(
+        &mut self,
+        directory: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((source, cut)) = Self::clipboard_file(cx) else {
             return;
         };
         let kind = if cut {
@@ -235,6 +320,9 @@ impl Workspace {
         self.request_file_operation(Operation { source, kind }, window, cx);
     }
     fn cancel_file_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_busy {
+            return;
+        }
         self.file_prompt = None;
         if let Some(tree) = &self.tree {
             tree.focus_handle(cx).focus(window);
@@ -242,11 +330,30 @@ impl Workspace {
         cx.notify();
     }
     fn submit_file_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_busy || self.close_prompt {
+            return;
+        }
         let Some(prompt) = &self.file_prompt else {
             return;
         };
         let name = prompt.input.read(cx).text();
-        if rename_error(name).is_some() {
+        if prompt.kind.error(name).is_some() || prompt.error.is_some() {
+            return;
+        }
+        if prompt.kind != PromptKind::Rename {
+            let kind = if prompt.kind == PromptKind::NewFolder {
+                OperationKind::CreateFolder
+            } else {
+                OperationKind::CreateFile
+            };
+            self.start_file_operation(
+                Operation {
+                    source: prompt.path.join(name),
+                    kind,
+                },
+                window,
+                cx,
+            );
             return;
         }
         let source = prompt.path.clone();
@@ -267,7 +374,12 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let prompt = self.file_prompt.as_ref()?;
-        let error = rename_error(prompt.input.read(cx).text());
+        let error = prompt
+            .kind
+            .error(prompt.input.read(cx).text())
+            .map(SharedString::from)
+            .or_else(|| prompt.error.clone());
+        let enabled = error.is_none() && !self.file_busy;
         Some(
             div()
                 .absolute()
@@ -279,6 +391,12 @@ impl Workspace {
                 .items_start()
                 .pt(px(80.))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .capture_key_down(cx.listener(|this, _, window, cx| {
+                    if this.file_busy {
+                        window.prevent_default();
+                        cx.stop_propagation();
+                    }
+                }))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     match event.keystroke.key.as_str() {
                         "escape" => this.cancel_file_prompt(window, cx),
@@ -300,7 +418,7 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .child("Rename")
+                        .child(prompt.kind.title())
                         .child(
                             div()
                                 .flex()
@@ -339,9 +457,9 @@ impl Workspace {
                                         .py_1()
                                         .rounded_sm()
                                         .bg(theme.border)
-                                        .child("Rename")
-                                        .when(error.is_some(), |button| button.opacity(0.5))
-                                        .when(error.is_none(), |button| {
+                                        .child(prompt.kind.confirm())
+                                        .when(!enabled, |button| button.opacity(0.5))
+                                        .when(enabled, |button| {
                                             button.cursor_pointer().on_click(cx.listener(
                                                 |this, _, window, cx| {
                                                     this.submit_file_prompt(window, cx)
@@ -404,6 +522,8 @@ impl Workspace {
                 OperationKind::Duplicate | OperationKind::CopyInto(_) => "Copying…",
                 OperationKind::MoveTo(_) => "Moving…",
                 OperationKind::Trash => "Moving to Bin…",
+                OperationKind::CreateFile => "Creating file…",
+                OperationKind::CreateFolder => "Creating folder…",
             }
             .into(),
         );
@@ -412,6 +532,7 @@ impl Workspace {
             let operation = operation.clone();
             async move { operation.run() }
         });
+        let origin = cx.entity().entity_id();
         // App-scoped completion unlocks documents even if the originating window closes.
         cx.spawn(async move |this, cx| {
             let result = work.await;
@@ -434,6 +555,19 @@ impl Workspace {
                                             window,
                                             cx,
                                         );
+                                        if cx.entity().entity_id() == origin
+                                            && operation.is_creation()
+                                        {
+                                            workspace.cancel_file_prompt(window, cx);
+                                            if matches!(operation.kind, OperationKind::CreateFile) {
+                                                workspace.open(
+                                                    operation.source.clone(),
+                                                    Some(Target::Source),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        }
                                     })
                                     .ok();
                             }
@@ -451,10 +585,23 @@ impl Workspace {
                 }
                 Err(error) => {
                     this.update(cx, |this, cx| {
-                        this.show_notice(
-                            format!("Couldn't change {}: {error}", operation.source.display()),
-                            cx,
-                        )
+                        if operation.is_creation()
+                            && let Some(prompt) = &mut this.file_prompt
+                        {
+                            prompt.error =
+                                Some(if error.kind() == std::io::ErrorKind::AlreadyExists {
+                                    "An item with that name already exists.".into()
+                                } else {
+                                    format!("Couldn't create this item: {error}").into()
+                                });
+                            this.notice = None;
+                            cx.notify();
+                        } else {
+                            this.show_notice(
+                                format!("Couldn't change {}: {error}", operation.source.display()),
+                                cx,
+                            );
+                        }
                     })
                     .ok();
                 }

@@ -482,6 +482,11 @@ impl MarkdownView {
             view
         })
     }
+    pub(crate) fn show_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rendered {
+            self.toggle_source(&ToggleSource, window, cx);
+        }
+    }
     fn toggle_source(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
         if self.rendered {
             let offset = self.position(cx);

@@ -4,6 +4,14 @@ Single-click a file in the navigation pane to preview it. Keyboard focus stays
 in the file pane. Double-click or press Enter to keep the tab open and focus the
 editor. Up and Down change the selected file.
 
+Right-click empty space in the file pane for **New File**, **New Folder** and
+**Paste File**. These actions target the project root, regardless of the previous
+selection. Paste File is disabled when the clipboard contains no file.
+
+New File and New Folder ask for a name, validate it inline and refuse to replace
+an existing item. New files open in a tab; new Markdown files open in Source.
+New folders are selected in the tree. Cancel or Escape dismisses the name dialog.
+
 Right-click a file or folder for these actions:
 
 | Action | Behavior |
@@ -33,5 +41,5 @@ tabs reopen at their new paths and previous scroll positions; undo history is
 reset. Saving afterwards uses the new path. Deleted files can be restored from
 the system Bin.
 
-Filesystem actions currently use macOS native APIs. Other platforms report that
-the operation is unavailable; they do not substitute permanent deletion.
+Copy, Move and Delete currently use macOS native APIs. Other platforms report
+that these operations are unavailable; they do not substitute permanent deletion.

@@ -360,7 +360,10 @@ fn rename_validation_stays_in_dialog_and_blocks_keyboard_and_button_submission(
                     .file_prompt
                     .as_ref()
                     .expect("invalid names must leave the dialog open");
-                assert_eq!(rename_error(prompt.input.read(cx).text()), Some(message));
+                assert_eq!(
+                    prompt.kind.error(prompt.input.read(cx).text()),
+                    Some(message)
+                );
                 assert!(prompt.input.focus_handle(cx).is_focused(window));
                 assert!(
                     workspace.notice.is_none(),
@@ -383,5 +386,144 @@ fn rename_validation_stays_in_dialog_and_blocks_keyboard_and_button_submission(
         std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
         "content"
     );
+    close(cx, window);
+}
+
+fn right_click_at(cx: &mut TestAppContext, window: WindowHandle<Workspace>, y: f32) {
+    VisualTestContext::from_window(window.into(), cx).simulate_event(MouseDownEvent {
+        position: point(px(80.), px(y)),
+        button: MouseButton::Right,
+        modifiers: Default::default(),
+        click_count: 1,
+        first_mouse: false,
+    });
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| assert!(workspace.file_menu.is_some()))
+        .unwrap();
+}
+fn enter_name(cx: &mut TestAppContext, window: WindowHandle<Workspace>, name: &str) {
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(name.into())));
+    cx.simulate_keystrokes(window.into(), "cmd-a cmd-v enter");
+}
+
+#[gpui::test]
+fn background_menu_creates_files_and_folders_and_reports_collisions_inline(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let window = open(cx, dir.path());
+    right_click_at(cx, window, 300.);
+    // No selected entry: Delete must not act on the project root.
+    cx.simulate_keystrokes(window.into(), "cmd-backspace down enter");
+    window
+        .update(cx, |workspace, _, _| {
+            assert!(matches!(
+                workspace.file_prompt.as_ref().unwrap().kind,
+                PromptKind::NewFile
+            ))
+        })
+        .unwrap();
+    enter_name(cx, window, "notes.md");
+    assert_eq!(std::fs::read(dir.path().join("notes.md")).unwrap(), b"");
+    window
+        .update(cx, |workspace, window, cx| {
+            let tab = workspace.panes[&workspace.active_pane]
+                .active_tab()
+                .unwrap();
+            assert_eq!(tab.path, dir.path().join("notes.md"));
+            assert!(tab.view.focus_handle(cx).is_focused(window));
+            assert!(workspace.file_prompt.is_none());
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "x cmd-s");
+    right_click_at(cx, window, 300.);
+    // Paste is disabled for text-only clipboard contents, so Up selects New Folder.
+    cx.simulate_keystrokes(window.into(), "up enter");
+    window
+        .update(cx, |workspace, _, _| {
+            assert!(matches!(
+                workspace.file_prompt.as_ref().unwrap().kind,
+                PromptKind::NewFolder
+            ))
+        })
+        .unwrap();
+    enter_name(cx, window, "assets");
+    assert!(dir.path().join("assets").is_dir());
+    window
+        .update(cx, |workspace, window, cx| {
+            let tree = workspace.tree.as_ref().unwrap();
+            assert_eq!(tree.read(cx).selected(), Some(dir.path().join("assets")));
+            assert!(tree.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+    right_click_at(cx, window, 300.);
+    cx.simulate_keystrokes(window.into(), "down enter");
+    enter_name(cx, window, "notes.md");
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(
+                workspace
+                    .file_prompt
+                    .as_ref()
+                    .unwrap()
+                    .error
+                    .as_ref()
+                    .map(|error| error.as_str()),
+                Some("An item with that name already exists.")
+            );
+            assert!(workspace.notice.is_none());
+        })
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
+        "x"
+    );
+    enter_name(cx, window, "other.txt");
+    assert!(dir.path().join("other.txt").is_file());
+    close(cx, window);
+}
+
+#[gpui::test]
+fn background_paste_uses_root_and_row_context_menu_still_targets_the_entry(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let source = outside.path().join("copied.txt");
+    std::fs::write(&source, "copied content").unwrap();
+    let folder = dir.path().join("folder");
+    std::fs::create_dir(&folder).unwrap();
+    let window = open(cx, dir.path());
+    select(cx, window, &folder);
+    cx.update(|cx| Workspace::copy_file(source, false, cx));
+    right_click_at(cx, window, 300.);
+    window
+        .update(cx, |workspace, _, cx| {
+            assert!(
+                workspace
+                    .tree
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .selected()
+                    .is_none()
+            )
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "up enter"); // Paste File.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("copied.txt")).unwrap(),
+        "copied content"
+    );
+    assert!(!folder.join("copied.txt").exists());
+    right_click_at(cx, window, TAB_BAR_HEIGHT + 4. + 12.); // Folder row.
+    cx.simulate_keystrokes(window.into(), "down enter"); // Duplicate, not New File.
+    assert!(dir.path().join("folder copy").is_dir());
+    window
+        .update(cx, |workspace, _, _| {
+            assert!(workspace.file_prompt.is_none())
+        })
+        .unwrap();
     close(cx, window);
 }

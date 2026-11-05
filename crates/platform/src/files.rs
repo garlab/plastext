@@ -20,6 +20,19 @@ pub fn copy_into(source: &Path, directory: &Path) -> io::Result<PathBuf> {
     copy_unique(source, directory, false)
 }
 
+/// Creates an empty file without replacing any existing entry, including symlinks.
+pub fn create_file(path: &Path) -> io::Result<()> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map(|_| ())
+}
+
+pub fn create_folder(path: &Path) -> io::Result<()> {
+    fs::create_dir(path)
+}
+
 fn copy_unique(source: &Path, directory: &Path, duplicate: bool) -> io::Result<PathBuf> {
     let metadata = fs::symlink_metadata(source)?;
     let filename = source
@@ -184,6 +197,41 @@ pub fn read_clipboard_url() -> Option<PathBuf> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    #[test]
+    fn creation_refuses_existing_files_folders_and_dangling_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("new.txt");
+        create_file(&file).unwrap();
+        fs::write(&file, "keep").unwrap();
+        assert_eq!(
+            create_file(&file).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            create_folder(&file).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+        let folder = dir.path().join("folder");
+        create_folder(&folder).unwrap();
+        assert_eq!(
+            create_folder(&folder).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(
+            create_file(&folder).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        let target = dir.path().join("missing");
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert_eq!(
+            create_file(&link).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read_link(link).unwrap(), target);
+        assert!(!target.exists());
+    }
     #[test]
     #[ignore = "moves only a temporary fixture to the system Bin, then restores it"]
     fn system_bin_keeps_file_contents_recoverable() {

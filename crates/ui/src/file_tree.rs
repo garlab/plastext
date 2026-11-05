@@ -21,7 +21,7 @@ pub enum FileTreeEvent {
         preview: bool,
     },
     ContextMenu {
-        path: PathBuf,
+        path: Option<PathBuf>,
         position: Point<Pixels>,
     },
 }
@@ -260,6 +260,19 @@ impl Render for FileTreeView {
                 MouseButton::Left,
                 cx.listener(|this, _, window, _| this.focus.focus(window)),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    this.focus.focus(window);
+                    this.select(None, cx);
+                    cx.emit(FileTreeEvent::ContextMenu {
+                        path: None,
+                        position: event.position,
+                    });
+                }),
+            )
             .child(
                 uniform_list(
                     "file-tree",
@@ -380,7 +393,7 @@ impl Render for FileTreeView {
                                                     this.focus.focus(window);
                                                     this.select(Some(menu_path.clone()), cx);
                                                     cx.emit(FileTreeEvent::ContextMenu {
-                                                        path: menu_path.clone(),
+                                                        path: Some(menu_path.clone()),
                                                         position: event.position,
                                                     });
                                                 },
