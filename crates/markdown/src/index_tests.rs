@@ -18,6 +18,7 @@ fn compact_records_and_small_document_parity() {
         include_str!("../../../docs/fixtures/tables.md"),
         include_str!("../../../docs/fixtures/safe-html.md"),
         include_str!("../../../docs/fixtures/math-headings.md"),
+        include_str!("../../../docs/fixtures/sgf.md"),
         "# Title\n\n**Hello** *world* &amp; café\n\n> quote\n>\n> - nested\n>   - deeper\n\n---\n",
         "---\ntitle: café\nitems: [one, two]\n---\n# Body\n\n- [x] done\n- next\n\n```rust\nlet x = 42;\n```\n",
         "+++\nname = 'test'\n[table]\na = 1\n+++\n# Body\n\nTerm\n: definition\n",
@@ -30,6 +31,73 @@ fn compact_records_and_small_document_parity() {
         let (index, blocks) = indexed(text);
         assert_eq!(blocks, eager.blocks, "{text}");
         assert_eq!(index.headings, eager.headings, "{text}");
+    }
+}
+
+#[test]
+fn sgf_selectors_and_whole_fences_survive_lazy_pages() {
+    let record = format!("(;GM[1]SZ[9]\n{})\n", ";B[];W[]\n".repeat(64));
+    let text = format!(
+        "{}\n```SGF game=2 move=1\n{record}```\n\n# End\n",
+        "padding\n\n".repeat(PAGE_BYTES / 9 - 20)
+    );
+    let (index, blocks) = indexed(&text);
+    assert!(index.pages.len() > 1);
+    assert_eq!(blocks, parse(&text).blocks);
+    let code: Vec<_> = blocks
+        .iter()
+        .filter(|b| matches!(b.kind, BlockKind::Code { .. }))
+        .collect();
+    assert_eq!(
+        code.len(),
+        1,
+        "SGF fences longer than ordinary code chunks stay whole"
+    );
+    assert_eq!(code[0].text, record);
+    assert!(
+        matches!(&code[0].kind, BlockKind::Code { language, attributes, first: true }
+        if language == "SGF" && attributes == "game=2 move=1")
+    );
+
+    for record in [
+        format!("(;C[{}])\n", "a".repeat(BLOCK_TEXT_LIMIT)),
+        format!("(;\n{})\n", "C[note]\n".repeat(DIAGRAM_LINE_LIMIT)),
+    ] {
+        let (_, blocks) = indexed(&format!("```sgf move=0\n{record}```\n"));
+        assert!(blocks.len() > 1);
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<String>(),
+            record
+        );
+        for (i, block) in blocks.iter().enumerate() {
+            assert!(block.text.len() <= BLOCK_TEXT_LIMIT);
+            assert!(
+                matches!(&block.kind, BlockKind::Code { language, attributes, first }
+                if language == "sgf" && attributes == "move=0" && *first == (i == 0))
+            );
+        }
+    }
+}
+
+#[test]
+fn quoted_diagrams_keep_line_budgets_across_parser_events() {
+    for language in ["sgf move=0", "mermaid"] {
+        let text = format!(
+            "> ```{language}\n{}> ```\n",
+            "> a\n".repeat(DIAGRAM_LINE_LIMIT + 1)
+        );
+        let (_, blocks) = indexed(&text);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].text.lines().count(), DIAGRAM_LINE_LIMIT);
+        assert_eq!(blocks[1].text, "a\n");
+        assert!(matches!(
+            blocks[0].kind,
+            BlockKind::Code { first: true, .. }
+        ));
+        assert!(matches!(
+            blocks[1].kind,
+            BlockKind::Code { first: false, .. }
+        ));
     }
 }
 

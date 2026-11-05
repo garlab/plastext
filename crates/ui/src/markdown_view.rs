@@ -20,14 +20,15 @@ use std::{
 };
 
 use crate::tab_view::format_size;
+mod diagrams;
 mod editing;
 mod find;
 mod highlights;
 mod math;
-mod mermaid;
 mod metadata;
 mod profile;
 mod selection;
+mod sgf;
 mod visibility;
 type CodeHighlights = Arc<Vec<(std::ops::Range<usize>, Highlight)>>;
 
@@ -117,7 +118,7 @@ pub struct MarkdownView {
     image_order: VecDeque<String>,
     image_rows: HashMap<String, Vec<usize>>,
     formulas: math::Formulas,
-    diagrams: mermaid::Diagrams,
+    diagrams: diagrams::Diagrams,
     code_highlights: HashMap<usize, Option<CodeHighlights>>,
     cancel: Arc<AtomicBool>,
     _parse: Task<()>,
@@ -265,7 +266,7 @@ impl MarkdownView {
             image_order: VecDeque::new(),
             image_rows: HashMap::new(),
             formulas: math::Formulas::default(),
-            diagrams: mermaid::Diagrams::default(),
+            diagrams: diagrams::Diagrams::default(),
             code_highlights: HashMap::new(),
             cancel,
             _parse: parsing,

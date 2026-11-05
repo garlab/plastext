@@ -89,7 +89,7 @@ set the new version pin in the root `Cargo.toml`, then from the **Plastext root*
 cargo check -p plastext-app
 cargo test --locked -p plastext-platform --test mermaid_preview
 cargo test --locked -p plastext-platform --test image_preview
-cargo test --locked -p plastext-ui markdown_view::mermaid
+cargo test --locked -p plastext-ui markdown_view::diagrams
 ```
 
 The first check allows Cargo to replace the removed path override in `Cargo.lock`

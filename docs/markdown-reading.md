@@ -3,6 +3,10 @@
 Markdown opens in Preview. Use **⇧⌘V** or **Source** to switch views at the
 corresponding document position. Each split pane has its own view and selection.
 
+Fenced [Mermaid diagrams](mermaid.md) and [SGF Go positions](sgf.md#boards-in-markdown)
+render on demand, with per-fence Source/Preview and Copy controls. SGF supports
+`game` and `move` selectors; see the [board fixture](fixtures/sgf.md).
+
 ## Select and copy
 
 - Drag across text, headings, table cells or code to select it. Drag beyond the

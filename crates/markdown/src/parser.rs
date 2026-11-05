@@ -173,11 +173,14 @@ pub(crate) fn parse_context(
                 range,
             ),
             Event::Start(Tag::CodeBlock(kind)) => {
-                let language = match kind {
+                let (language, attributes) = match kind {
                     CodeBlockKind::Fenced(s) => {
-                        s.split_whitespace().next().unwrap_or("").to_owned()
+                        let info = s.trim();
+                        let (language, attributes) =
+                            info.split_once(char::is_whitespace).unwrap_or((info, ""));
+                        (language.to_owned(), attributes.trim().to_owned())
                     }
-                    _ => String::new(),
+                    _ => (String::new(), String::new()),
                 };
                 builder.start(
                     if language == "math" {
@@ -185,6 +188,7 @@ pub(crate) fn parse_context(
                     } else {
                         BlockKind::Code {
                             language,
+                            attributes,
                             first: true,
                         }
                     },
@@ -405,6 +409,7 @@ pub(crate) fn parse_context(
 
 struct Builder<'a> {
     current: Option<Block>,
+    code_newlines: usize,
     batch: Vec<Arc<Block>>,
     emit: &'a mut dyn FnMut(Vec<Arc<Block>>) -> bool,
     stopped: bool,
@@ -420,6 +425,7 @@ impl<'a> Builder<'a> {
     fn new(emit: &'a mut dyn FnMut(Vec<Arc<Block>>) -> bool, ids: &'a mut HeadingIds) -> Self {
         Self {
             current: None,
+            code_newlines: 0,
             batch: Vec::new(),
             emit,
             stopped: false,
@@ -479,6 +485,7 @@ impl<'a> Builder<'a> {
     }
     fn start(&mut self, kind: BlockKind, range: Range<usize>) {
         self.flush();
+        self.code_newlines = 0;
         let mut block = Block::new(kind, range);
         block.alignment = self.html.alignment();
         block.details = self.html.section();
@@ -496,10 +503,27 @@ impl<'a> Builder<'a> {
             self.ensure(source.clone());
             let block = self.current.as_mut().unwrap();
             let available = BLOCK_TEXT_LIMIT.saturating_sub(block.text.len());
-            if available < 4 {
+            // Diagram fences need their complete bounded source for layout.
+            // Count across parser events too (quoted fences emit one per line).
+            let code_lines = match &block.kind {
+                BlockKind::Code { language, .. }
+                    if language.eq_ignore_ascii_case("mermaid")
+                        || language.eq_ignore_ascii_case("sgf") =>
+                {
+                    Some(crate::DIAGRAM_LINE_LIMIT)
+                }
+                BlockKind::Code { .. } | BlockKind::FrontMatterSource { .. } => Some(32),
+                _ => None,
+            };
+            if available < 4 || code_lines.is_some_and(|limit| self.code_newlines >= limit) {
                 let kind = match &block.kind {
-                    BlockKind::Code { language, .. } => BlockKind::Code {
+                    BlockKind::Code {
+                        language,
+                        attributes,
+                        ..
+                    } => BlockKind::Code {
                         language: language.clone(),
+                        attributes: attributes.clone(),
                         first: false,
                     },
                     BlockKind::Math => BlockKind::Math,
@@ -516,25 +540,14 @@ impl<'a> Builder<'a> {
             while !value.is_char_boundary(take) {
                 take -= 1;
             }
-            // Diagram fences need their complete bounded source for layout.
-            // Ordinary code remains split into short, virtualized items.
-            let code_lines = match &block.kind {
-                BlockKind::Code { language, .. }
-                    if language
-                        .split_whitespace()
-                        .next()
-                        .is_some_and(|s| s.eq_ignore_ascii_case("mermaid")) =>
-                {
-                    crate::MERMAID_LINE_LIMIT
+            if let Some(limit) = code_lines {
+                for (end, _) in value[..take].match_indices('\n') {
+                    self.code_newlines += 1;
+                    if self.code_newlines == limit {
+                        take = end + 1;
+                        break;
+                    }
                 }
-                _ => 32,
-            };
-            if matches!(
-                block.kind,
-                BlockKind::Code { .. } | BlockKind::FrontMatterSource { .. }
-            ) && let Some((end, _)) = value[..take].match_indices('\n').nth(code_lines - 1)
-            {
-                take = end + 1;
             }
             let start = block.text.len();
             block.text.push_str(&value[..take]);
@@ -553,8 +566,13 @@ impl<'a> Builder<'a> {
             consumed += take;
             if !value.is_empty() {
                 let kind = match &block.kind {
-                    BlockKind::Code { language, .. } => BlockKind::Code {
+                    BlockKind::Code {
+                        language,
+                        attributes,
+                        ..
+                    } => BlockKind::Code {
                         language: language.clone(),
+                        attributes: attributes.clone(),
                         first: false,
                     },
                     BlockKind::Math => BlockKind::Math,

@@ -604,6 +604,7 @@ fn source_document(text: &str, offset: usize) -> Document {
         let mut block = Block::new(
             BlockKind::Code {
                 language: String::new(),
+                attributes: String::new(),
                 first: start == 0,
             },
             offset + start..offset + end,

@@ -1,10 +1,16 @@
-//! Viewport-driven diagrams with one byte budget across windows and tabs.
+//! Viewport-driven Mermaid and SGF diagrams with one budget across windows and tabs.
 use super::*;
 use gpui::{AnyWindowHandle, BorrowAppContext, EntityId, Global, RenderImage, img};
 
 const BUDGET: usize = 32 * 1024 * 1024;
 type Key = (EntityId, usize, bool);
-type Diagram = (Arc<RenderImage>, u32, u32);
+#[derive(Clone)]
+struct Diagram {
+    image: Arc<RenderImage>,
+    width: u32,
+    height: u32,
+    caption: Option<SharedString>,
+}
 struct Entry {
     result: Result<Diagram, String>,
     window: AnyWindowHandle,
@@ -105,7 +111,7 @@ impl Cache {
         for key in keys {
             let entry = self.entries.remove(&key).unwrap();
             self.bytes -= entry.bytes;
-            if let Ok((image, _, _)) = entry.result {
+            if let Ok(Diagram { image, .. }) = entry.result {
                 cx.defer(move |cx| {
                     let _ = entry
                         .window
@@ -188,11 +194,38 @@ impl Drop for Diagrams {
     }
 }
 
-fn is_mermaid(language: &str) -> bool {
-    language
-        .split_whitespace()
-        .next()
-        .is_some_and(|s| s.eq_ignore_ascii_case("mermaid"))
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Mermaid,
+    Sgf,
+}
+impl Kind {
+    fn for_language(language: &str, mermaid_enabled: bool) -> Option<Self> {
+        if language.eq_ignore_ascii_case("mermaid") && mermaid_enabled {
+            Some(Self::Mermaid)
+        } else if language.eq_ignore_ascii_case("sgf") {
+            Some(Self::Sgf)
+        } else {
+            None
+        }
+    }
+    fn render(
+        self,
+        source: &str,
+        attributes: &str,
+        light: bool,
+        cancel: &Arc<AtomicBool>,
+    ) -> Result<(document_graphics::Raster, Option<String>), String> {
+        match self {
+            Self::Mermaid => plastext_platform::mermaid::render(source, light, cancel)
+                .map_err(|e| e.to_string())?
+                .map(|pixels| (pixels, None))
+                .ok_or_else(|| "Unsupported diagram content or preview limits exceeded".into()),
+            Self::Sgf => sgf::render(source, attributes, light, cancel)
+                .map(|(pixels, caption)| (pixels, Some(caption)))
+                .map_err(|e| e.to_string()),
+        }
+    }
 }
 fn complete_fence(document: &DocumentIndex, ix: usize) -> bool {
     document.blocks.get(ix).is_some_and(|b| b.code_first)
@@ -202,13 +235,18 @@ fn complete_fence(document: &DocumentIndex, ix: usize) -> bool {
             .is_none_or(|b| b.kind != plastext_markdown::BlockType::Code || b.code_first)
 }
 
-fn preview_rejection(document: &DocumentIndex, ix: usize, source: &str) -> Option<String> {
+fn preview_rejection(
+    document: &DocumentIndex,
+    ix: usize,
+    source: &str,
+    kind: Kind,
+) -> Option<String> {
     if !complete_fence(document, ix) {
         Some(format!(
             "Diagram exceeds the preview limit ({} lines or 16 KiB) · showing source",
-            plastext_markdown::MERMAID_LINE_LIMIT
+            plastext_markdown::DIAGRAM_LINE_LIMIT
         ))
-    } else if !document_graphics::mermaid::admissible(source) {
+    } else if kind == Kind::Mermaid && !document_graphics::mermaid::admissible(source) {
         Some("Unsupported diagram syntax or preview limits exceeded · showing source".into())
     } else {
         None
@@ -236,12 +274,19 @@ impl MarkdownView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let BlockKind::Code { language, first } = &block.kind else {
+        let BlockKind::Code {
+            language,
+            attributes,
+            first,
+        } = &block.kind
+        else {
             unreachable!()
         };
         let first = *first;
-        let mermaid = is_mermaid(language) && first && self.settings.mermaid;
-        if mermaid {
+        let kind = first
+            .then(|| Kind::for_language(language, self.settings.mermaid))
+            .flatten();
+        if kind.is_some() {
             self.diagrams.rows.insert(ix);
         }
         let found = self.find_matches_text(&block.text);
@@ -250,10 +295,10 @@ impl MarkdownView {
             theme.background.r * 0.2126 + theme.background.g * 0.7152 + theme.background.b * 0.0722
                 > 0.5;
         let key = (cx.entity_id(), ix, light);
-        let result = if mermaid && !source {
+        let result = if let Some(kind) = kind.filter(|_| !source) {
             if self.parsing {
                 None
-            } else if let Some(reason) = preview_rejection(&self.document, ix, &block.text) {
+            } else if let Some(reason) = preview_rejection(&self.document, ix, &block.text, kind) {
                 Some(Err(reason))
             } else {
                 let result = Cache::get(key, cx);
@@ -266,27 +311,29 @@ impl MarkdownView {
                     self.diagrams.pending.insert(ix, cancel.clone());
                     let window = window.window_handle();
                     let text = block.text.clone();
+                    let attributes = attributes.clone();
                     let task = cx.background_executor().spawn({
                         let cancel = cancel.clone();
                         async move {
-                            plastext_platform::mermaid::render(&text, light, &cancel)
-                                .map_err(|e| e.to_string())
-                                .and_then(|p| {
-                                    p.ok_or_else(|| {
-                                        "Unsupported diagram content or preview limits exceeded · showing source"
-                                            .into()
-                                    })
-                                })
-                                .map(|preview| {
+                            kind.render(&text, &attributes, light, &cancel)
+                                .map_err(|e| format!("{e} · showing source"))
+                                .map(|(preview, caption)| {
                                     let bytes = preview.rgba.len() * 2;
-                                    (
+                                    let (image, width, height) =
                                         crate::image_view::render_image(plastext_assets::Preview {
                                             width: preview.width,
                                             height: preview.height,
                                             original_width: preview.original_width,
                                             original_height: preview.original_height,
                                             rgba: preview.rgba,
-                                        }),
+                                        });
+                                    (
+                                        Diagram {
+                                            image,
+                                            width,
+                                            height,
+                                            caption: caption.map(Into::into),
+                                        },
                                         bytes,
                                     )
                                 })
@@ -318,12 +365,18 @@ impl MarkdownView {
         } else {
             None
         };
-        let content = if mermaid && !source {
+        let content = if kind.is_some() && !source {
             match result {
-                Some(Ok((image, width, height))) => div()
+                Some(Ok(Diagram {
+                    image,
+                    width,
+                    height,
+                    caption,
+                })) => div()
                     .w_full()
                     .flex()
-                    .justify_center()
+                    .flex_col()
+                    .items_center()
                     .child(
                         div()
                             .w_full()
@@ -334,6 +387,9 @@ impl MarkdownView {
                             })
                             .child(img(image).size_full()),
                     )
+                    .when_some(caption, |d, caption| {
+                        d.child(div().mt_2().text_color(theme.text_muted).child(caption))
+                    })
                     .into_any_element(),
                 Some(Err(error)) => div()
                     .child(div().mb_2().text_color(theme.text_muted).child(error))
@@ -369,11 +425,12 @@ impl MarkdownView {
                             div()
                                 .flex()
                                 .gap_3()
-                                .when(mermaid && found, |d| d.child("Source · find"))
-                                .when(mermaid && !found, |d| {
+                                .when(kind.is_some() && found, |d| d.child("Source · find"))
+                                .when(kind.is_some() && !found, |d| {
                                     d.child(
                                         div()
                                             .id(("md-diagram-mode", ix))
+                                            .debug_selector(|| "md-diagram-mode".into())
                                             .cursor_pointer()
                                             .child(if source { "Preview" } else { "Source" })
                                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -399,6 +456,7 @@ impl MarkdownView {
                                 .child(
                                     div()
                                         .id(("md-copy", ix))
+                                        .debug_selector(|| "md-copy".into())
                                         .cursor_pointer()
                                         .child(if self.parsing { "Loading…" } else { "Copy" })
                                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -433,6 +491,117 @@ impl MarkdownView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    #[gpui::test]
+    fn sgf_preview_copy_and_source_toggle_share_the_bounded_cache(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("board.md");
+        let record = "(;GM[1]SZ[9]AB[cc];B[dd];W[ee])\n";
+        std::fs::write(&path, format!("```sgf move=1\n{record}```\n")).unwrap();
+        let (source, index) = plastext_buffer::open(&path, Default::default()).unwrap();
+        cx.update(crate::init);
+        let window = cx.add_window(|window, cx| {
+            let view = MarkdownView::new(
+                path,
+                source,
+                index,
+                TextStyle {
+                    font_family: "Menlo".into(),
+                    font_size: px(14.),
+                    line_height: 1.5,
+                    tab_size: 4,
+                    sticky_scroll: false,
+                    max_parse_size: 0,
+                },
+                Arc::default(),
+                cx,
+            );
+            view.focus.focus(window);
+            view
+        });
+        cx.run_until_parked();
+        let original = window
+            .update(cx, |view, _, cx| {
+                assert!(!view.parsing);
+                assert!(view.diagrams.pending.is_empty());
+                let cache = cx.global::<Cache>();
+                assert_eq!(cache.entries.len(), 1);
+                assert!(cache.bytes > 0 && cache.bytes <= BUDGET);
+                let preview = cache
+                    .entries
+                    .values()
+                    .next()
+                    .unwrap()
+                    .result
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(
+                    preview.caption.as_ref().map(|s| s.as_ref()),
+                    Some("Game 1/1 · move 1 · main line")
+                );
+                preview.image.clone()
+            })
+            .unwrap();
+        // Exercise the actual per-fence controls, including returning to a
+        // raster without replacing it with a shorter loading placeholder.
+        for selector in ["md-copy", "md-diagram-mode", "md-diagram-mode"] {
+            let mut visual = VisualTestContext::from_window(window.into(), cx);
+            let bounds = visual.debug_bounds(selector).unwrap();
+            visual.simulate_click(bounds.center(), Default::default());
+            cx.run_until_parked();
+            window
+                .update(cx, |view, _, cx| {
+                    assert!(view.diagrams.pending.is_empty());
+                    let cache = cx.global::<Cache>();
+                    let preview = cache
+                        .entries
+                        .values()
+                        .next()
+                        .unwrap()
+                        .result
+                        .as_ref()
+                        .unwrap();
+                    assert!(Arc::ptr_eq(&preview.image, &original));
+                    assert_eq!(
+                        cx.read_from_clipboard().unwrap().text().as_deref(),
+                        Some(record)
+                    );
+                })
+                .unwrap();
+        }
+        window
+            .update(cx, |view, _, cx| {
+                assert!(!view.diagrams.source.contains(&0));
+                view.set_visible(false, cx);
+                let cache = cx.global::<Cache>();
+                assert!(cache.entries.is_empty());
+                assert_eq!(cache.bytes, 0);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn split_sgf_fences_never_render_partial_records() {
+        for source in [
+            format!(
+                "(;C[{}])\n",
+                "x".repeat(plastext_markdown::BLOCK_TEXT_LIMIT)
+            ),
+            format!(
+                "(;\n{})\n",
+                "C[note]\n".repeat(plastext_markdown::DIAGRAM_LINE_LIMIT)
+            ),
+        ] {
+            let document = parse(&format!("```sgf\n{source}```\n"));
+            let index = DocumentIndex::initial(&document, 0);
+            assert!(index.blocks.len() > 1);
+            for ix in 0..index.blocks.len() {
+                assert!(!complete_fence(&index, ix));
+            }
+            assert!(preview_rejection(&index, 0, &document.blocks[0].text, Kind::Sgf).is_some());
+        }
+    }
     #[test]
     fn large_tree_stays_whole_and_oversized_fences_keep_all_source() {
         let mut source = String::from("graph TD\n");
@@ -448,13 +617,13 @@ mod tests {
 
         let source = format!(
             "graph TD\n{}",
-            "%% comment\n".repeat(plastext_markdown::MERMAID_LINE_LIMIT)
+            "%% comment\n".repeat(plastext_markdown::DIAGRAM_LINE_LIMIT)
         );
         assert!(source.len() < plastext_markdown::BLOCK_TEXT_LIMIT);
         let document = parse(&format!("```mermaid\n{source}```\n"));
         let index = DocumentIndex::initial(&document, 0);
         assert_eq!(index.blocks.len(), 2);
-        let reason = preview_rejection(&index, 0, &document.blocks[0].text).unwrap();
+        let reason = preview_rejection(&index, 0, &document.blocks[0].text, Kind::Mermaid).unwrap();
         assert!(reason.contains("1024 lines"));
         assert_eq!(
             document
@@ -469,8 +638,10 @@ mod tests {
 
     #[test]
     fn only_whole_mermaid_fences_are_rendered() {
-        assert!(is_mermaid("Mermaid title"));
-        assert!(!is_mermaid("mermaid-js"));
+        assert_eq!(Kind::for_language("Mermaid", true), Some(Kind::Mermaid));
+        assert_eq!(Kind::for_language("mermaid-js", true), None);
+        assert_eq!(Kind::for_language("mermaid", false), None);
+        assert_eq!(Kind::for_language("SGF", false), Some(Kind::Sgf));
         let document =
             parse("```mermaid\nflowchart LR; A-->B\n```\n\n```mermaid\nflowchart LR; C-->D\n```\n");
         let index = DocumentIndex::initial(&document, 0);

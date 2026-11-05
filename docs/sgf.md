@@ -36,6 +36,34 @@ comment. Scroll the tree in either direction to explore distant branches.
 The original source remains available when a file or position cannot be previewed.
 This is a record viewer, without move editing, scoring or engine analysis.
 
+## Boards in Markdown
+
+Fences tagged `sgf` (case-insensitive) show a static board. By default this is
+the first game's final main-line position. Optional fence selectors match mdviewer:
+
+- `game=2` selects the second game in a collection (one-based).
+- `move=1` selects the first move on the main line; passes count as moves.
+- `move=0` selects the root, including setup stones and any root move.
+- `move=last` selects the final main-line node, including its annotations.
+
+```sgf move=1
+(;FF[4]GM[1]SZ[9]AB[cc][dc]AW[cd];B[dd];W[ed];B[ec])
+```
+
+Each board has **Source / Preview** and **Copy** controls. Copy preserves the
+record text; Find reveals matching source. Invalid records, unsupported selectors
+and out-of-range games or moves show an explanation and the source. Use a standalone
+`.sgf` file for interactive move and variation navigation.
+
+Try the [Markdown fixture](fixtures/sgf.md). Boards render only near the viewport
+and share Mermaid's 32 MiB CPU/GPU cache and two-job limit per view. Scrolling away
+cancels pending work; hiding the preview releases its images. Rendering uses the
+native SGF library in a background task, with no network, external resources or
+child process. Each fence is limited to 16 KiB, 1,024 lines and 8,192 nodes; larger
+fences retain all their text in virtualized source chunks. Rasters are bounded to
+one million pixels. Parsed collections and board positions are discarded after
+rendering. Resizing reuses the raster and keeps the board's proportions.
+
 ## Supported records and limits
 
 The parser supports Go (`GM[1]`) records, sequences and variations, setup and

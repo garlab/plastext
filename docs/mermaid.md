@@ -8,7 +8,7 @@ Try the [demo](fixtures/mermaid.md):
 cargo run -p plastext-app -- docs/fixtures/mermaid.md
 ```
 
-To keep all diagrams as code, set this in `config.toml` and restart:
+To keep Mermaid diagrams as code, set this in `config.toml` and restart:
 
 ```toml
 [markdown]
@@ -43,7 +43,7 @@ Tests cover all supported families in both appearances, source fallback, oversiz
 
 ```sh
 cargo test -p plastext-platform --test mermaid_preview
-cargo test -p plastext-ui markdown_view::mermaid
+cargo test -p plastext-ui markdown_view::diagrams
 ```
 
 To save diagnostic PNGs under the ignored workspace `target/` directory:

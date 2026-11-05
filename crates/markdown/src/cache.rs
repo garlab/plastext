@@ -29,7 +29,11 @@ pub fn parsed_bytes(blocks: &[Arc<Block>]) -> usize {
                                 + alignments.len()
                         }
                         BlockKind::Heading { id, .. } => id.capacity(),
-                        BlockKind::Code { language, .. } => language.capacity(),
+                        BlockKind::Code {
+                            language,
+                            attributes,
+                            ..
+                        } => language.capacity() + attributes.capacity(),
                         BlockKind::Image {
                             destination,
                             title,
