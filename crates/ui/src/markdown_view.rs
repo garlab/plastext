@@ -504,7 +504,10 @@ impl MarkdownView {
             if self._source_observer.is_none() {
                 self._source_observer = Some(cx.observe(view, |_, _, cx| cx.notify()));
             }
-            view.update(cx, |v, cx| v.scroll_to_offset(offset, cx));
+            view.update(cx, |view, cx| {
+                view.scroll_to_offset(offset, cx);
+                view.edit_by_default(cx);
+            });
             view.focus_handle(cx).focus(window);
         } else {
             if let Some(view) = &self.source_view {

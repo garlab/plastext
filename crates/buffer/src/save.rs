@@ -47,6 +47,25 @@ impl DiskVersion {
         &self.target
     }
 
+    /// Check write access without changing the file. Blocks; call on a worker.
+    pub fn is_writable(&self) -> io::Result<bool> {
+        match platform::open(&self.target, true) {
+            Ok(file) => {
+                self.verify(&file).map_err(io::Error::other)?;
+                Ok(true)
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn is_current(&self) -> io::Result<bool> {
         match Self::read(&self.path) {
             Ok(current) => Ok(current == *self),

@@ -24,7 +24,10 @@ impl MarkdownView {
         }));
         if let Some(source) = &self.source_view {
             source.update(cx, |view, cx| {
-                view.set_embedded_editing_document(document.clone(), cx)
+                view.set_embedded_editing_document(document.clone(), cx);
+                if !self.rendered {
+                    view.edit_by_default(cx);
+                }
             });
         }
         self.editing_document = Some(document);

@@ -219,7 +219,7 @@ mod tests {
             workspace
         });
         cx.run_until_parked();
-        cx.simulate_keystrokes(window.into(), "cmd-shift-v e");
+        cx.simulate_keystrokes(window.into(), "cmd-shift-v");
         cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string("# Unsaved\n".into())));
         cx.simulate_keystrokes(window.into(), "cmd-a cmd-v");
         window.update(cx, |workspace, _, cx| {
@@ -249,5 +249,79 @@ mod tests {
             })
             .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "# Original\n");
+    }
+
+    #[gpui::test]
+    fn text_opens_editable_and_binary_remains_read_only(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("code.rs");
+        let binary = dir.path().join("data.bin");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        std::fs::write(&binary, [0, 1, 2, 0, 255]).unwrap();
+        cx.update(crate::init);
+        let window = cx.add_window(|window, cx| {
+            let mut workspace = Workspace::new(None, Arc::default(), window, cx);
+            workspace.open_with_kind(path.clone(), None, OpenKind::Preview, window, cx);
+            workspace
+        });
+        cx.run_until_parked();
+        window
+            .update(cx, |workspace, _, cx| {
+                let tab = workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .unwrap();
+                assert!(
+                    tab.preview,
+                    "opening in edit mode must not pin a preview tab"
+                );
+                assert!(!tab.view.is_dirty(cx));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "escape e");
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(5));
+        cx.run_until_parked();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "fn main() {}\n");
+        window.update(cx, |workspace, _, cx| {
+            let tab = workspace.panes[&workspace.active_pane].active_tab().unwrap();
+            assert!(tab.view.is_dirty(cx));
+            assert!(!tab.preview);
+            assert!(matches!(tab.view.status(cx), crate::tab_view::TabStatus::Text(status) if status.editing));
+        }).unwrap();
+        cx.simulate_keystrokes(window.into(), "cmd-s");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "efn main() {}\n");
+        // Opening an existing file at a line places the editing caret there too.
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_with_kind(
+                    path.clone(),
+                    Some(Target::Line(2)),
+                    OpenKind::Keep,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "x cmd-s");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "efn main() {}\nx");
+        window
+            .update(cx, |workspace, window, cx| {
+                workspace.open_with_kind(binary.clone(), None, OpenKind::Keep, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_keystrokes(window.into(), "e enter cmd-s");
+        window
+            .update(cx, |workspace, window, cx| {
+                let tab = workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .unwrap();
+                assert!(matches!(tab.view, TabView::Hex(_)));
+                assert!(tab.view.editing_document(cx).is_none());
+                window.remove_window();
+            })
+            .unwrap();
+        assert_eq!(std::fs::read(&binary).unwrap(), [0, 1, 2, 0, 255]);
     }
 }

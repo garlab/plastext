@@ -541,3 +541,40 @@ fn dropping_a_save_lock_unlocks_even_when_another_descriptor_survives() {
     drop(next);
     drop(duplicate);
 }
+
+#[test]
+fn write_access_checks_do_not_modify_files_and_readonly_saves_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("document.txt");
+    fs::write(&path, b"original").unwrap();
+    let disk = DiskVersion::read(&path).unwrap();
+    assert!(disk.is_writable().unwrap());
+    assert_eq!(DiskVersion::read(&path).unwrap(), disk);
+    assert_eq!(fs::read(&path).unwrap(), b"original");
+    let writable = fs::metadata(&path).unwrap().permissions();
+    let mut readonly = writable.clone();
+    readonly.set_readonly(true);
+    fs::set_permissions(&path, readonly).unwrap();
+    let disk = DiskVersion::read(&path).unwrap();
+    assert!(!disk.is_writable().unwrap());
+    #[cfg(unix)]
+    {
+        let link = dir.path().join("linked.txt");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(!DiskVersion::read(&link).unwrap().is_writable().unwrap());
+    }
+    let buffer = crate::EditBuffer::from_bytes(b"changed".to_vec());
+    for atomic in [true, false] {
+        let error = save_snapshot(
+            &buffer.snapshot(),
+            &disk,
+            SaveOptions { atomic },
+            &cancelled(),
+            |_| {},
+        )
+        .unwrap_err();
+        assert!(!error.target_may_have_changed);
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+    }
+    fs::set_permissions(&path, writable).unwrap();
+}

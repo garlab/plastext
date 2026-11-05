@@ -1,10 +1,13 @@
 # Text and code editing
 
-Files still open in read mode. In a plain text or code tab, press `e` or Enter,
-or double-click the content, to enter edit mode. For Markdown, first choose
-**Source** (`Cmd-Shift-V`), then use the same editing controls. The status bar changes to
-**EDIT** and an unsaved tab gets a dot. A modified preview tab becomes permanent.
-Escape returns to read mode after the changes have been saved or undone.
+Text and code files open ready to edit. Markdown opens in Preview; choosing
+**Source** (`Cmd-Shift-V`) makes it editable immediately. Source stays in edit
+mode, including after Escape or saving. Read-only files and binary/hex views
+remain non-editable. Write-access checks and preparation run on a worker.
+
+The status bar shows **EDIT**, and an unsaved tab gets a dot. A modified preview
+tab becomes permanent. Saving is explicit: press **Cmd-S**. There is no autosave;
+typing, waiting, switching tabs and switching to Preview leave the disk file alone.
 
 | Action | macOS shortcut |
 | --- | --- |
@@ -63,7 +66,7 @@ input or saves must finish before the document can close.
 
 This is the first GUI editing increment in M3:
 
-- Editing applies to plain text, code and Markdown Source. Other preview/source
+- Automatic editing applies to plain text, code and Markdown Source. Other preview/source
   toggles remain read-only until their synchronization is connected.
 - Multicursor, word movement, replace, indentation commands, EditorConfig,
   new files, Save As and encoding/newline controls remain to implement.

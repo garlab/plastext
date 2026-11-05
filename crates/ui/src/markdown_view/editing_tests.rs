@@ -50,7 +50,7 @@ fn heading(cx: &mut TestAppContext, window: WindowHandle<MarkdownView>) -> Strin
 #[gpui::test]
 fn markdown_source_enters_edit_mode_and_previews_unsaved_text(cx: &mut TestAppContext) {
     let (dir, window) = open(cx);
-    cx.simulate_keystrokes(window.into(), "cmd-shift-v e");
+    cx.simulate_keystrokes(window.into(), "cmd-shift-v");
     window
         .update(cx, |view, _, cx| {
             assert!(view.source_status(cx).unwrap().editing);
@@ -107,17 +107,75 @@ fn markdown_source_enters_edit_mode_and_previews_unsaved_text(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-fn markdown_source_double_click_enters_edit_mode(cx: &mut TestAppContext) {
-    let (_dir, window) = open(cx);
+fn markdown_source_stays_editable_and_saves_only_on_command(cx: &mut TestAppContext) {
+    let (dir, window) = open(cx);
     cx.simulate_keystrokes(window.into(), "cmd-shift-v");
-    gpui::VisualTestContext::from_window(window.into(), cx).simulate_event(gpui::MouseDownEvent {
-        position: gpui::point(px(100.), px(40.)),
-        button: gpui::MouseButton::Left,
-        modifiers: Default::default(),
-        click_count: 2,
-        first_mouse: false,
-    });
+    cx.simulate_keystrokes(window.into(), "escape");
+    window
+        .update(cx, |view, _, cx| {
+            assert!(view.source_status(cx).unwrap().editing);
+            assert!(!view.editing_document().unwrap().read(cx).is_dirty());
+        })
+        .unwrap();
+    // e and Enter are ordinary input immediately, without an edit-mode step.
+    cx.simulate_keystrokes(window.into(), "e enter");
+    cx.executor().advance_clock(Duration::from_secs(5));
     cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), "cmd-shift-v cmd-shift-v");
+    let path = dir.path().join("document.md");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# Original\n\nBody\n"
+    );
+    cx.simulate_keystrokes(window.into(), "cmd-s");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "e\n# Original\n\nBody\n"
+    );
+    window
+        .update(cx, |view, _, cx| {
+            assert!(view.source_status(cx).unwrap().editing);
+            assert!(!view.editing_document().unwrap().read(cx).is_dirty());
+        })
+        .unwrap();
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+}
+
+#[gpui::test]
+fn readonly_markdown_source_cannot_enter_edit_mode_or_save(cx: &mut TestAppContext) {
+    let (dir, window) = open(cx);
+    let path = dir.path().join("document.md");
+    let writable = std::fs::metadata(&path).unwrap().permissions();
+    let mut readonly = writable.clone();
+    readonly.set_readonly(true);
+    std::fs::set_permissions(&path, readonly).unwrap();
+    cx.simulate_keystrokes(window.into(), "cmd-shift-v e cmd-v cmd-s");
+    window
+        .update(cx, |view, _, cx| {
+            let status = view.source_status(cx).unwrap();
+            assert!(!status.editing);
+            assert!(
+                status
+                    .notice
+                    .unwrap()
+                    .to_string()
+                    .contains("Read-only file")
+            );
+            let document = view.editing_document().unwrap();
+            let document = document.read(cx);
+            assert!(!document.is_dirty());
+            assert!(document.version().is_none());
+        })
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "# Original\n\nBody\n"
+    );
+    std::fs::set_permissions(&path, writable).unwrap();
+    // Reopening Source retries access after the file becomes writable.
+    cx.simulate_keystrokes(window.into(), "cmd-shift-v cmd-shift-v");
     window
         .update(cx, |view, _, cx| {
             assert!(view.source_status(cx).unwrap().editing)
@@ -139,7 +197,7 @@ fn split_preview_debounces_edits_and_keeps_one_owner_per_tab(cx: &mut TestAppCon
             .unwrap()
     });
     cx.run_until_parked();
-    cx.simulate_keystrokes(source_window.into(), "cmd-shift-v enter");
+    cx.simulate_keystrokes(source_window.into(), "cmd-shift-v");
     paste(cx, source_window, "# First edit\n");
     paste(cx, source_window, "# Latest edit\n\nnew text\n");
     assert_eq!(heading(cx, preview_window), "Original");

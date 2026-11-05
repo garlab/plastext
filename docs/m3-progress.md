@@ -5,6 +5,10 @@ M3 now includes a persistent buffer, shared document model and the first
 [validation checks](m2-validation.md) and large-diagram controls can proceed
 independently; they do not block work on the editing model.
 
+Writable text/code files and Markdown Source now enter edit mode automatically.
+Read-only files and binary views stay non-editable. Saving remains explicit with
+`Cmd-S` in Source or Markdown Preview; no autosave is enabled.
+
 ## Implemented
 
 `plastext-buffer::EditBuffer` stores a persistent AVL piece tree over immutable
@@ -151,7 +155,7 @@ Edited snapshots are copied and incrementally parsed on workers after a 40 ms
 pause, within the existing syntax-size limit; cancellation and version checks
 reject obsolete results. Tests also cover crossing that limit and undoing back
 below it. Folding, outline and sticky definitions still need editing integration.
-Markdown tests exercise Source → edit via keyboard/double-click, unsaved preview
+Markdown tests exercise automatic Source editing, read-only access, explicit saving, unsaved preview
 and reference resolution, debounced split previews, shared dirty state, save from
 Preview and close confirmation. Markdown's existing page index now also reads
 immutable editing versions directly; it neither serializes a temporary copy nor
@@ -162,8 +166,8 @@ future work.
 
 Snapshot searches bypass the viewport cache. Evicted undo history and superseded
 view snapshots retire on workers; the original reader cache is released when
-its editing snapshot takes over. Ordinary read-mode opening still prepares no
-editing copy.
+its editing snapshot takes over. Rendered Markdown and other read-only views
+prepare no editing copy; text/code views prepare one when opened for editing.
 
 ## Next work and limits
 
@@ -182,4 +186,4 @@ Preparing a large original currently costs a full copy and temporary disk space
 proportional to its size; no filesystem-clone optimization is implemented yet.
 Snapshot creation after preparation is constant-time. Large history reclamation
 can free many nodes; GUI sessions now retire evicted versions off the UI thread.
-None of this preparation is added to ordinary read-mode opening.
+Rendered Markdown does not prepare an editing copy until Source is opened.

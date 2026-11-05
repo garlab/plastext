@@ -1,6 +1,6 @@
 //! One UI owner per path; disk work and bulk version retirement run on workers.
 use gpui::{App, AppContext, Context, Entity, Global, SharedString, Task, WeakEntity};
-use plastext_buffer::{ByteSource, FileDocument, OpenOptions, SaveOptions};
+use plastext_buffer::{ByteSource, DiskVersion, FileDocument, OpenOptions, SaveOptions};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -129,6 +129,9 @@ impl EditingDocument {
         self.notice = Some("Preparing edit mode…".into());
         let (path, options, cancel) = (self.path.clone(), self.options, self.cancel.clone());
         let load = cx.background_executor().spawn(async move {
+            if !DiskVersion::read(&path)?.is_writable()? {
+                return Ok(None);
+            }
             let mut file = FileDocument::open(&path, options, &cancel, |_, _| {})?;
             file.session_mut().defer_history_drop();
             let snapshot = file.session().snapshot();
@@ -137,7 +140,7 @@ impl EditingDocument {
                 offset.saturating_sub(1024 * 1024).min(end)
                     ..offset.saturating_add(1024 * 1024).min(end),
             )?;
-            Ok::<_, std::io::Error>(file)
+            Ok::<_, std::io::Error>(Some(file))
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = load.await;
@@ -145,10 +148,14 @@ impl EditingDocument {
             this.update(cx, |this, cx| {
                 this.preparing = false;
                 match result.take().unwrap() {
-                    Ok(file) => {
+                    Ok(Some(file)) => {
                         this.file = Some(file);
                         this.active = true;
                         this.notice = None;
+                    }
+                    Ok(None) => {
+                        this.active = false;
+                        this.notice = Some("Read-only file".into());
                     }
                     Err(error) => {
                         this.notice = Some(format!("Couldn't enter edit mode: {error}").into())

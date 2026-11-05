@@ -634,7 +634,10 @@ impl Workspace {
             TabView::Text(text) => {
                 let document =
                     plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
-                text.update(cx, |view, cx| view.set_editing_document(document, cx));
+                text.update(cx, |view, cx| {
+                    view.set_editing_document(document, cx);
+                    view.edit_by_default(cx);
+                });
             }
             TabView::Markdown(markdown) => {
                 let document =

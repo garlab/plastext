@@ -121,6 +121,7 @@ pub(super) struct Editing {
     document: Entity<EditingDocument>,
     pane: Option<PaneId>,
     pub(super) owns_view: bool,
+    pub(super) edit_by_default: bool,
     active: bool,
     dirty: bool,
     generation: Option<u64>,
@@ -186,6 +187,7 @@ impl TextView {
             document,
             pane: None,
             owns_view,
+            edit_by_default: false,
             active: false,
             dirty: false,
             generation: None,
@@ -212,6 +214,31 @@ impl TextView {
     }
     pub fn is_editing(&self) -> bool {
         self.editing.as_ref().is_some_and(|editing| editing.active)
+    }
+    /// Writable source views stay editable; preparing the private original and
+    /// checking filesystem access happen on a worker, never during rendering.
+    pub fn edit_by_default(&mut self, cx: &mut Context<Self>) {
+        let Some(editing) = &mut self.editing else {
+            return;
+        };
+        editing.edit_by_default = true;
+        self.apply_pending_line(cx);
+        let target = match self.pending_jump {
+            Some(Jump::Offset(offset)) => offset.min(self.source.len()),
+            Some(Jump::End) => self.source.len(),
+            _ => self.top,
+        };
+        self.apply_pending_jump(cx);
+        let selection = self.selection.get_or_insert(Selection {
+            anchor: target,
+            head: target,
+        });
+        let offset = selection.head;
+        let document = self.editing_document().unwrap();
+        document.update(cx, |document, cx| document.begin_edit(offset, cx));
+        // Pane attachment uses this selection when preparation finishes. Do not
+        // queue synthetic input: that would temporarily dirty and pin preview tabs.
+        self.sync_editing(cx);
     }
     pub fn has_pending_input(&self) -> bool {
         self.editing
@@ -244,6 +271,10 @@ impl TextView {
                 return;
             }
             editing.marked = None;
+            if editing.edit_by_default {
+                self.reset_caret_blink(cx);
+                return;
+            }
             editing
                 .document
                 .update(cx, |document, cx| document.leave_edit(cx));

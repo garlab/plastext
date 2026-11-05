@@ -33,6 +33,12 @@ pub(super) fn open(path: &Path, writable: bool) -> io::Result<File> {
     // NONBLOCK keeps a path swapped to a FIFO from hanging preparation; no
     // special file is ever accepted as a save destination.
     stamp(&file)?;
+    if writable && file.metadata()?.permissions().readonly() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "file is read-only",
+        ));
+    }
     Ok(file)
 }
 

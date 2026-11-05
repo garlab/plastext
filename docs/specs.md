@@ -119,16 +119,17 @@ Requirements have IDs (`MD-3`, `GIT-4`…) so they can be referenced in issues, 
 
 ### 4.2 Read mode and edit mode
 
-| | Read mode (default) | Edit mode |
+| | Read mode | Edit mode |
 |---|---|---|
-| Markdown | Rendered | Source, or split source + rendered |
-| Code | Highlighted, selectable, copyable, no caret | Full caret/selection editing |
+| Markdown | Rendered by default | Source is immediately editable, or split source + rendered |
+| Code | Read-only files and read-only buffers | Writable files open with full caret/selection editing |
 | Keys | Single-key navigation (below) | Standard macOS text-editing keys, including Emacs-style `⌃A`/`⌃E` |
-| Enter / leave | Opening a file lands here; `Esc` returns here when nothing else is active | `e`, `↩`, or double-click on content |
+| Enter / leave | Markdown opens in Preview; binary views remain read-only | Opening text/code or choosing Markdown Source enters here; `Esc` does not leave Source editing |
 
 - A buffer with unsaved changes stays in edit mode.
-- `editor.open_mode = "edit"` lets users who prefer it open files straight into edit mode.
-- Typing a printable key in read mode shows a brief hint ("press `e` to edit") and doesn't change the file.
+- Writable source views are editable by default. Read-only files and binary views cannot enter edit mode.
+- Saving is explicit with `⌘S`; there is no autosave. Previewing unsaved changes does not write them to disk.
+- Typing a printable key in a read-only view doesn't change the file.
 
 **Read-mode keys** (defaults, rebindable; they never conflict because read mode doesn't accept text):
 
@@ -138,7 +139,7 @@ Requirements have IDs (`MD-3`, `GIT-4`…) so they can be referenced in issues, 
 | `g` / `G` | top / bottom | `/` | find |
 | `n` / `N` | next / previous match | `]` / `[` | next / previous git change |
 | `o` | toggle outline | `b` | toggle blame |
-| `d` | diff this file against HEAD | `e` / `↩` | edit here |
+| `d` | diff this file against HEAD | `⇧⌘V` | toggle Markdown Source/Preview |
 | `f` | toggle follow mode | `⌃-` / `⌃⇧-` | back / forward |
 
 ### 4.3 Core workflows
@@ -146,7 +147,7 @@ Requirements have IDs (`MD-3`, `GIT-4`…) so they can be referenced in issues, 
 1. **"What did the agent just do?"** The Changes view shows every uncommitted change in the repo as one scrollable review page. It updates live while the agent writes. You can tick files off as viewed.
 2. **"Watch the agent work."** Follow mode opens whichever file just changed on disk and scrolls to the changed lines.
 3. **"Read this project."** `plastext .` → rendered README → follow relative links → fuzzy-open files → outline → read.
-4. **"Fix one line."** From any view or diff press `e`, edit, `⌘S`. The diff updates.
+4. **"Fix one line."** Open the text/code file or choose Markdown Source, edit, `⌘S`. The diff updates.
 5. **"What's on this branch?"** Compare the branch against its merge base with `main`, laid out like a pull request.
 6. **"Look at this log."** Open a 5 GB log instantly, jump to a line, search, and follow it as it grows.
 7. **From the terminal:** `plastext src/lib.rs:120`, `plastext diff`, `git log -p | plastext -`.
@@ -298,7 +299,7 @@ Default configuration (abridged):
 
 ```toml
 [editor]
-open_mode = "read"            # "read" | "edit"
+open_mode = "edit"            # "read" | "edit"; planned setting, writable source defaults to edit
 font = "Menlo"                # SF Mono is private to Apple's own apps
 font_size = 13
 line_height = 1.5

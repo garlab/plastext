@@ -564,6 +564,10 @@ impl TextView {
             .editing
             .as_ref()
             .is_none_or(|editing| editing.owns_view);
+        let edit_by_default = self
+            .editing
+            .as_ref()
+            .is_some_and(|editing| editing.edit_by_default);
         let selection = self.selection;
         cx.new(|cx| {
             // Reuse the parse if it's done; otherwise parse again.
@@ -586,6 +590,9 @@ impl TextView {
                     view.set_editing_document(document, cx);
                 } else {
                     view.set_embedded_editing_document(document, cx);
+                }
+                if edit_by_default {
+                    view.edit_by_default(cx);
                 }
             }
             view
@@ -645,10 +652,25 @@ impl TextView {
             Ok(Some(offset)) => {
                 self.pending_line = None;
                 self.pending_jump = Some(Jump::Offset(offset));
+                if self.is_editing() {
+                    self.selection = Some(Selection {
+                        anchor: offset,
+                        head: offset,
+                    });
+                    self.selection_edited(cx);
+                }
             }
             Ok(None) if self.source.snapshot.is_some() || self.index.is_complete() => {
                 self.pending_line = None;
                 self.pending_jump = Some(Jump::End);
+                if self.is_editing() {
+                    let end = self.source.len();
+                    self.selection = Some(Selection {
+                        anchor: end,
+                        head: end,
+                    });
+                    self.selection_edited(cx);
+                }
             }
             Ok(None) => {}
             Err(err) => self.handle_read_error(err, cx),
