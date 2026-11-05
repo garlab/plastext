@@ -324,6 +324,121 @@ fn replacing_text_above_the_viewport_keeps_top_on_a_row_boundary(cx: &mut TestAp
 }
 
 #[gpui::test]
+fn idle_caret_blinks_and_input_focus_and_read_mode_reset_it(cx: &mut TestAppContext) {
+    let (_dir, view, other) = setup(cx, b"text\n", false);
+    cx.update(crate::init);
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            view.read(cx).focus_handle.focus(window);
+            view.clone()
+        })
+        .unwrap()
+    });
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    let state = |cx: &mut TestAppContext, handle: gpui::WindowHandle<TextView>| {
+        // The test platform has no display link. Paint the focus change and its
+        // follow-up invalidation, just as the next native frames would do.
+        for _ in 0..2 {
+            let window: gpui::AnyWindowHandle = handle.into();
+            window
+                .update(cx, |_, window, cx| window.draw(cx).clear())
+                .unwrap();
+            cx.run_until_parked();
+        }
+        handle
+            .update(cx, |view, _, _| {
+                let caret = &view.editing.as_ref().unwrap().caret;
+                (caret.visible, caret.task.is_some())
+            })
+            .unwrap()
+    };
+    let tick = |cx: &mut TestAppContext, milliseconds| {
+        cx.executor()
+            .advance_clock(Duration::from_millis(milliseconds));
+        cx.run_until_parked();
+    };
+    window
+        .update(cx, |view, window, _| {
+            assert!(window.is_window_active(), "window active");
+            assert!(view.focus_handle.is_focused(window), "editor focused");
+            assert!(view.last_hits.is_some(), "editor rendered");
+        })
+        .unwrap();
+    assert_eq!(state(cx, window), (true, true));
+    tick(cx, 499);
+    assert_eq!(state(cx, window), (true, true));
+    tick(cx, 1);
+    assert_eq!(state(cx, window), (false, true));
+    cx.simulate_keystrokes(window.into(), "right");
+    assert_eq!(state(cx, window), (true, true));
+    tick(cx, 500);
+    assert_eq!(state(cx, window), (false, true));
+    cx.simulate_keystrokes(window.into(), "x");
+    assert_eq!(state(cx, window), (true, true));
+    tick(cx, 500);
+    assert_eq!(state(cx, window), (false, true));
+    tick(cx, 500);
+    assert_eq!(state(cx, window), (true, true));
+    // Composition stays visible until it is committed or cancelled.
+    window
+        .update(cx, |view, window, cx| {
+            view.replace_and_mark_text_in_range(None, "é", None, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    tick(cx, 1000);
+    assert_eq!(state(cx, window), (true, false));
+    window
+        .update(cx, |view, window, cx| {
+            view.unmark_text(window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(state(cx, window), (true, true));
+    // Neither an unfocused pane nor an inactive window keeps a blink timer.
+    window.update(cx, |_, window, _| window.blur()).unwrap();
+    cx.run_until_parked();
+    tick(cx, 1000);
+    assert_eq!(state(cx, window), (true, false));
+    window
+        .update(cx, |view, window, _| view.focus_handle.focus(window))
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(state(cx, window), (true, true));
+    let second = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            other.read(cx).focus_handle.focus(window);
+            other.clone()
+        })
+        .unwrap()
+    });
+    second
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(state(cx, window), (true, false));
+    assert_eq!(state(cx, second), (true, true));
+    window
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(state(cx, window), (true, true));
+    assert_eq!(state(cx, second), (true, false));
+    cx.simulate_keystrokes(window.into(), "cmd-z escape");
+    assert_eq!(state(cx, window), (true, false));
+    cx.update(|cx| assert!(!view.read(cx).is_editing()));
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+    second
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+}
+
+#[gpui::test]
 fn save_completion_keeps_later_typing_dirty_and_conflicts_keep_disk(cx: &mut TestAppContext) {
     let (dir, a, b) = setup(cx, b"abc", false);
     let path = dir.path().join("edit.txt");

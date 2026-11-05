@@ -1681,6 +1681,7 @@ fn spans_within(
 
 impl Render for TextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_caret_blink(window, cx);
         let view = cx.entity();
         let theme = Theme::get(window, cx);
         // The find bar sits outside the view's key context, so typing in it

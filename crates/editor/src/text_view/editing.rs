@@ -7,6 +7,9 @@ use plastext_buffer::{
 };
 use std::collections::VecDeque;
 
+#[path = "caret.rs"]
+mod caret;
+
 actions!(
     editing,
     [
@@ -129,6 +132,7 @@ pub(super) struct Editing {
     cursor: Option<PendingCommand>,
     retry: Option<Task<()>>,
     goal_column: Option<usize>,
+    caret: caret::Caret,
     _observer: Subscription,
 }
 
@@ -193,6 +197,7 @@ impl TextView {
             cursor: None,
             retry: None,
             goal_column: None,
+            caret: caret::Caret::default(),
             _observer: observer,
         });
         self.sync_editing(cx);
@@ -248,6 +253,12 @@ impl TextView {
         let Some(editing) = &mut self.editing else {
             return;
         };
+        let previous_caret = (
+            editing.active,
+            editing.generation,
+            self.selection
+                .map(|selection| (selection.anchor, selection.head)),
+        );
         let desired = self
             .selection
             .map_or(BufferSelection::caret(self.top), |value| {
@@ -340,6 +351,16 @@ impl TextView {
             self.notice = notice.clone();
             editing.document_notice = notice;
         }
+        if previous_caret
+            != (
+                editing.active,
+                editing.generation,
+                self.selection
+                    .map(|selection| (selection.anchor, selection.head)),
+            )
+        {
+            self.reset_caret_blink(cx);
+        }
         if let Some(range) = missing {
             self.load(range, cx);
         }
@@ -352,6 +373,7 @@ impl TextView {
         if !self.is_editing() {
             return;
         }
+        self.reset_caret_blink(cx);
         self.editing
             .as_ref()
             .unwrap()
@@ -981,6 +1003,11 @@ impl TextView {
             }
         }
         if self.focus_handle.is_focused(window)
+            && window.is_window_active()
+            && self
+                .editing
+                .as_ref()
+                .is_some_and(|editing| editing.caret.visible)
             && let Some(selection) = self.selection
             && let Some(bounds) = hits.caret(selection.head)
         {
@@ -1074,11 +1101,12 @@ impl EntityInputHandler for TextView {
                 ..text.byte_to_utf16(marked.end).ok()? as usize,
         )
     }
-    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(editing) = &mut self.editing {
             editing.marked = None;
             editing.typing = None;
         }
+        self.reset_caret_blink(cx);
     }
     fn replace_text_in_range(
         &mut self,

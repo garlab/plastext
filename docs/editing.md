@@ -26,6 +26,9 @@ UTF-16 coordinates and supports marked text for IME composition.
 Keyboard movement and typing scroll just enough to keep three lines of context
 above and below the caret. Short panes reduce that margin automatically. Clicking
 or selecting text with the mouse leaves the viewport in place.
+The focused caret blinks every 500 ms while idle. Typing, movement and focus
+changes make it visible immediately and restart the delay. Composition keeps it
+steady; inactive windows and unfocused panes do not run blink timers.
 
 Split panes share content, saved state and undo history, with independent
 selections and scroll positions. Find searches the current unsaved version.
@@ -68,7 +71,7 @@ This is the first GUI editing increment in M3:
   connected yet. A save refuses changed disk contents; it does not overwrite
   them automatically.
 - `editor.open_mode`, `editor.atomic_save` and other editing preferences from the
-  specification are not exposed yet. The caret is steady rather than blinking.
+  specification are not exposed yet.
 - Cut/copy are limited to 64 MiB. A cut whose selection is uncached first loads
   it and asks for Cut again; it never deletes before copying.
 

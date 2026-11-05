@@ -143,7 +143,8 @@ session selection rebasing, sustained typing history or native input/painting.
 The GUI integration adds regression tests for independent split selections,
 shared undo, composition grouping and UTF-16 replacement ranges, delayed input,
 stale composition rejection, CR/LF/CRLF and empty trailing rows, key dispatch,
-horizontal caret visibility, save completion during typing, and disk conflicts.
+horizontal caret visibility, three-line caret scroll margins, idle blinking and
+focus/window changes, save completion during typing, and disk conflicts.
 Syntax tests check that entering edit mode preserves reader colors in Markdown,
 Rust and embedded HTML languages, and that typing and undo match a fresh parse.
 Edited snapshots are copied and incrementally parsed on workers after a 40 ms
