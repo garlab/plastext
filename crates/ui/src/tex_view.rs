@@ -51,7 +51,11 @@ impl TexView {
         config: (Option<PathBuf>, plastext_settings::Tex),
         cx: &mut Context<Self>,
     ) -> Self {
-        let source = cx.new(|cx| TextView::new(source, index, style.clone(), language, cx));
+        let source = cx.new(|cx| {
+            let mut view = TextView::new(source, index, style.clone(), language, cx);
+            view.set_file_path(&path);
+            view
+        });
         let preview = config.1.preview;
         let model = cx.new(|_| Model::new(path.clone(), config.0, config.1));
         let mut view = Self::with_model(path, source, model, style, cx);
@@ -213,6 +217,7 @@ impl TexView {
                                 plastext_syntax::detect(&this.path, b""),
                                 cx,
                             );
+                            view.set_file_path(&this.path);
                             view.scroll_to_offset(position, cx);
                             view
                         });

@@ -513,13 +513,15 @@ impl CsvView {
             let offset = self.position(cx);
             let raw = self.raw.get_or_insert_with(|| {
                 cx.new(|cx| {
-                    TextView::new(
+                    let mut view = TextView::new(
                         self.source.clone(),
                         self.lines.clone(),
                         self.style.clone(),
                         None,
                         cx,
-                    )
+                    );
+                    view.set_file_path(&self.path);
+                    view
                 })
             });
             if self._raw_observer.is_none() {

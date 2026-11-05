@@ -27,6 +27,9 @@ pub struct EditingDocument {
     task: Option<Task<()>>,
 }
 impl EditingDocument {
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
     pub fn shared(path: PathBuf, options: OpenOptions, cx: &mut App) -> Entity<Self> {
         cx.default_global::<Documents>();
         if let Some(existing) = cx

@@ -33,6 +33,23 @@ The focused caret blinks every 500 ms while idle. Typing, movement and focus
 changes make it visible immediately and restart the delay. Composition keeps it
 steady; inactive windows and unfocused panes do not run blink timers.
 
+Right-click text to open Cut, Copy and Paste, plus these reference formats:
+
+| Menu item | Copied text |
+| --- | --- |
+| Copy Location | `file.rs:34:2` |
+| Copy Selected Line Range | `file.rs:22-26` |
+| Copy Text with Location | `in file.rs:33: selected text` |
+
+References use the filename and one-based line/column numbers from the current
+unsaved buffer. Columns count Unicode characters; a tab counts as one. A
+selection ending at the start of the next line excludes that next line from the
+range. Multiline excerpts start on the line after `in file.rs:22-26:`.
+Without a selection, Copy Text with Location includes the current line.
+Right-clicking within a selection preserves it; clicking elsewhere places the
+caret there. Cut and Paste are disabled in read-only views. Large copies run on
+a worker within the existing 64 MB text limit.
+
 Split panes share content, saved state and undo history, with independent
 selections and scroll positions. Find searches the current unsaved version.
 Markdown Preview reads the unsaved version. Switching back to Preview refreshes

@@ -499,7 +499,12 @@ impl Workspace {
                                     crate::record_view::document::Kind::for_path(&path).unwrap();
                                 TabView::Record(cx.new(|cx| {
                                     crate::record_view::RecordView::new(
-                                        kind, source, index, style, cx,
+                                        path.clone(),
+                                        kind,
+                                        source,
+                                        index,
+                                        style,
+                                        cx,
                                     )
                                 }))
                             }

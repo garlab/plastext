@@ -495,6 +495,7 @@ impl MarkdownView {
                         language,
                         cx,
                     );
+                    view.set_file_path(&self.path);
                     if let Some(document) = &self.editing_document {
                         view.set_embedded_editing_document(document.clone(), cx);
                     }

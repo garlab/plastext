@@ -149,6 +149,9 @@ shared undo, composition grouping and UTF-16 replacement ranges, delayed input,
 stale composition rejection, CR/LF/CRLF and empty trailing rows, key dispatch,
 horizontal caret visibility, three-line caret scroll margins, idle blinking and
 focus/window changes, save completion during typing, and disk conflicts.
+Context-menu tests cover Cut/Copy/Paste, selection preservation, read-only views,
+copying locations and excerpts from unsaved versions, Unicode columns, line-ending
+boundaries and selections larger than the read cache.
 Syntax tests check that entering edit mode preserves reader colors in Markdown,
 Rust and embedded HTML languages, and that typing and undo match a fresh parse.
 Edited snapshots are copied and incrementally parsed on workers after a 40 ms

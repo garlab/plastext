@@ -13,9 +13,12 @@ use gpui::{
 use model::{Cursor, Positions};
 use plastext_buffer::{ByteSource, FileSource, LineIndex};
 use plastext_editor::{TextStyle, TextView, Theme};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 actions!(
@@ -64,6 +67,7 @@ impl Drop for Pending {
 }
 
 pub struct RecordView {
+    path: PathBuf,
     kind: Kind,
     source: Arc<FileSource>,
     lines: Arc<LineIndex>,
@@ -90,6 +94,7 @@ pub struct RecordView {
 }
 impl RecordView {
     pub fn new(
+        path: PathBuf,
         kind: Kind,
         source: Arc<FileSource>,
         lines: Arc<LineIndex>,
@@ -98,6 +103,7 @@ impl RecordView {
     ) -> Self {
         cx.on_release(|this, cx| this.release_preview(cx)).detach();
         Self {
+            path,
             kind,
             source,
             lines,
@@ -359,6 +365,7 @@ impl RecordView {
             .map(|v| v.update(cx, |v, cx| v.duplicate(cx)));
         cx.new(|cx| {
             let mut view = Self::new(
+                self.path.clone(),
                 self.kind,
                 self.source.clone(),
                 self.lines.clone(),
@@ -386,13 +393,15 @@ impl RecordView {
             let offset = self.position(cx);
             let raw = self.raw.get_or_insert_with(|| {
                 cx.new(|cx| {
-                    TextView::new(
+                    let mut view = TextView::new(
                         self.source.clone(),
                         self.lines.clone(),
                         self.style.clone(),
                         None,
                         cx,
-                    )
+                    );
+                    view.set_file_path(&self.path);
+                    view
                 })
             });
             if self.raw_observer.is_none() {

@@ -496,13 +496,15 @@ impl ImageView {
             if let Some(lines) = &self.lines {
                 let raw = self.raw_text.get_or_insert_with(|| {
                     cx.new(|cx| {
-                        TextView::new(
+                        let mut view = TextView::new(
                             self.source.clone(),
                             lines.clone(),
                             self.style.clone(),
                             plastext_syntax::detect(&self.path, b""),
                             cx,
-                        )
+                        );
+                        view.set_file_path(&self.path);
+                        view
                     })
                 });
                 if self.raw_observer.is_none() {

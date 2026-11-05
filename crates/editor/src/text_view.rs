@@ -54,6 +54,8 @@ actions!(
     ]
 );
 
+mod context_menu;
+mod copy_text;
 mod editing;
 mod syntax;
 use editing::Editing;
@@ -208,6 +210,9 @@ pub struct TextView {
     profile: Option<ReadingProfile>,
     editing: Option<Editing>,
     last_hits: Option<HitMap>,
+    file_name: Option<String>,
+    context_menu: Option<context_menu::Menu>,
+    copy_task: Option<copy_text::CopyTask>,
 }
 
 /// Opt-in only, driven by plastext-bench. Normal windows schedule no work
@@ -447,6 +452,9 @@ impl TextView {
             profile: None,
             editing: None,
             last_hits: None,
+            file_name: None,
+            context_menu: None,
+            copy_task: None,
         }
     }
 
@@ -569,6 +577,7 @@ impl TextView {
             .as_ref()
             .is_some_and(|editing| editing.edit_by_default);
         let selection = self.selection;
+        let file_name = self.file_name.clone();
         cx.new(|cx| {
             // Reuse the parse if it's done; otherwise parse again.
             let parse = language.filter(|_| {
@@ -585,6 +594,7 @@ impl TextView {
             view.symbols = symbols;
             view.top = top;
             view.selection = selection;
+            view.file_name = file_name;
             if let Some(document) = document {
                 if owns_view {
                     view.set_editing_document(document, cx);
@@ -714,48 +724,21 @@ impl TextView {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(range) = self
-            .selection
-            .map(|selection| selection.range())
-            .filter(|range| !range.is_empty())
-        else {
-            return;
-        };
-        if range.end - range.start > MAX_COPY {
-            self.notice = Some("The selection is too large to copy (over 64 MB).".into());
-            cx.notify();
+        // Keep the ordinary copy/paste sequence synchronous for small cached
+        // selections; larger or uncached copies run on a worker.
+        if !self.has_pending_input()
+            && let Some(range) = self.selection.map(|selection| selection.range())
+            && !range.is_empty()
+            && range.end - range.start <= 64 * 1024
+            && let Ok(bytes) = self.source.bytes(range)
+        {
+            self.copy_task = None;
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            ));
             return;
         }
-        match self.source.bytes(range.clone()) {
-            Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            }
-            Err(ReadError::Missing(_)) => {
-                // Copy once the selection is loaded, without moving the view.
-                let source = self.source.clone();
-                let text = cx.background_executor().spawn(async move {
-                    source.load(range.clone())?;
-                    let bytes = source
-                        .bytes(range)
-                        .map_err(|_| std::io::Error::other("the file changed"))?;
-                    std::io::Result::Ok(String::from_utf8_lossy(&bytes).into_owned())
-                });
-                cx.spawn(async move |this, cx| {
-                    let text = text.await;
-                    this.update(cx, |this, cx| match text {
-                        Ok(text) => cx.write_to_clipboard(ClipboardItem::new_string(text)),
-                        Err(err) => {
-                            this.notice = Some(format!("Couldn't copy: {err}").into());
-                            cx.notify();
-                        }
-                    })
-                    .ok();
-                })
-                .detach();
-            }
-            Err(err) => self.handle_read_error(err, cx),
-        }
+        self.copy_text(copy_text::Format::Text, cx);
     }
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
@@ -1756,10 +1739,12 @@ impl Render for TextView {
             );
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .children(find_bar)
             .child(text)
+            .children(self.render_context_menu(theme, cx))
     }
 }
 
@@ -2052,11 +2037,20 @@ impl TextLayout {
         view.update(cx, |view, cx| view.paint_input(&self.hits, window, cx));
         let hits = self.hits.clone();
         let pressed = view.clone();
-        window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble
-                || event.button != MouseButton::Left
+                || !matches!(event.button, MouseButton::Left | MouseButton::Right)
                 || !text_bounds.contains(&event.position)
             {
+                return;
+            }
+            if event.button == MouseButton::Right {
+                if let Some(hit) = hits.hit(event.position) {
+                    pressed.update(cx, |view, cx| {
+                        view.open_context_menu(hit, event.position, window, cx)
+                    });
+                    cx.stop_propagation();
+                }
                 return;
             }
             // A click on a pinned row goes to the definition it starts.

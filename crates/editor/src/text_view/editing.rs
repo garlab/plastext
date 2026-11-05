@@ -176,6 +176,7 @@ impl TextView {
         if self.editing.is_some() {
             return;
         }
+        self.set_file_path(document.read(cx).path());
         if owns_view {
             document.update(cx, |document, _| document.retain_view());
         }
@@ -834,7 +835,7 @@ impl TextView {
         }
         self.editing.as_mut().unwrap().reveal_caret = false;
     }
-    fn edit_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn edit_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.queue_input(
                 Input::Text {
@@ -848,7 +849,7 @@ impl TextView {
             );
         }
     }
-    fn edit_cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn edit_cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         if self.has_pending_input() {
             self.notice = Some("Wait for the pending selection before cutting.".into());
             cx.notify();
@@ -865,12 +866,15 @@ impl TextView {
             return;
         }
         // Never remove text until its clipboard read has completed.
-        if self.source.bytes(selection.range()).is_err() {
+        let Ok(bytes) = self.source.bytes(selection.range()) else {
             self.load(selection.range(), cx);
             self.notice = Some("Loading selection; press Cut again when ready.".into());
             return;
-        }
-        self.copy(&Copy, window, cx);
+        };
+        self.copy_task = None;
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            String::from_utf8_lossy(&bytes).into_owned(),
+        ));
         self.queue_input(
             Input::Text {
                 text: String::new(),
@@ -1058,7 +1062,7 @@ impl TextView {
 }
 
 impl HitMap {
-    fn caret(&self, offset: u64) -> Option<Bounds<Pixels>> {
+    pub(super) fn caret(&self, offset: u64) -> Option<Bounds<Pixels>> {
         let i = self.rows.iter().rposition(|row| row.start <= offset)?;
         let row = &self.rows[i];
         if offset > row.start + row.content.len() as u64 {
