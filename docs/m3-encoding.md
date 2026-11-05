@@ -1,7 +1,7 @@
 # Editing encodings and line endings
 
 The headless M3 editing model supports UTF-8, UTF-16LE/BE and the stateless
-legacy encodings provided by `encoding_rs`. GUI editing and encoding commands
+legacy encodings provided by `encoding_rs`. Text/code editing now uses this backend; GUI encoding commands
 are not enabled yet. Ordinary read-mode opening remains unchanged.
 
 ## Opening and reopening

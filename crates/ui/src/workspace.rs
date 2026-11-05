@@ -38,7 +38,9 @@ mod tab_menu;
 use tab_menu::TabMenu;
 mod file_menu;
 use file_menu::FileMenu;
+mod editing;
 mod opening;
+pub use editing::request_quit;
 use opening::{Destination, OpenKind, Openings, Placement};
 
 actions!(
@@ -119,6 +121,7 @@ pub struct Workspace {
     layout: Layout,
     active_pane: usize,
     next_pane: usize,
+    close_prompt: bool,
     /// The last problem worth telling the user about, shown in the status bar.
     notice: Option<SharedString>,
     tree_options: TreeOptions,
@@ -300,6 +303,7 @@ impl Workspace {
             layout: Layout::Pane(0),
             active_pane: 0,
             next_pane: 1,
+            close_prompt: false,
             notice,
             tree_options,
             sidebar: Sidebar::Files,
@@ -613,7 +617,7 @@ impl Workspace {
             &path,
             pane.tabs
                 .iter()
-                .map(|tab| (tab.path.as_path(), tab.preview)),
+                .map(|tab| (tab.path.as_path(), tab.preview && !tab.view.is_dirty(cx))),
         );
         if let Placement::Existing(index) = placement {
             if destination.kind == OpenKind::Keep {
@@ -625,6 +629,11 @@ impl Workspace {
             cx.notify();
             return;
         }
+        if let TabView::Text(text) = &view {
+            let document =
+                plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
+            text.update(cx, |view, cx| view.set_editing_document(document, cx));
+        }
         view.set_zoom(self.zoom.factor(), self.text_style.font_size, cx);
         let title = path
             .file_name()
@@ -633,7 +642,20 @@ impl Workspace {
                 |name| name.to_string_lossy().into_owned(),
             )
             .into();
-        let status = view.observe(cx);
+        let status = if let TabView::Text(text) = &view {
+            cx.observe(text, |this, _, cx| {
+                for pane in this.panes.values_mut() {
+                    for tab in &mut pane.tabs {
+                        if tab.view.is_dirty(cx) {
+                            tab.preview = false;
+                        }
+                    }
+                }
+                cx.notify();
+            })
+        } else {
+            view.observe(cx)
+        };
         let links = if let TabView::Markdown(markdown) = &view {
             Some(
                 cx.subscribe_in(markdown, window, |this, _, event, window, cx| {
@@ -721,7 +743,7 @@ impl Workspace {
         }
     }
 
-    fn close_tab(
+    fn close_tab_now(
         &mut self,
         pane_id: usize,
         index: usize,
@@ -1554,8 +1576,14 @@ impl Workspace {
                     })
                     .child(
                         div()
-                            .when(tab.preview, |title| title.italic())
-                            .child(tab.title.clone()),
+                            .when(tab.preview && !tab.view.is_dirty(cx), |title| {
+                                title.italic()
+                            })
+                            .child(if tab.view.is_dirty(cx) {
+                                format!("{} ●", tab.title).into()
+                            } else {
+                                tab.title.clone()
+                            }),
                     )
                     .child(
                         div()
@@ -1632,7 +1660,7 @@ impl Workspace {
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.text_muted)
-            .child("READ")
+            .child(if status.as_ref().is_some_and(|status| matches!(status, crate::tab_view::TabStatus::Text(status) if status.editing)) { "EDIT" } else { "READ" })
             .children(notice)
             .children(view_message)
             .child(div().flex_1())

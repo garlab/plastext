@@ -349,3 +349,56 @@ fn preparation_rejects_atomic_path_replacement_even_when_length_is_unchanged() {
     assert!(result.err().unwrap().to_string().contains("changed"));
     assert_eq!(fs::read(&path).unwrap(), vec![b'b'; 65_536]);
 }
+
+#[test]
+fn history_retirement_can_be_drained_on_another_thread() {
+    let mut buffer = EditBuffer::from_bytes("abc");
+    buffer.defer_history_drop();
+    buffer.replace(0..0, b"x", UndoGroup::New).unwrap();
+    let retained = buffer.snapshot();
+    buffer.undo();
+    buffer.replace(0..0, b"y", UndoGroup::New).unwrap();
+    let redo = buffer.take_retired_history().unwrap();
+    assert!(buffer.take_retired_history().is_none());
+    std::thread::spawn(move || drop(redo)).join().unwrap();
+    assert_eq!(contents(&retained), b"xabc");
+    buffer.set_history_budget(0);
+    let history = buffer.take_retired_history().unwrap();
+    std::thread::spawn(move || drop(history)).join().unwrap();
+    assert!(!buffer.can_undo());
+    assert_eq!(contents(&buffer.snapshot()), b"yabc");
+}
+
+#[test]
+fn missing_and_uncached_reads_use_edited_coordinates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.txt");
+    std::fs::write(&path, vec![b'a'; 1024 * 1024]).unwrap();
+    let mut buffer = EditBuffer::open(
+        &path,
+        OpenOptions {
+            large_file_threshold: 1,
+            block_cache: 256 * 1024,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    buffer.snapshot().load(0..1).unwrap();
+    buffer.replace(0..0, b"prefix", UndoGroup::New).unwrap();
+    let text = buffer.snapshot();
+    let requested = 700_000..700_010;
+    let missing = text.missing(requested.clone()).unwrap();
+    assert!(missing.start <= requested.start && missing.end >= requested.end);
+    let mut bytes = vec![];
+    text.read_uncached(0..text.len(), &mut bytes).unwrap();
+    assert!(bytes.starts_with(b"prefixaaa"));
+    assert_eq!(bytes.len() as u64, text.len());
+    assert!(
+        text.missing(requested.clone()).is_some(),
+        "search must not fill the viewport cache"
+    );
+    text.load(missing).unwrap();
+    assert_eq!(text.missing(requested.clone()), None);
+    assert_eq!(text.bytes(requested).unwrap().as_ref(), b"aaaaaaaaaa");
+}

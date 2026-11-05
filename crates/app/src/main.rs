@@ -121,8 +121,22 @@ fn main() -> ExitCode {
             if env::var_os("PLASTEXT_PROFILE_READING").is_some() {
                 eprintln!("reading: quit action received");
             }
-            cx.quit();
+            plastext_ui::request_quit(cx);
         });
+        #[cfg(target_os = "macos")]
+        {
+            let (requests, mut received) = mpsc::unbounded();
+            plastext_platform::quit::install(move || {
+                requests.unbounded_send(()).ok();
+            })
+            .expect("install native quit protection before enabling editing");
+            cx.spawn(async move |cx| {
+                while received.next().await.is_some() {
+                    cx.update(plastext_ui::request_quit).ok();
+                }
+            })
+            .detach();
+        }
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus(vec![Menu {
             name: "plastext".into(),
@@ -305,6 +319,14 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
                 workspace.show_notice(notice, cx);
             }
             workspace
+        });
+        let closing = workspace.downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            closing
+                .update(cx, |workspace, cx| {
+                    workspace.should_close_window(window, cx)
+                })
+                .unwrap_or(true)
         });
         workspace.focus_handle(cx).focus(window);
         if profile_reading {

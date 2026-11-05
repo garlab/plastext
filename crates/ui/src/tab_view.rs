@@ -33,6 +33,16 @@ pub(crate) enum TabStatus {
 }
 
 impl TabView {
+    pub fn editing_document(&self, cx: &App) -> Option<Entity<plastext_editor::EditingDocument>> {
+        match self {
+            Self::Text(view) => view.read(cx).editing_document(),
+            _ => None,
+        }
+    }
+    pub fn is_dirty(&self, cx: &App) -> bool {
+        self.editing_document(cx)
+            .is_some_and(|document| document.read(cx).is_dirty())
+    }
     pub fn set_visible(&self, visible: bool, cx: &mut App) {
         if let Self::Image(view) = self {
             view.update(cx, |view, cx| view.set_visible(visible, cx));

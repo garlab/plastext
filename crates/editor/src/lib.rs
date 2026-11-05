@@ -1,5 +1,6 @@
 //! Text view element: layout, wrapping, selection, input, gutter and folding (spec §5.3).
 
+mod document;
 mod folding;
 mod hex_view;
 mod row_text;
@@ -8,9 +9,11 @@ mod sticky;
 mod text_input;
 mod text_view;
 mod theme;
+mod view_source;
 
 use gpui::App;
 
+pub use document::EditingDocument;
 pub use hex_view::{HexView, HexViewStatus};
 pub use text_input::{TextInput, TextInputEvent};
 pub use text_view::{TextStyle, TextView, TextViewStatus};

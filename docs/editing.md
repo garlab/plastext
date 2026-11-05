@@ -1,0 +1,63 @@
+# Text and code editing
+
+Files still open in read mode. In a plain text or code tab, press `e` or Enter,
+or double-click the content, to enter edit mode. The status bar changes to
+**EDIT** and an unsaved tab gets a dot. A modified preview tab becomes permanent.
+Escape returns to read mode after the changes have been saved or undone.
+
+| Action | macOS shortcut |
+| --- | --- |
+| Save | Cmd-S |
+| Undo / redo | Cmd-Z / Cmd-Shift-Z |
+| Copy / cut / paste | Cmd-C / Cmd-X / Cmd-V |
+| Select all / find | Cmd-A / Cmd-F |
+| Move / extend selection | Arrow / Shift-Arrow |
+| Line start / end | Cmd-Left / Cmd-Right; Ctrl-A / Ctrl-E |
+| Document start / end | Cmd-Up / Cmd-Down |
+| Extend to line or document boundary | Add Shift to the Cmd shortcut |
+| Scroll a page | Page Up / Page Down |
+
+Mouse selection, Shift-click, double-click words and triple-click lines work in
+edit mode. Backspace/Delete move through complete grapheme clusters. Return
+uses the document's preferred line ending; Tab inserts a tab. Native input uses
+UTF-16 coordinates and supports marked text for IME composition.
+
+Split panes share content, saved state and undo history, with independent
+selections and scroll positions. Find searches the current unsaved version.
+Code uses bounded lexical highlighting after editing begins; syntax-tree folding,
+outline and sticky definitions await incremental parsing of edited snapshots.
+
+Saves run on a worker, preserve the existing encoding and line endings, and keep
+undo history. Typing during a save remains dirty until that newer version is
+saved. Atomic saves preserve metadata and write through symlinks; hard-linked
+files use the backend's in-place save with a recovery copy. If the disk file has
+changed, saving reports the conflict and leaves both disk contents and local
+edits intact. See [save semantics and limits](m3-saving.md).
+
+Closing the last tab for a dirty document, closing its window, or quitting offers
+Save, Cancel and Discard. A newer edit invalidates a pending discard decision.
+Closing one split copy keeps the document open in the remaining pane. Pending
+input or saves must finish before the document can close.
+
+## Current scope
+
+This is the first GUI editing increment in M3:
+
+- Editing applies to plain text and code tabs. Markdown and other preview/source
+  toggles remain read-only until their synchronization is connected.
+- Multicursor, word movement, replace, indentation commands, EditorConfig,
+  new files, Save As and encoding/newline controls remain to implement.
+- Filesystem reload notifications and interactive conflict resolution are not
+  connected yet. A save refuses changed disk contents; it does not overwrite
+  them automatically.
+- `editor.open_mode`, `editor.atomic_save` and other editing preferences from the
+  specification are not exposed yet. The caret is steady rather than blinking.
+- Cut/copy are limited to 64 MiB. A cut whose selection is uncached first loads
+  it and asks for Cut again; it never deletes before copying.
+
+Large-file preparation is cancellable background work and uses a private copy
+on disk. Input waits for missing cache blocks without blocking the UI; obsolete
+explicit selection/composition coordinates are rejected after another pane edits.
+Undo eviction and snapshot destruction run on workers. Native IME, close/quit
+interaction and the typing-latency target still require manual/performance
+validation; automated coverage is listed in [M3 progress](m3-progress.md).

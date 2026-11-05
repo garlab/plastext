@@ -27,6 +27,7 @@ use crate::{
     scroll::{ScrollPosition, scroll},
     sticky::sticky_rows,
     text_input::{TextInput, TextInputEvent},
+    view_source::ViewSource,
 };
 
 actions!(
@@ -53,6 +54,9 @@ actions!(
     ]
 );
 
+mod editing;
+use editing::Editing;
+
 const KEY_CONTEXT: &str = "TextView";
 const FIND_KEY_CONTEXT: &str = "FindBar";
 /// Searches stop after this many matches.
@@ -74,6 +78,7 @@ const MAX_COPY: u64 = 64_000_000;
 
 /// Registers the read-mode key bindings (spec §4.2).
 pub(crate) fn init(cx: &mut App) {
+    editing::init(cx);
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("j", LineDown, context),
@@ -146,16 +151,18 @@ pub struct TextViewStatus {
     pub error: Option<SharedString>,
     /// A passing message about the last action.
     pub notice: Option<SharedString>,
+    pub editing: bool,
+    pub dirty: bool,
 }
 
-/// A read-only view of a text file of any size (spec TXT-1).
+/// A viewport over a file reader or a shared editing session (spec TXT-1).
 ///
 /// Only the visible rows are read, laid out and painted. The scroll position
 /// is a byte offset rather than a line number, so the view can go anywhere in
 /// a file whose line index is still being built. Data that isn't cached is
 /// loaded in the background, never on the main thread.
 pub struct TextView {
-    source: Arc<FileSource>,
+    source: Arc<ViewSource>,
     index: Arc<LineIndex>,
     style: TextStyle,
     language: Option<&'static Language>,
@@ -195,6 +202,8 @@ pub struct TextView {
     _index_refresh: Option<Task<()>>,
     _parse: Option<Task<()>>,
     profile: Option<ReadingProfile>,
+    editing: Option<Editing>,
+    last_hits: Option<HitMap>,
 }
 
 /// Opt-in only, driven by plastext-bench. Normal windows schedule no work
@@ -262,6 +271,25 @@ impl TextView {
         language: Option<&'static Language>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.on_release(|this: &mut Self, cx| {
+            if let Some(editing) = this.editing.take() {
+                editing.release(cx);
+            }
+            let original = Arc::new(FileSource::from_bytes(Bytes::new()));
+            let source = std::mem::replace(
+                &mut this.source,
+                Arc::new(ViewSource {
+                    original,
+                    snapshot: None,
+                }),
+            );
+            cx.background_executor()
+                .spawn(async move {
+                    drop(source);
+                })
+                .detach();
+        })
+        .detach();
         let index_refresh = (!index.is_complete()).then(|| {
             cx.spawn(async move |this, cx| {
                 loop {
@@ -359,7 +387,10 @@ impl TextView {
             })
         });
         Self {
-            source,
+            source: Arc::new(ViewSource {
+                original: source,
+                snapshot: None,
+            }),
             index,
             style,
             language,
@@ -390,6 +421,8 @@ impl TextView {
             _index_refresh: index_refresh,
             _parse: parse,
             profile: None,
+            editing: None,
+            last_hits: None,
         }
     }
 
@@ -501,6 +534,8 @@ impl TextView {
         let symbols = self.symbols.clone();
         let language = self.language;
         let top = self.top;
+        let document = self.editing_document();
+        let selection = self.selection;
         cx.new(|cx| {
             // Reuse the parse if it's done; otherwise parse again.
             let parse = language.filter(|_| {
@@ -509,26 +544,27 @@ impl TextView {
                     .is_none_or(|tree| (tree.parsed_len() as u64) < source.len())
                     || symbols.is_none()
             });
-            let mut view = Self::new(source, index, style, parse, cx);
+            let mut view = Self::new(source.original.clone(), index, style, parse, cx);
             view.language = language;
             view.syntax = syntax;
             view.syntax_folds = syntax_folds;
             view.symbols = symbols;
             view.top = top;
+            view.selection = selection;
+            if let Some(document) = document {
+                view.set_editing_document(document, cx);
+            }
             view
         })
     }
 
     pub fn status(&self) -> TextViewStatus {
         let progress = self.index.progress();
-        let line = self.index.line_at(self.top, &*self.source).ok().flatten();
+        let line = self.source.line_at(&self.index, self.top).ok().flatten();
         TextViewStatus {
             line: line.map(|line| line + 1),
-            lines: self
-                .index
-                .line_count()
-                .unwrap_or_else(|| self.index.estimated_line_count()),
-            indexing: (!progress.is_complete())
+            lines: self.source.line_count(&self.index),
+            indexing: (!progress.is_complete() && self.source.snapshot.is_none())
                 .then(|| progress.indexed as f32 / progress.len.max(1) as f32),
             len: self.source.len(),
             language: self.language.map(|language| language.name),
@@ -539,6 +575,8 @@ impl TextView {
                 .map(|range| range.end - range.start),
             error: self.error.clone(),
             notice: self.notice.clone(),
+            editing: self.is_editing(),
+            dirty: self.is_dirty(),
         }
     }
 
@@ -569,12 +607,12 @@ impl TextView {
         let Some(line) = self.pending_line else {
             return;
         };
-        match self.index.line_start(line.saturating_sub(1), &*self.source) {
+        match self.source.line_start(&self.index, line.saturating_sub(1)) {
             Ok(Some(offset)) => {
                 self.pending_line = None;
                 self.pending_jump = Some(Jump::Offset(offset));
             }
-            Ok(None) if self.index.is_complete() => {
+            Ok(None) if self.source.snapshot.is_some() || self.index.is_complete() => {
                 self.pending_line = None;
                 self.pending_jump = Some(Jump::End);
             }
@@ -669,6 +707,7 @@ impl TextView {
             anchor: 0,
             head: self.source.len(),
         });
+        self.selection_edited(cx);
         cx.notify();
     }
 
@@ -743,7 +782,7 @@ impl TextView {
         let (batches, mut received) = mpsc::unbounded();
         let source = self.source.clone();
         let searching = cx.background_executor().spawn(async move {
-            plastext_search::find_all(&source, &query, &cancel, |matches| {
+            source.find(&query, &cancel, |matches| {
                 batches.unbounded_send(matches).ok();
             })
         });
@@ -833,6 +872,7 @@ impl TextView {
             anchor: found.start,
             head: found.end,
         });
+        self.selection_edited(cx);
         self.jump(Jump::Reveal(found.start), cx);
     }
 
@@ -932,7 +972,7 @@ impl TextView {
     /// or the first visible line when nothing is selected.
     fn toggle_current_fold(&mut self, _: &ToggleFold, _: &mut Window, cx: &mut Context<Self>) {
         let offset = self.selection.map_or(self.top, |selection| selection.head);
-        let line = rows::row_start_at(&*self.source, offset.min(self.source.len()));
+        let line = self.source.row_start(offset.min(self.source.len()));
         match line.and_then(|start| rows::row_end(&*self.source, start).map(|end| (start, end))) {
             Ok((start, end)) => self.toggle_fold(start, end, cx),
             Err(err) => self.handle_read_error(err, cx),
@@ -980,7 +1020,7 @@ impl TextView {
 
     fn reveal_fold_header(&mut self, cx: &mut Context<Self>) {
         if let Some(hidden) = self.folds.hidden_at(self.top) {
-            self.top = rows::row_start_at(&*self.source, hidden.start - 1).unwrap_or(0);
+            self.top = self.source.row_start(hidden.start - 1).unwrap_or(0);
             self.top_offset = px(0.);
         }
         cx.notify();
@@ -1038,6 +1078,10 @@ impl TextView {
             ),
         };
         self.selection = Some(selection);
+        self.selection_edited(cx);
+        if click_count == 2 && !hit.in_gutter && !self.is_editing() {
+            self.begin_edit(cx);
+        }
         self.selecting = selecting;
         cx.notify();
     }
@@ -1047,6 +1091,7 @@ impl TextView {
             && self.selecting
         {
             selection.head = offset;
+            self.selection_edited(cx);
             cx.notify();
         }
     }
@@ -1084,8 +1129,8 @@ impl TextView {
         self.pending_line = None;
         self.pending_jump = None;
         let (source, folds) = (&*self.source, &self.folds);
-        let next = |row| folding::next_visible_row(source, folds, row);
-        let previous = |row| folding::previous_visible_row(source, folds, row);
+        let next = |row| source.next(folds, row);
+        let previous = |row| source.previous(folds, row);
         let position = ScrollPosition {
             top: self.top,
             offset: self.top_offset,
@@ -1130,14 +1175,14 @@ impl TextView {
 
     fn jump_target(&self, jump: Jump) -> Result<u64, ReadError> {
         match jump {
-            Jump::Offset(offset) => rows::row_start_at(&*self.source, offset),
+            Jump::Offset(offset) => self.source.row_start(offset),
             Jump::Reveal(offset) => {
                 if (self.top..self.top + self.visible_len.saturating_sub(1)).contains(&offset) {
                     return Ok(self.top);
                 }
-                let mut top = rows::row_start_at(&*self.source, offset)?;
+                let mut top = self.source.row_start(offset)?;
                 for _ in 0..self.page_rows / 3 {
-                    match folding::previous_visible_row(&*self.source, &self.folds, top)? {
+                    match self.source.previous(&self.folds, top)? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -1146,12 +1191,12 @@ impl TextView {
             }
             Jump::End => {
                 let last = self.source.len().saturating_sub(1);
-                let mut top = rows::row_start_at(&*self.source, last)?;
+                let mut top = self.source.row_start(last)?;
                 if let Some(hidden) = self.folds.hidden_at(top) {
-                    top = rows::row_start_at(&*self.source, hidden.start - 1)?;
+                    top = self.source.row_start(hidden.start - 1)?;
                 }
                 for _ in 1..self.page_rows {
-                    match folding::previous_visible_row(&*self.source, &self.folds, top)? {
+                    match self.source.previous(&self.folds, top)? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -1187,6 +1232,10 @@ impl TextView {
                 this.loading = None;
                 if let Err(err) = result {
                     this.error = Some(format!("Couldn't read this file: {err}").into());
+                    this.fail_pending_input(cx);
+                } else {
+                    this.sync_editing(cx);
+                    this.drain_input(cx);
                 }
                 cx.notify();
             })
@@ -1242,14 +1291,12 @@ impl TextView {
         self.apply_pending_line(cx);
         self.apply_pending_jump(cx);
 
-        let lines = self
-            .index
-            .line_count()
-            .unwrap_or_else(|| self.index.estimated_line_count());
+        let lines = self.source.line_count(&self.index);
         let digits = lines.max(1).ilog10() as usize + 1;
         let gutter_width = char_width * (digits.max(3) + 3) as f32;
         let text_left = gutter_width + char_width;
         let text_width = (bounds.size.width - text_left - px(SCROLLBAR_WIDTH)).max(px(0.));
+        self.reveal_caret_x(text_width);
         let first_column = (self.scroll_x / char_width) as usize;
         let shift = char_width * first_column as f32 - self.scroll_x;
         let columns = (text_width / char_width).ceil() as usize + 2;
@@ -1260,16 +1307,17 @@ impl TextView {
         };
 
         let row_count = (bounds.size.height / line_height).ceil() as usize + 1;
-        let (ranges, err) = folding::visible_rows(&*self.source, &self.folds, self.top, row_count);
+        let (ranges, err) = self.source.visible_rows(&self.folds, self.top, row_count);
         if let Some(err) = err {
             self.handle_read_error(err, cx);
         }
         let mut visible_rows = Vec::with_capacity(ranges.len());
-        let mut starts_line = rows::starts_line(&*self.source, self.top).unwrap_or(false);
+        let mut starts_line = self.source.starts_line(self.top).unwrap_or(false);
         for range in &ranges {
             match self.source.bytes(range.clone()) {
                 Ok(bytes) => {
-                    let ends_line = bytes.last() == Some(&b'\n');
+                    let ends_line = bytes.last() == Some(&b'\n')
+                        || (self.source.snapshot.is_some() && bytes.last() == Some(&b'\r'));
                     visible_rows.push((range.start, bytes, starts_line));
                     starts_line = ends_line;
                 }
@@ -1291,7 +1339,7 @@ impl TextView {
             self.style.tab_size,
             self.syntax_folds.as_deref().map(Vec::as_slice),
         );
-        let mut line = self.index.line_at(self.top, &*self.source).ok().flatten();
+        let mut line = self.source.line_at(&self.index, self.top).ok().flatten();
         let mut rows = Vec::with_capacity(visible_rows.len());
         let mut hit_rows = Vec::with_capacity(visible_rows.len());
         let mut max_columns = 0;
@@ -1299,7 +1347,7 @@ impl TextView {
         for (i, (start, bytes, starts_line)) in visible_rows.iter().enumerate() {
             if *start != previous_end {
                 // A fold was skipped: count lines again from here.
-                line = self.index.line_at(*start, &*self.source).ok().flatten();
+                line = self.source.line_at(&self.index, *start).ok().flatten();
             } else if i > 0 && *starts_line {
                 line = line.map(|line| line + 1);
             }
@@ -1380,7 +1428,7 @@ impl TextView {
             .sticky_headers(&visible_rows)
             .into_iter()
             .map(|(start, content)| {
-                let line = self.index.line_at(start, &*self.source).ok().flatten();
+                let line = self.source.line_at(&self.index, start).ok().flatten();
                 let spans = self.highlights(&[(start, content.clone(), true)]);
                 let spans = spans_within(&spans, start..start + content.len() as u64);
                 let columns = first_column..first_column + columns;
@@ -1596,8 +1644,8 @@ impl Render for TextView {
             .find
             .as_ref()
             .map(|find| self.render_find_bar(find, theme, cx));
-        let text = div()
-            .key_context(KEY_CONTEXT)
+        let text = self
+            .editing_actions(div(), cx)
             .track_focus(&self.focus_handle)
             .flex_1()
             .min_h_0()
@@ -1933,6 +1981,7 @@ impl TextLayout {
             bounds.origin,
             point(bounds.right() - px(SCROLLBAR_WIDTH), bounds.bottom()),
         );
+        view.update(cx, |view, cx| view.paint_input(&self.hits, window, cx));
         let hits = self.hits.clone();
         let pressed = view.clone();
         window.on_mouse_event(move |event: &MouseDownEvent, phase, _, cx| {

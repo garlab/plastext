@@ -110,18 +110,23 @@ impl Workspace {
         let Some(plan) = action.plan(pane.tabs.len(), index, pane.active) else {
             return;
         };
-        pane.opening.select();
-        let mut old_index = 0;
-        pane.tabs.retain(|tab| {
-            let keep = plan.keep.contains(&old_index);
-            old_index += 1;
-            if !keep {
-                tab.view.set_visible(false, cx);
-            }
-            keep
-        });
-        // Every action retains its target, so the pane and its split survive.
-        self.activate(menu.pane, plan.active, window, cx);
+        let paths = pane
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !plan.keep.contains(index))
+            .map(|(_, tab)| tab.path.clone())
+            .collect();
+        let active = Some(pane.tabs[plan.keep.start + plan.active].path.clone());
+        self.confirm_close(
+            editing::CloseTarget::Tabs {
+                pane: menu.pane,
+                paths,
+                active,
+            },
+            window,
+            cx,
+        );
     }
 
     fn tab_menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {

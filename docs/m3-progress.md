@@ -1,7 +1,7 @@
 # M3 editing
 
-M3 has started with the headless buffer and shared document model. The app remains
-a reader: GUI editing and saving are not enabled yet. M2's open
+M3 now includes a persistent buffer, shared document model and the first
+[text/code editing UI](editing.md), including background saves. M2's open
 [validation checks](m2-validation.md) and large-diagram controls can proceed
 independently; they do not block work on the editing model.
 
@@ -57,8 +57,8 @@ selection. Edits and grouped undo/redo rebase all pane anchors. Commands carry
 both a document generation and a pane-selection generation: changes, pane
 closure and edit/undo cycles invalidate obsolete work. Cursor movement and
 deletion use the bounded grapheme search and apply only after checking those
-generations again. This is a headless model; the existing GPUI split panes have
-not been connected to it yet.
+generations again. GPUI text/code panes now share these sessions, including undo history and rebased
+selections; see [editing controls and current limits](editing.md).
 
 `FileDocument` now adds [streaming saves and external-change handling](m3-saving.md):
 atomic replacement, symlink write-through, in-place hard-link saves with recovery
@@ -91,7 +91,7 @@ independent scalar/UTF-16 coordinates, every split of representative valid and
 malformed strings, and a 1.2 MB grapheme crossing evicted source-cache blocks.
 Session tests cover independent selections, grouped history, stale commands,
 closed panes, cross-document requests and asynchronous save checkpoints.
-The macOS run passes 82 buffer tests and 7 benchmark tests, including save,
+The macOS run passes 84 buffer tests and 9 benchmark tests, including save,
 conflict and encoding cases. The [save diagnostic](m3-saving.md#validation) verifies
 100 MB and 1 GB files in both save modes with bounded streaming memory.
 
@@ -140,14 +140,24 @@ cold-cache comparison: preparation is sensitive to filesystem caches, and RSS
 includes the expanded diagnostic and allocator retention. Neither run measures
 session selection rebasing, sustained typing history or native input/painting.
 
+The GUI integration adds regression tests for independent split selections,
+shared undo, composition grouping and UTF-16 replacement ranges, delayed input,
+stale composition rejection, CR/LF/CRLF and empty trailing rows, key dispatch,
+horizontal caret visibility, save completion during typing, and disk conflicts.
+Snapshot searches bypass the viewport cache. Evicted undo history and superseded
+view snapshots retire on workers; the original reader cache is released when
+its editing snapshot takes over. Ordinary read-mode opening still prepares no
+editing copy.
+
 ## Next work and limits
 
-- Connect the shared session to GPUI panes and background jobs, then integrate
-  input/IME, multi-cursor and editing commands. History currently rebases pane
-  anchors rather than restoring historical selections. Existing reading views
-  still use `FileSource` and are not rebuilt for each edit.
+- Extend the initial text/code editing UI with multi-cursor, find/replace,
+  word movement, indentation, EditorConfig and editing settings. History currently
+  rebases pane anchors rather than restoring historical selections. Native IME
+  interaction, close dialogs and keystroke-to-pixel latency still need validation.
 - Wire save/reload jobs to debounced filesystem events, conflict/recovery UI and
-  new-file/Save As handling before exposing GUI writes. Complete native Windows/
+  new-file/Save As handling. Saves already reject disk conflicts and preserve
+  the dirty buffer. Complete native Windows/
   Linux and crash/failure validation; see the [save limits](m3-saving.md).
 - Add Markdown synchronization, tail mode and `--wait`, then fuzz targets and
   native typing/performance tests.
@@ -155,5 +165,5 @@ session selection rebasing, sustained typing history or native input/painting.
 Preparing a large original currently costs a full copy and temporary disk space
 proportional to its size; no filesystem-clone optimization is implemented yet.
 Snapshot creation after preparation is constant-time. Large history reclamation
-can free many nodes; the GUI integration must retire those versions off the UI
-thread. None of this preparation is added to ordinary read-mode opening.
+can free many nodes; GUI sessions now retire evicted versions off the UI thread.
+None of this preparation is added to ordinary read-mode opening.

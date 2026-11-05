@@ -36,18 +36,21 @@ pane selections and rejects stale background commands. The
 [save backend](m3-saving.md) supports streaming atomic/in-place saves, metadata,
 symlinks and clean reload/dirty conflict handling.
 [Encoding support](m3-encoding.md) adds lossless UTF-16/legacy editing originals,
-CR/LF/CRLF indexing and undoable encoding/newline output settings. GUI editing
-and saving are not enabled yet. Existing read-mode paths remain unchanged; core performance
-diagnostics are recorded separately from the accepted baselines.
+CR/LF/CRLF indexing and undoable encoding/newline output settings.
+[Text/code editing](editing.md) now connects these sessions to split panes, with
+caret/selection, native input and composition, shared undo/redo, background saves,
+and dirty-file close guards. Existing read-mode opening keeps its original path;
+core performance diagnostics remain separate from the accepted baselines.
 
 Next, in order:
 
-1. Connect shared sessions to split panes. Keep disk I/O and bulk history
-   reclamation off the UI thread. Wire edit mode, caret/selection/IME, multi-cursor, find/replace,
-   indentation and EditorConfig into the text view.
+1. Complete editing commands: multi-cursor, word movement, find/replace,
+   indentation and EditorConfig; expose encoding/newline and editing settings.
+   Validate native IME, close/quit dialogs and typing latency.
 2. Integrate save/reload jobs with debounced filesystem events, explicit
-   conflict/recovery choices and new-file/Save As handling before enabling GUI
-   writes. Validate native platform behavior and injected save failures.
+   conflict/recovery choices and new-file/Save As handling. Current saves refuse
+   conflicts while retaining edits. Validate native platform behavior and injected
+   save failures.
 3. Add synchronized Markdown source/preview, double-click-to-source, tail mode
    and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
 

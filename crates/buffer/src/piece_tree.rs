@@ -96,6 +96,16 @@ impl Piece {
         }
     }
 
+    pub fn missing(&self, local: Range<u64>) -> Option<Range<u64>> {
+        let source = self.range.start + local.start..self.range.start + local.end;
+        let missing = match &self.source {
+            Source::Original(file) => file.missing(source),
+            Source::Decoded(file) => file.text.missing(source),
+            Source::Added(_) => None,
+        };
+        missing.map(|_| local)
+    }
+
     pub fn load(&self, local: Range<u64>) -> std::io::Result<()> {
         let file = match &self.source {
             Source::Original(file) => Some(file),

@@ -58,22 +58,57 @@ pub fn find_all(
     source: &FileSource,
     query: &Query,
     cancelled: &AtomicBool,
+    found: impl FnMut(Vec<Range<u64>>),
+) -> io::Result<()> {
+    find_with_reader(
+        source.len(),
+        |range, output| {
+            source
+                .scan(range, |chunk| {
+                    output.extend_from_slice(chunk);
+                    ControlFlow::Continue(())
+                })
+                .map(|_| ())
+        },
+        query,
+        cancelled,
+        found,
+    )
+}
+
+/// Search an immutable editing version without filling its viewport cache.
+pub fn find_in_snapshot(
+    source: &plastext_buffer::TextSnapshot,
+    query: &Query,
+    cancelled: &AtomicBool,
+    found: impl FnMut(Vec<Range<u64>>),
+) -> io::Result<()> {
+    find_with_reader(
+        source.len(),
+        |range, output| source.read_uncached(range, output),
+        query,
+        cancelled,
+        found,
+    )
+}
+
+fn find_with_reader(
+    len: u64,
+    mut read: impl FnMut(Range<u64>, &mut Vec<u8>) -> io::Result<()>,
+    query: &Query,
+    cancelled: &AtomicBool,
     mut found: impl FnMut(Vec<Range<u64>>),
 ) -> io::Result<()> {
     // Each window repeats the end of the previous one, so matches that
     // straddle a boundary are found too.
     let overlap = query.len.saturating_sub(1) as u64;
-    let len = source.len();
     let mut window_start = 0;
     let mut window = Vec::new();
     let mut last_end = 0;
     while window_start < len && !cancelled.load(Ordering::Relaxed) {
         let read_from = window_start + window.len() as u64;
         let read_to = (window_start + CHUNK).max(read_from).min(len);
-        source.scan(read_from..read_to, |chunk| {
-            window.extend_from_slice(chunk);
-            ControlFlow::Continue(())
-        })?;
+        read(read_from..read_to, &mut window)?;
         let matches: Vec<Range<u64>> = query
             .matcher
             .find_iter(&window)
@@ -109,6 +144,24 @@ mod tests {
         })
         .unwrap();
         all
+    }
+
+    #[test]
+    fn searches_the_unsaved_snapshot_across_piece_boundaries() {
+        use plastext_buffer::{EditBuffer, UndoGroup};
+        let mut buffer = EditBuffer::from_bytes("old text");
+        buffer.replace(0..3, b"new", UndoGroup::New).unwrap();
+        let snapshot = buffer.snapshot();
+        buffer.replace(0..3, b"later", UndoGroup::New).unwrap();
+        let mut matches = Vec::new();
+        find_in_snapshot(
+            &snapshot,
+            &Query::new("new text").unwrap(),
+            &AtomicBool::new(false),
+            |batch| matches.extend(batch),
+        )
+        .unwrap();
+        assert_eq!(matches, vec![0..8]);
     }
 
     #[test]

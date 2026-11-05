@@ -1,8 +1,9 @@
 # Saving and external changes
 
 The M3 file model is implemented in `plastext-buffer`. Its jobs can run on a
-worker while input continues against the shared document session. It is not yet
-connected to GUI editing, save commands or filesystem watchers.
+worker while input continues against the shared document session. [Text/code
+editing](editing.md) now uses its save jobs. Filesystem watchers, interactive
+conflict resolution and Save As remain to integrate.
 
 ## Saving existing files
 

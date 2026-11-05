@@ -23,7 +23,7 @@ mod unicode_summary;
 
 use std::{io, path::Path, sync::Arc};
 
-pub use edit::{EditBuffer, EditError, TextSnapshot, UndoGroup};
+pub use edit::{EditBuffer, EditError, RetiredHistory, TextSnapshot, UndoGroup};
 pub use encoding::{EncodingHint, TextEncoding, TextFormat};
 pub use file_document::{
     ExternalCheck, ExternalObservation, ExternalResult, ExternalState, FileDocument,

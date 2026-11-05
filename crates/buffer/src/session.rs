@@ -161,6 +161,14 @@ impl DocumentSession {
         }
     }
 
+    /// The UI must drain retired versions after each mutation and drop them on a worker.
+    pub fn defer_history_drop(&mut self) {
+        self.buffer.defer_history_drop();
+    }
+    pub fn take_retired_history(&mut self) -> Option<crate::RetiredHistory> {
+        self.buffer.take_retired_history()
+    }
+
     pub fn snapshot(&self) -> DocumentSnapshot {
         DocumentSnapshot {
             text: self.buffer.snapshot(),
@@ -220,6 +228,18 @@ impl DocumentSession {
         self.update_selection(base.id, selection);
         self.last_actor = None;
         self.buffer.break_undo_group();
+        Ok(())
+    }
+
+    /// Place the IME selection inside an edit without splitting its undo group.
+    pub fn set_composition_selection(
+        &mut self,
+        base: &PaneSnapshot,
+        selection: Selection,
+    ) -> Result<(), SessionError> {
+        self.validate(base)?;
+        self.validate_selection(selection)?;
+        self.update_selection(base.id, selection);
         Ok(())
     }
 

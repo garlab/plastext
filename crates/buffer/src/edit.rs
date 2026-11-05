@@ -84,6 +84,29 @@ impl TextSnapshot {
         })
     }
 
+    /// The first uncached piece in a range, without allocating copied bytes.
+    pub fn missing(&self, range: Range<u64>) -> Option<Range<u64>> {
+        self.check_range(&range);
+        piece_tree::visit(&self.root, range, 0, &mut |piece, local, base| {
+            if let Some(range) = piece.missing(local) {
+                Err(base + range.start..base + range.end)
+            } else {
+                Ok(())
+            }
+        })
+        .err()
+    }
+
+    /// Read working bytes on a worker without populating the viewport cache.
+    pub fn read_uncached(&self, range: Range<u64>, output: &mut Vec<u8>) -> io::Result<()> {
+        self.check_range(&range);
+        piece_tree::visit(&self.root, range, 0, &mut |piece, local, _| {
+            let start = output.len();
+            output.resize(start + (local.end - local.start) as usize, 0);
+            piece.read_uncached(local, &mut output[start..])
+        })
+    }
+
     /// Stream this version using its output encoding/newline settings, with
     /// bounded scratch space and no read-cache pollution. Progress counts UTF-8
     /// input bytes, not encoded output bytes. Blocks: run on a worker.
@@ -144,6 +167,11 @@ pub enum EditError {
     Read(ReadError),
 }
 
+/// Versions removed from history, retained for destruction on a worker.
+pub struct RetiredHistory {
+    _changes: Vec<Change>,
+}
+
 struct Change {
     before: TextSnapshot,
     after: TextSnapshot,
@@ -182,6 +210,7 @@ pub struct EditBuffer {
     history_bytes: u64,
     history_budget: u64,
     group_open: bool,
+    retired: Option<Vec<Change>>,
 }
 
 impl EditBuffer {
@@ -269,6 +298,7 @@ impl EditBuffer {
             history_bytes: 0,
             history_budget: HISTORY_BUDGET,
             group_open: false,
+            retired: None,
         }
     }
 
@@ -366,6 +396,19 @@ impl EditBuffer {
     }
     pub fn is_chunked(&self) -> bool {
         self.chunked
+    }
+    /// Retain evicted history for worker-thread destruction. Once enabled,
+    /// callers must drain `take_retired_history` after mutations and budget changes.
+    pub fn defer_history_drop(&mut self) {
+        self.retired.get_or_insert_with(Vec::new);
+    }
+    pub fn take_retired_history(&mut self) -> Option<RetiredHistory> {
+        self.retired
+            .as_mut()
+            .filter(|retired| !retired.is_empty())
+            .map(|retired| RetiredHistory {
+                _changes: std::mem::take(retired),
+            })
     }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
@@ -469,6 +512,9 @@ impl EditBuffer {
         let coalesce = group == UndoGroup::Continue && self.group_open && self.redo.is_empty();
         for change in self.redo.drain(..) {
             self.history_bytes -= change.charge;
+            if let Some(retired) = &mut self.retired {
+                retired.push(change);
+            }
         }
         self.history_bytes = self.history_bytes.saturating_add(charge);
         if let Some(previous) = self.undo.back_mut().filter(|_| coalesce) {
@@ -526,6 +572,9 @@ impl EditBuffer {
                 break;
             };
             self.history_bytes -= change.charge;
+            if let Some(retired) = &mut self.retired {
+                retired.push(change);
+            }
         }
     }
 }

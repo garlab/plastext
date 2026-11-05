@@ -6,6 +6,8 @@ pub mod images;
 pub mod instance;
 pub mod mermaid;
 pub mod pdf;
+#[cfg(target_os = "macos")]
+pub mod quit;
 pub mod tex;
 
 /// Set the running macOS application's Dock / app-switcher icon, including when
