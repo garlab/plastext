@@ -1856,7 +1856,10 @@ impl Render for Workspace {
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::close_active_tab))
+            .when(
+                self.panes[&self.active_pane].active_tab().is_some(),
+                |view| view.on_action(cx.listener(Self::close_active_tab)),
+            )
             .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                 this.confirm_close(editing::CloseTarget::Window, window, cx);
             }))

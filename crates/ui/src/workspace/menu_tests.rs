@@ -62,6 +62,36 @@ fn focus_tree(cx: &mut TestAppContext, window: WindowHandle<Workspace>, path: &P
 }
 
 #[gpui::test]
+fn close_tab_is_available_only_while_a_tab_is_open(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("note.txt");
+    std::fs::write(&path, "Original\n").unwrap();
+    let window = open(cx, &path);
+    dispatch(cx, window, SplitRight);
+    dispatch(cx, window, CloseTab);
+    // Closing one split still leaves a tab that can be closed.
+    dispatch(cx, window, CloseTab);
+    window
+        .update(cx, |workspace, window, cx| {
+            assert!(
+                workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .is_none()
+            );
+            assert!(!window.is_action_available(&CloseTab, cx));
+            assert!(window.is_action_available(&CloseWindow, cx));
+            workspace.open_file(path.clone(), None, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    window
+        .update(cx, |_, window, cx| {
+            assert!(window.is_action_available(&CloseTab, cx));
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn edit_menu_targets_the_editor_search_field_and_file_tree(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note.txt");
