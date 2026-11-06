@@ -1,6 +1,7 @@
 //! The plastext application: startup, windows, single-instance server and session restore (spec §7.3).
 
 mod menus;
+mod recents;
 mod windows;
 
 use std::{
@@ -139,6 +140,7 @@ fn main() -> ExitCode {
             .detach();
         }
         menus::init(cx);
+        recents::init(cx);
         // Keep the existing last-window exit behavior, including profiling.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -253,6 +255,15 @@ fn should_activate() -> bool {
 }
 
 fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut App) {
+    open_window_in(request, notice, None, cx);
+}
+
+fn open_window_in(
+    request: WindowRequest,
+    notice: Option<SharedString>,
+    preferred: Option<WindowHandle<Workspace>>,
+    cx: &mut App,
+) {
     let existing = cx
         .windows()
         .into_iter()
@@ -263,6 +274,7 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
                 .is_ok_and(|workspace| workspace.root() == request.root.as_deref())
         });
     if let Some(window) = existing {
+        recents::record(request.root.as_deref(), cx);
         window
             .update(cx, |workspace, window, cx| {
                 for file in request.files {
@@ -275,6 +287,51 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
             })
             .ok();
         return;
+    }
+
+    // A blank welcome window is a destination, not an extra window to leave
+    // behind after opening a project. Never replace files or pending dialogs.
+    if request.root.is_some() {
+        let welcome = preferred
+            .or_else(|| {
+                cx.active_window()
+                    .and_then(|window| window.downcast::<Workspace>())
+            })
+            .filter(|window| {
+                window
+                    .read(cx)
+                    .is_ok_and(Workspace::can_open_folder_in_place)
+            })
+            .or_else(|| {
+                cx.windows()
+                    .into_iter()
+                    .filter_map(|window| window.downcast::<Workspace>())
+                    .find(|window| {
+                        window
+                            .read(cx)
+                            .is_ok_and(Workspace::can_open_folder_in_place)
+                    })
+            });
+        if let Some(window) = welcome {
+            let settings = cx.global::<AppSettings>().0.clone();
+            recents::record(request.root.as_deref(), cx);
+            window
+                .update(cx, |workspace, window, cx| {
+                    window.set_window_title(&Workspace::title(request.root.as_deref()));
+                    *workspace = Workspace::new(request.root, settings, window, cx);
+                    for file in request.files {
+                        workspace.open_file(file.path, file.line.map(u64::from), window, cx);
+                    }
+                    if let Some(notice) = notice {
+                        workspace.show_notice(notice, cx);
+                    }
+                    workspace.focus_handle(cx).focus(window);
+                    window.activate_window();
+                    cx.notify();
+                })
+                .ok();
+            return;
+        }
     }
 
     create_window(request, notice, cx);
@@ -302,6 +359,7 @@ fn create_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut 
         ..Default::default()
     };
     let settings = cx.global::<AppSettings>().0.clone();
+    let root = request.root.clone();
     let opening = Instant::now();
     let opened = cx.open_window(options, |window, cx| {
         let profile_reading = env::var_os("PLASTEXT_PROFILE_READING").is_some();
@@ -355,7 +413,10 @@ fn create_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut 
         workspace
     });
     match opened {
-        Ok(window) => profile_first_frame(window, opening.elapsed(), cx),
+        Ok(window) => {
+            recents::record(root.as_deref(), cx);
+            profile_first_frame(window, opening.elapsed(), cx);
+        }
         Err(err) => eprintln!("plastext: cannot open a window: {err:#}"),
     }
 }

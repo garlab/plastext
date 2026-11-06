@@ -14,8 +14,6 @@ actions!(
     application,
     [
         NewWindow,
-        OpenFile,
-        OpenFolder,
         About,
         Hide,
         HideOthers,
@@ -32,8 +30,8 @@ pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-shift-n", NewWindow, None),
-        KeyBinding::new("cmd-o", OpenFile, None),
-        KeyBinding::new("cmd-alt-o", OpenFolder, None),
+        KeyBinding::new("cmd-o", ui::OpenFile, None),
+        KeyBinding::new("cmd-alt-o", ui::OpenFolder, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("cmd-alt-h", HideOthers, None),
         KeyBinding::new("cmd-m", Minimize, None),
@@ -51,8 +49,10 @@ pub(super) fn init(cx: &mut App) {
             );
         }
     });
-    cx.on_action(|_: &OpenFile, cx| prompt_paths(false, cx));
-    cx.on_action(|_: &OpenFolder, cx| prompt_paths(true, cx));
+    cx.on_action(|_: &ui::OpenFile, cx| prompt_paths(false, cx));
+    cx.on_action(|_: &ui::OpenFolder, cx| prompt_paths(true, cx));
+    cx.on_action(|action: &ui::OpenRecentFolder, cx| open_folder(action.path.clone(), cx));
+    cx.on_action(|_: &ui::ClearRecentFolders, cx| super::recents::clear(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -141,8 +141,8 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("New File…", ui::NewFile),
                 MenuItem::action("New Window", NewWindow),
                 MenuItem::separator(),
-                MenuItem::action("Open File…", OpenFile),
-                MenuItem::action("Open Folder…", OpenFolder),
+                MenuItem::action("Open File…", ui::OpenFile),
+                MenuItem::action("Open Folder…", ui::OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", edit::Save),
                 MenuItem::separator(),
@@ -233,14 +233,7 @@ fn prompt_paths(folders: bool, cx: &mut App) {
             cx.update(|cx| {
                 if folders {
                     for root in paths {
-                        open_window(
-                            WindowRequest {
-                                root: Some(root),
-                                files: Vec::new(),
-                            },
-                            None,
-                            cx,
-                        );
+                        open_folder(root, cx);
                     }
                 } else {
                     open_files(paths, target, cx);
@@ -258,6 +251,45 @@ fn prompt_paths(folders: bool, cx: &mut App) {
             }
         }
         _ => {}
+    })
+    .detach();
+}
+
+fn open_folder(path: PathBuf, cx: &mut App) {
+    let target = cx
+        .active_window()
+        .and_then(|window| window.downcast::<Workspace>());
+    let check = cx.background_executor().spawn(async move {
+        let root = std::fs::canonicalize(&path)?;
+        if !root.is_dir() {
+            return Err(std::io::Error::other("the folder no longer exists"));
+        }
+        Ok::<_, std::io::Error>(root)
+    });
+    cx.spawn(async move |cx| match check.await {
+        Ok(root) => {
+            cx.update(|cx| {
+                super::open_window_in(
+                    WindowRequest {
+                        root: Some(root),
+                        files: Vec::new(),
+                    },
+                    None,
+                    target,
+                    cx,
+                )
+            })
+            .ok();
+        }
+        Err(error) => {
+            if let Some(target) = target {
+                target
+                    .update(cx, |workspace, _, cx| {
+                        workspace.show_notice(format!("Couldn't open folder: {error}"), cx)
+                    })
+                    .ok();
+            }
+        }
     })
     .detach();
 }
@@ -313,6 +345,57 @@ mod tests {
                 _ => None,
             })
             .unwrap()
+    }
+
+    #[gpui::test]
+    fn opening_a_folder_reuses_welcome_but_never_a_pending_file(cx: &mut TestAppContext) {
+        let project = tempfile::tempdir().unwrap();
+        let project_path = project.path().canonicalize().unwrap();
+        cx.update(|cx| {
+            plastext_ui::init(cx);
+            init(cx);
+            cx.set_global(AppSettings(Arc::default()));
+        });
+        let welcome = cx.add_window(|window, cx| Workspace::new(None, Arc::default(), window, cx));
+        cx.run_until_parked();
+        cx.update(|cx| open_folder(project.path().to_owned(), cx));
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        assert_eq!(
+            welcome
+                .read_with(cx, |workspace, _| workspace.root().map(ToOwned::to_owned))
+                .unwrap(),
+            Some(project_path)
+        );
+
+        let file = project.path().join("note.txt");
+        std::fs::write(&file, "keep this file\n").unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let welcome = cx.add_window(|window, cx| Workspace::new(None, Arc::default(), window, cx));
+        cx.update(|cx| {
+            open_files(vec![file.clone()], Some(welcome), cx);
+            open_window(
+                WindowRequest {
+                    root: Some(other.path().to_owned()),
+                    files: Vec::new(),
+                },
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
+        welcome
+            .read_with(cx, |workspace, cx| {
+                assert!(workspace.root().is_none());
+                assert!(!workspace.is_welcome());
+                assert!(
+                    plastext_editor::EditingDocument::all(cx)
+                        .iter()
+                        .any(|doc| doc.read(cx).path() == file)
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]

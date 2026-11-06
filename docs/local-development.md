@@ -4,6 +4,11 @@ See [Building](../README.md#building) for prerequisites. Run the commands below 
 
 ## Try another folder
 
+Run `cargo run -p plastext-app` without a path for the welcome screen, with
+**Open Folder**, **Open File** and up to ten recent folders. Opening a folder
+reuses an empty welcome window. Recent folders are stored locally in
+`recent-folders.json` beside `config.toml`; **Clear Recent** clears this history.
+
 Pass the folder to the app:
 
 ```sh

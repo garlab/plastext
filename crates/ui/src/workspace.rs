@@ -43,6 +43,7 @@ mod editing;
 #[cfg(test)]
 mod menu_tests;
 mod opening;
+pub(crate) mod welcome;
 pub use editing::request_quit;
 use opening::{Destination, OpenKind, Openings, Placement};
 
@@ -288,7 +289,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut subscriptions = vec![cx.observe_window_appearance(window, |_, _, cx| cx.notify())];
+        let mut subscriptions = vec![
+            cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
+            cx.observe_global::<welcome::RecentFolders>(|_, cx| cx.notify()),
+        ];
         let icon_themes = IconThemes::shared(&settings.icons, cx);
         subscriptions.push(
             cx.subscribe(&icon_themes, |this, _, notice: &IconNotice, cx| {
@@ -1188,8 +1192,10 @@ impl Workspace {
         let Some(tree) = &self.tree else {
             return sidebar
                 .p_3()
+                .gap_3()
                 .text_color(theme.text_muted)
-                .child("No folder open. Run `plastext <folder>` to open one.")
+                .child("No folder open")
+                .child(welcome::open_folder_button("sidebar-open-folder", theme))
                 .into_any_element();
         };
         let tab = |id: &'static str, label: &'static str, shown: bool| {
@@ -1852,6 +1858,7 @@ impl Render for Workspace {
                 .min_w_0()
                 .child(self.render_layout(&self.layout, theme, cx));
         let outline = self.render_outline(theme, cx);
+        let welcome = self.is_welcome();
 
         div()
             .key_context(KEY_CONTEXT)
@@ -1922,40 +1929,46 @@ impl Render for Workspace {
             .flex_col()
             .bg(theme.background)
             .text_color(theme.text)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(sidebar)
-                    .child(editor_area)
-                    .children(outline)
-                    .child(
-                        div()
-                            .id("sidebar-divider")
-                            .absolute()
-                            .left(sidebar_width - px(4.))
-                            .top_0()
-                            .bottom_0()
-                            .w(px(8.))
-                            .occlude()
-                            .cursor(CursorStyle::ResizeLeftRight)
-                            .hover(|divider| divider.bg(theme.border))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                    this.divider_drag = Some(DividerDrag::Sidebar(SidebarDrag {
-                                        start_x: event.position.x,
-                                        start_width: sidebar_width,
-                                    }));
-                                    cx.stop_propagation();
-                                    cx.notify();
-                                }),
-                            ),
-                    ),
-            )
-            .child(self.render_status_bar(theme, cx))
+            .when(welcome, |view| view.child(self.render_welcome(theme, cx)))
+            .when(!welcome, |view| {
+                view.child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(sidebar)
+                        .child(editor_area)
+                        .children(outline)
+                        .child(
+                            div()
+                                .id("sidebar-divider")
+                                .absolute()
+                                .left(sidebar_width - px(4.))
+                                .top_0()
+                                .bottom_0()
+                                .w(px(8.))
+                                .occlude()
+                                .cursor(CursorStyle::ResizeLeftRight)
+                                .hover(|divider| divider.bg(theme.border))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                        this.divider_drag =
+                                            Some(DividerDrag::Sidebar(SidebarDrag {
+                                                start_x: event.position.x,
+                                                start_width: sidebar_width,
+                                            }));
+                                        cx.stop_propagation();
+                                        cx.notify();
+                                    }),
+                                ),
+                        ),
+                )
+            })
+            .when(!welcome || self.notice.is_some(), |view| {
+                view.child(self.render_status_bar(theme, cx))
+            })
             .when_some(self.divider_drag, |d, drag| {
                 d.child(self.divider_drag_overlay(drag, cx))
             })

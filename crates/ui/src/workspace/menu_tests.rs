@@ -62,6 +62,56 @@ fn focus_tree(cx: &mut TestAppContext, window: WindowHandle<Workspace>, path: &P
 }
 
 #[gpui::test]
+fn welcome_buttons_and_recent_folders_dispatch_shared_menu_actions(cx: &mut TestAppContext) {
+    use crate::actions::{ClearRecentFolders, OpenFile, OpenFolder, OpenRecentFolder};
+    use std::cell::RefCell;
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let folder = tempfile::tempdir().unwrap();
+    cx.update(|cx| {
+        crate::init(cx);
+        cx.set_global(welcome::RecentFolders(vec![folder.path().to_owned()]));
+        let opened = calls.clone();
+        cx.on_action(move |_: &OpenFolder, _| opened.borrow_mut().push("folder"));
+        let opened = calls.clone();
+        cx.on_action(move |_: &OpenFile, _| opened.borrow_mut().push("file"));
+        let opened = calls.clone();
+        let path = folder.path().to_owned();
+        cx.on_action(move |action: &OpenRecentFolder, _| {
+            assert_eq!(action.path, path);
+            opened.borrow_mut().push("recent");
+        });
+        let opened = calls.clone();
+        cx.on_action(move |_: &ClearRecentFolders, cx| {
+            opened.borrow_mut().push("clear");
+            cx.set_global(welcome::RecentFolders::default());
+        });
+    });
+    let window = cx.add_window(|window, cx| Workspace::new(None, Arc::default(), window, cx));
+    cx.run_until_parked();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let content = visual.debug_bounds("welcome-content").unwrap();
+    let viewport = visual.debug_bounds("welcome").unwrap();
+    assert_eq!(content.center().x, viewport.center().x);
+    assert!(content.size.width <= px(560.));
+    for selector in [
+        "welcome-open-folder",
+        "welcome-open-file",
+        "welcome-recent-0",
+        "welcome-clear-recent",
+    ] {
+        let bounds = visual.debug_bounds(selector).unwrap();
+        assert!(bounds.size.width > px(0.) && bounds.size.height > px(0.));
+        visual.simulate_click(bounds.center(), Default::default());
+    }
+    cx.run_until_parked();
+    assert_eq!(*calls.borrow(), ["folder", "file", "recent", "clear"]);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    // GPUI retains old debug selectors between frames; use the newly laid-out
+    // content bounds to verify that clearing history removed the recent list.
+    assert!(visual.debug_bounds("welcome-content").unwrap().size.height < content.size.height);
+}
+
+#[gpui::test]
 fn close_tab_is_available_only_while_a_tab_is_open(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note.txt");

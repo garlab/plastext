@@ -19,4 +19,5 @@ mod workspace;
 mod zoom;
 
 pub use file_icons::Assets;
+pub use workspace::welcome::RecentFolders;
 pub use workspace::{Workspace, init, request_quit};

@@ -14,6 +14,7 @@ on the shared library alongside Plastext.
 You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The Xcode Command Line Tools are enough; full Xcode isn't required.
 
 ```sh
+cargo run -p plastext-app        # welcome screen: open a folder, file or recent folder
 cargo run -p plastext-app -- .   # open the current folder
 cargo test --workspace
 cargo build --release            # builds target/release/plastext and plastext-app

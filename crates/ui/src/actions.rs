@@ -5,3 +5,10 @@ pub use crate::workspace::{
     SplitRight, ToggleOutline, ZoomIn, ZoomOut,
 };
 gpui::actions!(preview, [TogglePreview]);
+gpui::actions!(workspace, [OpenFile, OpenFolder, ClearRecentFolders]);
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = workspace, no_json)]
+pub struct OpenRecentFolder {
+    pub path: std::path::PathBuf,
+}

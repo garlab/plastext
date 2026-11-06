@@ -63,6 +63,10 @@ pub(super) struct Openings {
 }
 
 impl Openings {
+    pub fn is_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
     pub fn begin(&mut self, path: &Path, kind: OpenKind) -> Option<u64> {
         self.pending
             .retain(|existing, request| existing == path || request.kind == OpenKind::Keep);

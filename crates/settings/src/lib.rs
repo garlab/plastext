@@ -7,6 +7,7 @@ mod byte_size;
 mod icon_fonts;
 pub mod icons;
 mod markdown;
+mod recent_folders;
 mod theme;
 mod vscode;
 
@@ -19,6 +20,7 @@ use serde::Deserialize;
 
 pub use byte_size::ByteSize;
 pub use markdown::{Markdown, ProseWidth};
+pub use recent_folders::RecentFolders;
 pub use theme::{Color, SyntaxOverrides, ThemeOverrides, Themes};
 pub use vscode::{ThemeImportError, import_vscode_theme};
 
