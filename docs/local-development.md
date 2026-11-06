@@ -58,6 +58,14 @@ cargo run -p plastext-app -- .
 
 Use this command from the repository root for subsequent development launches. Development settings are read from `target/dev-config/plastext/config.toml`; a missing file uses the defaults. This directory is ignored by Git. The installed app continues to use its normal settings, by default `~/.config/plastext/config.toml`.
 
+## Native startup check
+
+GPUI unit tests use a mock text renderer. After changing startup UI or text layout,
+also run `cargo build -p plastext-app` and `python3 scripts/check-native-startup.py`.
+The check briefly opens native windows with empty history and Unicode recent-folder
+names, using temporary settings. Each window exits after its first frame. Pass a
+binary path to check a release build instead.
+
 ## Shared rendering libraries
 
 Math uses the published `katex-native` crate. Mermaid/SVG/SGF/chess rendering, image decoding and worker

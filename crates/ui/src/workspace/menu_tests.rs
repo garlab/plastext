@@ -120,7 +120,9 @@ fn welcome_stays_usable_in_small_windows_with_a_full_recent_list(cx: &mut TestAp
         crate::init(cx);
         cx.set_global(welcome::RecentFolders(
             (0..10)
-                .map(|i| std::env::temp_dir().join(format!("project-{i}")))
+                .map(|i| {
+                    std::env::temp_dir().join(format!("Café… 中文 🦀 — long project name {i}"))
+                })
                 .collect(),
         ));
     });

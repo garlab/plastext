@@ -207,6 +207,8 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
                         .text_ellipsis()
                         .child(if folder {
                             "Open Folder…"
@@ -253,17 +255,24 @@ fn recent_folder(index: usize, path: &Path, theme: Theme) -> impl IntoElement {
                 .flex_col()
                 .gap_1()
                 .child(
-                    div().text_sm().text_ellipsis().child(
-                        path.file_name()
-                            .unwrap_or(path.as_os_str())
-                            .to_string_lossy()
-                            .into_owned(),
-                    ),
+                    div()
+                        .text_sm()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(
+                            path.file_name()
+                                .unwrap_or(path.as_os_str())
+                                .to_string_lossy()
+                                .into_owned(),
+                        ),
                 )
                 .child(
                     div()
                         .text_xs()
                         .text_color(theme.text_muted)
+                        .overflow_hidden()
+                        .whitespace_nowrap()
                         .text_ellipsis()
                         .child(path.parent().unwrap_or(&path).display().to_string()),
                 ),
