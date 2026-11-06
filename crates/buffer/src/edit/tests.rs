@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 fn contents(snapshot: &TextSnapshot) -> Vec<u8> {
     snapshot.bytes(0..snapshot.len()).unwrap().to_vec()
@@ -333,16 +334,30 @@ fn preparation_rejects_atomic_path_replacement_even_when_length_is_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("document.txt");
     fs::write(&path, vec![b'a'; 65_536]).unwrap();
-    let mut replacement = tempfile::NamedTempFile::new_in(directory.path()).unwrap();
-    replacement.write_all(&vec![b'b'; 65_536]).unwrap();
-    let mut replacement = Some(replacement);
+    let replacement = directory.path().join("replacement.txt");
+    fs::write(&replacement, vec![b'b'; 65_536]).unwrap();
+    let metadata = fs::metadata(&path).unwrap();
+    let times = fs::FileTimes::new().set_modified(metadata.modified().unwrap());
+    #[cfg(windows)]
+    let times = {
+        use std::os::windows::fs::FileTimesExt;
+        times.set_created(metadata.created().unwrap())
+    };
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&replacement)
+        .unwrap()
+        .set_times(times)
+        .unwrap();
     let result = EditBuffer::open(
         &path,
         paged_options(),
         &AtomicBool::new(false),
         |copied, total| {
             if copied == total {
-                replacement.take().unwrap().persist(&path).unwrap();
+                // std uses Windows POSIX rename semantics when the destination
+                // is open; tempfile::persist only tries MoveFileExW.
+                fs::rename(&replacement, &path).unwrap();
             }
         },
     );

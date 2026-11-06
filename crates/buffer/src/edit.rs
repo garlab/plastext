@@ -2,7 +2,7 @@
 //! of cached ranges do not perform I/O. UI input and saving are separate layers.
 use std::{
     collections::VecDeque,
-    fs::{self, File, Metadata},
+    fs::File,
     io::{self, Read, Write},
     ops::Range,
     path::Path,
@@ -232,14 +232,8 @@ impl EditBuffer {
     ) -> io::Result<Self> {
         check_cancel(cancel)?;
         let mut input = File::open(path)?;
-        let before = input.metadata()?;
-        if !before.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "editing requires a regular file",
-            ));
-        }
-        let len = before.len();
+        let before = crate::file_stamp::read(&input)?;
+        let len = before.len;
         let mut disk = (len > options.large_file_threshold)
             .then(tempfile::tempfile)
             .transpose()?;
@@ -264,8 +258,8 @@ impl EditBuffer {
         check_cancel(cancel)?;
         // Compare both the opened file and the current path: a rename can leave
         // the old descriptor unchanged while replacing the user's document.
-        if !same_file_version(&before, &input.metadata()?)
-            || !same_file_version(&before, &fs::metadata(path)?)
+        if crate::file_stamp::read(&input)? != before
+            || crate::file_stamp::read_path(path)? != before
         {
             return Err(io::Error::other(
                 "the file changed while preparing edit mode",
@@ -598,28 +592,6 @@ pub(super) fn check_cancel(cancel: &AtomicBool) -> io::Result<()> {
     } else {
         Ok(())
     }
-}
-
-fn same_file_version(before: &Metadata, after: &Metadata) -> bool {
-    if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if before.dev() != after.dev()
-            || before.ino() != after.ino()
-            || before.ctime() != after.ctime()
-            || before.ctime_nsec() != after.ctime_nsec()
-        {
-            return false;
-        }
-    }
-    #[cfg(not(unix))]
-    if before.created().ok() != after.created().ok() {
-        return false;
-    }
-    true
 }
 
 #[cfg(test)]

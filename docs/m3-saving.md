@@ -66,17 +66,19 @@ native filesystem behavior on those platforms still needs CI/runtime validation.
 The disk checkpoint includes the resolved path, file identity, length, change and
 modification times, link count and permissions. Saves compare it before staging
 and immediately before commit, including both the open handle and the current
-path. Same-length rewrites with restored modification times are detected through
-change time; replacing the path is detected through file identity. A postcommit
-check catches changes observed before the result is returned.
+path. Edit preparation uses the same handle-based identity and metadata checks.
+Same-length rewrites with restored modification times are detected when the
+filesystem reports a different change time; replacing the path is detected
+through file identity. A postcommit check catches changes observed before the
+result is returned.
 
 These are optimistic checks, not a filesystem transaction shared with other
 editors. Locks serialize cooperating writers, but an outside writer can still
 act between the final comparison and replacement; in-place writes are also
-visible while they run. Filesystems with weak metadata consistency can weaken
-detection. Do not describe this as an unconditional guarantee against concurrent
-writers or power loss. Uncertain outcomes retain dirty state and require a new
-disk check. Crash/failure injection and network-filesystem validation remain
+visible while they run. Timestamp resolution and delayed or weak metadata
+updates can hide same-length rewrites that restore the modification time. These
+checks do not guarantee protection against concurrent writers or power loss.
+Uncertain outcomes retain dirty state and require a new disk check. Crash/failure injection and network-filesystem validation remain
 release-hardening work.
 
 ## External changes and explicit resolution

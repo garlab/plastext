@@ -161,46 +161,106 @@ fn external_changes_during_staging_or_at_commit_are_not_overwritten() {
     }
 }
 
+fn assert_disk_conflict(before: &DiskVersion) {
+    assert!(!before.is_current().unwrap());
+    assert_eq!(
+        save_snapshot(
+            &edit("ours"),
+            before,
+            SaveOptions::default(),
+            &cancelled(),
+            |_| {}
+        )
+        .unwrap_err()
+        .kind,
+        SaveFailureKind::Conflict
+    );
+}
+
 #[test]
-fn replacement_deletion_and_same_length_restored_mtime_are_detected() {
-    for change in 0..3 {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("file");
-        fs::write(&path, b"old").unwrap();
-        let before = DiskVersion::read(&path).unwrap();
-        let modified = fs::metadata(&path).unwrap().modified().unwrap();
-        match change {
-            0 => {
-                fs::remove_file(&path).unwrap();
-                fs::write(&path, b"new").unwrap();
-            }
-            1 => {
-                fs::remove_file(&path).unwrap();
-            }
-            _ => {
-                let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
-                file.write_all(b"new").unwrap();
-                file.set_times(fs::FileTimes::new().set_modified(modified))
-                    .unwrap();
-            }
-        }
-        assert!(!before.is_current().unwrap());
-        assert_eq!(
-            save_snapshot(
-                &edit("ours"),
-                &before,
-                SaveOptions::default(),
-                &cancelled(),
-                |_| {}
-            )
-            .unwrap_err()
-            .kind,
-            SaveFailureKind::Conflict
-        );
-        if change != 1 {
-            assert_eq!(fs::read(&path).unwrap(), b"new");
-        }
-    }
+fn replacement_with_same_length_and_mtime_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    fs::write(&path, b"old").unwrap();
+    let before = DiskVersion::read(&path).unwrap();
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    // Allocate the replacement while the original still exists, so this test
+    // cannot accidentally reuse the same file identity after deletion.
+    let replacement = dir.path().join("replacement");
+    fs::write(&replacement, b"new").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&replacement)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    let after = DiskVersion::read(&path).unwrap();
+    assert_eq!(before.stamp.len, after.stamp.len);
+    assert_eq!(before.stamp.modified, after.stamp.modified);
+    assert_ne!(before.stamp.identity, after.stamp.identity);
+    assert_disk_conflict(&before);
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+}
+
+#[test]
+fn deletion_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    fs::write(&path, b"old").unwrap();
+    let before = DiskVersion::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    assert_disk_conflict(&before);
+    assert!(!path.exists());
+}
+
+#[test]
+fn same_length_rewrite_with_restored_mtime_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    fs::write(&path, b"old").unwrap();
+    #[cfg(windows)]
+    backdate_change_time(&path);
+    let before = DiskVersion::read(&path).unwrap();
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    let mut file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    file.write_all(b"new").unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(modified))
+        .unwrap();
+    // Windows can defer timestamp updates until the writer's handle closes.
+    drop(file);
+    let after = DiskVersion::read(&path).unwrap();
+    assert_eq!(before.stamp.len, after.stamp.len);
+    assert_eq!(before.stamp.modified, after.stamp.modified);
+    assert_eq!(before.stamp.identity, after.stamp.identity);
+    assert_disk_conflict(&before);
+    assert_eq!(fs::read(&path).unwrap(), b"new");
+}
+
+#[cfg(windows)]
+fn backdate_change_time(path: &Path) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
+    };
+    // Rapid writes may share a Windows clock tick. Seed an old change time so
+    // the test exercises change-time detection without relying on a sleep.
+    // A new writer handle below will perform the automatic timestamp update.
+    let file = fs::OpenOptions::new().write(true).open(path).unwrap();
+    let info = FILE_BASIC_INFO {
+        ChangeTime: 116_444_736_000_000_000, // Unix epoch in Windows 100 ns ticks.
+        ..Default::default()
+    };
+    // SAFETY: file owns the live handle; info is a valid, initialized structure.
+    let result = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&info as *const FILE_BASIC_INFO).cast(),
+            size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    assert_ne!(result, 0, "{}", io::Error::last_os_error());
 }
 
 #[test]

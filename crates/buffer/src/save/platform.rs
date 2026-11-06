@@ -1,14 +1,6 @@
-use std::{fs::File, io, path::Path, time::SystemTime};
+use std::{fs::File, io, path::Path};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Stamp {
-    pub len: u64,
-    pub links: u64,
-    identity: [u64; 2],
-    changed: [i64; 2],
-    modified: SystemTime,
-    permissions: [u32; 3],
-}
+pub(super) use crate::file_stamp::{FileStamp as Stamp, read as stamp};
 
 pub(super) fn open(path: &Path, writable: bool) -> io::Result<File> {
     #[cfg(unix)]
@@ -40,64 +32,6 @@ pub(super) fn open(path: &Path, writable: bool) -> io::Result<File> {
         ));
     }
     Ok(file)
-}
-
-pub(super) fn stamp(file: &File) -> io::Result<Stamp> {
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "saving requires a regular file",
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        Ok(Stamp {
-            len: metadata.len(),
-            links: metadata.nlink(),
-            identity: [metadata.dev(), metadata.ino()],
-            changed: [metadata.ctime(), metadata.ctime_nsec()],
-            modified: metadata.modified()?,
-            permissions: [metadata.mode(), metadata.uid(), metadata.gid()],
-        })
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandle,
-            GetFileInformationByHandleEx,
-        };
-        // SAFETY: both structures are plain Win32 output structures, and the
-        // live File keeps the handle valid for the duration of these calls.
-        let (info, basic) = unsafe {
-            let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
-            let mut basic: FILE_BASIC_INFO = std::mem::zeroed();
-            if GetFileInformationByHandle(file.as_raw_handle(), &mut info) == 0
-                || GetFileInformationByHandleEx(
-                    file.as_raw_handle(),
-                    FileBasicInfo,
-                    (&mut basic as *mut FILE_BASIC_INFO).cast(),
-                    size_of::<FILE_BASIC_INFO>() as u32,
-                ) == 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-            (info, basic)
-        };
-        Ok(Stamp {
-            len: metadata.len(),
-            links: u64::from(info.nNumberOfLinks),
-            identity: [
-                u64::from(info.dwVolumeSerialNumber),
-                u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow),
-            ],
-            changed: [basic.ChangeTime, 0],
-            modified: metadata.modified()?,
-            permissions: [info.dwFileAttributes, 0, 0],
-        })
-    }
 }
 
 #[cfg(unix)]

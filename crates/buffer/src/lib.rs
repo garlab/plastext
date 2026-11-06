@@ -9,6 +9,7 @@
 mod edit;
 mod encoding;
 mod file_document;
+mod file_stamp;
 mod grapheme;
 mod line_index;
 mod line_summary;
