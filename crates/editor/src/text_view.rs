@@ -155,6 +155,25 @@ pub struct TextViewStatus {
     pub dirty: bool,
 }
 
+#[derive(Default)]
+struct SourceViews(Vec<gpui::WeakEntity<TextView>>);
+impl gpui::Global for SourceViews {}
+
+/// Current focused source view's menu checkmark. Stale views and preview focus
+/// cannot contribute state, including when switching between windows.
+pub fn focused_word_wrap(window: &Window, cx: &App) -> bool {
+    cx.try_global::<SourceViews>().is_some_and(|state| {
+        state
+            .0
+            .iter()
+            .filter_map(gpui::WeakEntity::upgrade)
+            .any(|view| {
+                let view = view.read(cx);
+                view.focus_handle.is_focused(window) && view.word_wrap
+            })
+    })
+}
+
 /// A viewport over a file reader or a shared editing session (spec TXT-1).
 ///
 /// Only the visible rows are read, laid out and painted. The scroll position
@@ -163,6 +182,8 @@ pub struct TextViewStatus {
 /// loaded in the background, never on the main thread.
 pub struct TextView {
     source: Arc<ViewSource>,
+    word_wrap: bool,
+    wrapping: crate::wrapping::Wrapping,
     index: Arc<LineIndex>,
     style: TextStyle,
     language: Option<&'static Language>,
@@ -410,11 +431,17 @@ impl TextView {
                 }
             })
         });
+        let weak = cx.entity().downgrade();
+        let views = &mut cx.default_global::<SourceViews>().0;
+        views.retain(|view| view.is_upgradable());
+        views.push(weak);
         Self {
             source: Arc::new(ViewSource {
                 original: source,
                 snapshot: None,
             }),
+            word_wrap: false,
+            wrapping: Default::default(),
             index,
             style,
             language,
@@ -453,6 +480,22 @@ impl TextView {
             context_menu: None,
             copy_task: None,
         }
+    }
+
+    pub fn word_wrap(&self) -> bool {
+        self.word_wrap
+    }
+
+    fn toggle_word_wrap(
+        &mut self,
+        _: &crate::actions::ToggleWordWrap,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.word_wrap = !self.word_wrap;
+        self.scroll_x = px(0.);
+        self.pending_jump = Some(Jump::Offset(self.top));
+        cx.notify();
     }
 
     /// Enables the native M1 benchmark for a parsed source file. It scrolls
@@ -558,6 +601,8 @@ impl TextView {
         let source = self.source.clone();
         let index = self.index.clone();
         let style = self.style.clone();
+        let word_wrap = self.word_wrap;
+        let wrap_columns = self.wrapping.columns();
         let syntax = self.syntax.clone();
         let syntax_text = self.syntax_text.clone();
         let syntax_folds = self.syntax_folds.clone();
@@ -584,6 +629,8 @@ impl TextView {
                     || symbols.is_none()
             });
             let mut view = Self::new(source.original.clone(), index, style, parse, cx);
+            view.word_wrap = word_wrap;
+            view.wrapping.configure(wrap_columns);
             view.language = language;
             view.syntax = syntax;
             view.syntax_text = syntax_text;
@@ -1070,10 +1117,19 @@ impl TextView {
     fn mouse_down(&mut self, hit: Hit, click_count: usize, extend: bool, cx: &mut Context<Self>) {
         self.notice = None;
         if hit.on_fold_toggle {
-            self.toggle_fold(hit.row.start, hit.row.end, cx);
+            if let Ok(end) = self.source.row_end(hit.row.start) {
+                self.toggle_fold(hit.row.start, end, cx);
+            }
             return;
         }
-        let row = hit.row.start..hit.row.end;
+        let row = if self.word_wrap && (hit.in_gutter || click_count >= 3) {
+            self.source
+                .row_start(hit.offset)
+                .and_then(|start| self.source.row_end(start).map(|end| start..end))
+                .unwrap_or(hit.row.start..hit.row.end)
+        } else {
+            hit.row.start..hit.row.end
+        };
         let (selection, selecting) = match (hit.in_gutter, click_count) {
             (_, 1) if extend && self.selection.is_some() => {
                 let anchor = self
@@ -1165,8 +1221,11 @@ impl TextView {
         self.pending_line = None;
         self.pending_jump = None;
         let (source, folds) = (&*self.source, &self.folds);
-        let next = |row| source.next(folds, row);
-        let previous = |row| source.previous(folds, row);
+        let next = |row| self.wrapping.next(source, folds, row, self.style.tab_size);
+        let previous = |row| {
+            self.wrapping
+                .previous(source, folds, row, self.style.tab_size)
+        };
         let position = ScrollPosition {
             top: self.top,
             offset: self.top_offset,
@@ -1209,10 +1268,15 @@ impl TextView {
         }
     }
 
+    fn visual_row_start(&self, offset: u64) -> Result<u64, ReadError> {
+        self.wrapping
+            .start(&self.source, offset, self.style.tab_size)
+    }
+
     fn jump_target(&self, jump: Jump) -> Result<ScrollPosition<u64>, ReadError> {
         let top = match jump {
             Jump::Caret(offset) => return self.caret_scroll_target(offset),
-            Jump::Offset(offset) => self.source.row_start(offset)?,
+            Jump::Offset(offset) => self.visual_row_start(offset)?,
             Jump::Reveal(offset) => {
                 if (self.top..self.top + self.visible_len.saturating_sub(1)).contains(&offset) {
                     return Ok(ScrollPosition {
@@ -1220,9 +1284,14 @@ impl TextView {
                         offset: self.top_offset,
                     });
                 }
-                let mut top = self.source.row_start(offset)?;
+                let mut top = self.visual_row_start(offset)?;
                 for _ in 0..self.page_rows / 3 {
-                    match self.source.previous(&self.folds, top)? {
+                    match self.wrapping.previous(
+                        &self.source,
+                        &self.folds,
+                        top,
+                        self.style.tab_size,
+                    )? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -1231,12 +1300,17 @@ impl TextView {
             }
             Jump::End => {
                 let last = self.source.len().saturating_sub(1);
-                let mut top = self.source.row_start(last)?;
+                let mut top = self.visual_row_start(last)?;
                 if let Some(hidden) = self.folds.hidden_at(top) {
-                    top = self.source.row_start(hidden.start - 1)?;
+                    top = self.visual_row_start(hidden.start - 1)?;
                 }
                 for _ in 1..self.page_rows {
-                    match self.source.previous(&self.folds, top)? {
+                    match self.wrapping.previous(
+                        &self.source,
+                        &self.folds,
+                        top,
+                        self.style.tab_size,
+                    )? {
                         Some(start) => top = start,
                         None => break,
                     }
@@ -1332,14 +1406,21 @@ impl TextView {
         self.char_width = char_width;
         self.line_height = line_height;
         self.page_rows = ((bounds.size.height / line_height) as usize).max(1);
-        self.apply_pending_line(cx);
-        self.apply_pending_jump(cx);
-
         let lines = self.source.line_count(&self.index);
         let digits = lines.max(1).ilog10() as usize + 1;
         let gutter_width = char_width * (digits.max(3) + 3) as f32;
         let text_left = gutter_width + char_width;
         let text_width = (bounds.size.width - text_left - px(SCROLLBAR_WIDTH)).max(px(0.));
+        let wrap_columns = self.word_wrap.then_some(
+            ((text_width / char_width).floor() as usize)
+                .saturating_sub(1)
+                .max(1),
+        );
+        if self.wrapping.configure(wrap_columns) && self.pending_jump.is_none() {
+            self.pending_jump = Some(Jump::Offset(self.top));
+        }
+        self.apply_pending_line(cx);
+        self.apply_pending_jump(cx);
         self.reveal_caret_x(text_width);
         let first_column = (self.scroll_x / char_width) as usize;
         let shift = char_width * first_column as f32 - self.scroll_x;
@@ -1351,7 +1432,13 @@ impl TextView {
         };
 
         let row_count = (bounds.size.height / line_height).ceil() as usize + 1;
-        let (ranges, err) = self.source.visible_rows(&self.folds, self.top, row_count);
+        let (ranges, err) = self.wrapping.visible(
+            &self.source,
+            &self.folds,
+            self.top,
+            row_count,
+            self.style.tab_size,
+        );
         if let Some(err) = err {
             self.handle_read_error(err, cx);
         }
@@ -1371,14 +1458,45 @@ impl TextView {
                 }
             }
         }
-        let spans = self.highlights(&visible_rows);
+        // Highlight complete bounded source rows, then slice into soft rows.
+        // Starting in a continuation must retain its syntax and fold metadata.
+        let mut logical_rows = Vec::new();
+        if self.word_wrap {
+            for (start, _, _) in &visible_rows {
+                if logical_rows
+                    .last()
+                    .is_some_and(|(base, bytes, _): &(u64, Bytes, bool)| {
+                        (*base..*base + bytes.len() as u64).contains(start)
+                    })
+                {
+                    continue;
+                }
+                if let Ok(base) = self.source.row_start(*start)
+                    && logical_rows.last().is_none_or(|(last, _, _)| *last != base)
+                    && let Ok(end) = self.source.row_end(base)
+                    && let Ok(bytes) = self.source.bytes(base..end)
+                {
+                    logical_rows.push((
+                        base,
+                        bytes,
+                        self.source.starts_line(base).unwrap_or(false),
+                    ));
+                }
+            }
+        }
+        let highlight_rows = if self.word_wrap {
+            &logical_rows
+        } else {
+            &visible_rows
+        };
+        let spans = self.highlights(highlight_rows);
 
         let selection = self
             .selection
             .map(|selection| selection.range())
             .filter(|range| !range.is_empty());
         let fold_marks = folding::fold_marks(
-            &visible_rows,
+            highlight_rows,
             &self.folds,
             self.style.tab_size,
             self.syntax_folds.as_deref().map(Vec::as_slice),
@@ -1454,18 +1572,26 @@ impl TextView {
                         .collect()
                 })
                 .unwrap_or_default();
+            let fold = if self.word_wrap {
+                logical_rows
+                    .iter()
+                    .position(|(base, _, _)| base == start)
+                    .and_then(|i| fold_marks[i])
+            } else {
+                fold_marks[i]
+            };
             hit_rows.push(HitRow {
                 start: *start,
                 end,
                 content: bytes.slice(0..content.len()),
-                fold: fold_marks[i],
+                fold,
             });
             rows.push(RowLayout {
                 number,
                 text: shape_visible(visible, &theme, &shaper),
                 selected,
                 matches,
-                fold: fold_marks[i],
+                fold,
             });
         }
         let sticky: Vec<StickyRow> = self
@@ -1488,7 +1614,11 @@ impl TextView {
 
         let shown_end = ranges.last().map_or(self.top, |range| range.end);
         self.visible_len = shown_end - self.top;
-        self.max_scroll_x = (char_width * (max_columns + 2) as f32 - text_width).max(px(0.));
+        self.max_scroll_x = if self.word_wrap {
+            px(0.)
+        } else {
+            (char_width * (max_columns + 2) as f32 - text_width).max(px(0.))
+        };
         self.scroll_x = self.scroll_x.min(self.max_scroll_x);
 
         let len = self.source.len();
@@ -1709,6 +1839,7 @@ impl Render for TextView {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::clear_selection))
             .on_action(cx.listener(Self::toggle_current_fold))
+            .on_action(cx.listener(Self::toggle_word_wrap))
             .on_action(cx.listener(Self::fold_all))
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::find))

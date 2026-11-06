@@ -26,6 +26,7 @@ pub struct EditingDocument {
     cancel: Arc<AtomicBool>,
     task: Option<Task<()>>,
     file_operation: bool,
+    edit_after_operation: Option<u64>,
 }
 impl EditingDocument {
     pub fn path(&self) -> &std::path::Path {
@@ -66,6 +67,7 @@ impl EditingDocument {
                 cancel: Arc::new(AtomicBool::new(false)),
                 task: None,
                 file_operation: false,
+                edit_after_operation: None,
             }
         });
         let documents = &mut cx.global_mut::<Documents>().0;
@@ -104,6 +106,9 @@ impl EditingDocument {
     }
     pub fn set_file_operation_pending(&mut self, pending: bool, cx: &mut Context<Self>) {
         self.file_operation = pending;
+        if !pending && let Some(offset) = self.edit_after_operation.take() {
+            self.begin_edit(offset, cx);
+        }
         cx.notify();
     }
     pub fn all(cx: &App) -> Vec<Entity<Self>> {
@@ -133,6 +138,9 @@ impl EditingDocument {
     }
     pub fn begin_edit(&mut self, offset: u64, cx: &mut Context<Self>) {
         if self.file_operation {
+            // Switching Preview → Source during a rename/move must not lose
+            // the request to edit once the operation releases this document.
+            self.edit_after_operation = Some(offset);
             return;
         }
         if self.file.is_some() {

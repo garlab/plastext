@@ -12,6 +12,8 @@ gpui::actions!(
         Save,
         Find,
         FindNext,
-        FindPrevious
+        FindPrevious,
+        ShowCharacterPalette,
+        ToggleWordWrap
     ]
 );

@@ -105,6 +105,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-o", GoToSymbol, context),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, context),
         KeyBinding::new("cmd-alt-b", ToggleOutline, context),
+        KeyBinding::new("alt-z", plastext_editor::actions::ToggleWordWrap, context),
+        KeyBinding::new(
+            "ctrl-cmd-space",
+            plastext_editor::actions::ShowCharacterPalette,
+            context,
+        ),
         // Canonical modified bindings also supply native menu shortcut labels;
         // read-mode aliases such as `n` and `/` remain local to their views.
         KeyBinding::new("cmd-c", plastext_editor::actions::Copy, context),

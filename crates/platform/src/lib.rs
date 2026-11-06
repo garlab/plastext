@@ -5,6 +5,8 @@ pub mod files;
 pub mod gestures;
 pub mod images;
 pub mod instance;
+#[cfg(target_os = "macos")]
+pub mod menus;
 pub mod mermaid;
 pub mod pdf;
 #[cfg(target_os = "macos")]

@@ -384,6 +384,11 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
+            .on_action(
+                cx.listener(|_, _: &crate::actions::ShowCharacterPalette, window, _| {
+                    window.show_character_palette()
+                }),
+            )
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))

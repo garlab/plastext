@@ -505,8 +505,7 @@ impl MarkdownView {
                 self._source_observer = Some(cx.observe(view, |_, _, cx| cx.notify()));
             }
             view.update(cx, |view, cx| {
-                view.scroll_to_offset(offset, cx);
-                view.edit_by_default(cx);
+                view.edit_at(offset, cx);
             });
             view.focus_handle(cx).focus(window);
         } else {
@@ -1665,18 +1664,35 @@ impl Render for MarkdownView {
                     .text_color(theme.text_muted)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(if self.parsing {
+                    .child(if self.rendered && self.parsing {
                         "Markdown · rendering…"
+                    } else if !self.rendered
+                        && self
+                            .editing_document
+                            .as_ref()
+                            .is_some_and(|doc| doc.read(cx).is_preparing())
+                    {
+                        "Markdown · preparing editor…"
                     } else if !self.rendered
                         && self.source_status(cx).is_some_and(|status| !status.editing)
                     {
-                        "Markdown · press e or Enter to edit"
+                        if self
+                            .editing_document
+                            .as_ref()
+                            .and_then(|doc| doc.read(cx).notice())
+                            .is_some_and(|notice| notice == "Read-only file")
+                        {
+                            "Markdown · read-only"
+                        } else {
+                            "Markdown · source"
+                        }
                     } else {
                         "Markdown"
                     })
                     .child(
                         div()
                             .id("md-toggle-source")
+                            .debug_selector(|| "md-toggle-source".into())
                             .cursor_pointer()
                             .child(if self.rendered {
                                 "Source  ⇧⌘V"

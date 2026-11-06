@@ -237,6 +237,46 @@ impl TextView {
         // queue synthetic input: that would temporarily dirty and pin preview tabs.
         self.sync_editing(cx);
     }
+    /// Enter a source view at the preview's reading position. A reused editor
+    /// may still have a caret elsewhere in the document; move it with the view.
+    pub fn edit_at(&mut self, offset: u64, cx: &mut Context<Self>) {
+        self.scroll_to_offset(offset, cx);
+        let target = self
+            .visual_row_start(offset)
+            .unwrap_or(offset)
+            .min(self.source.len());
+        let (rows, _) = self.wrapping.visible(
+            &self.source,
+            &self.folds,
+            target,
+            self.page_rows,
+            self.style.tab_size,
+        );
+        let end = rows.last().map_or(target, |row| row.end);
+        let desired = self
+            .selection
+            .filter(|selection| (target..=end).contains(&selection.head))
+            .unwrap_or(Selection {
+                anchor: target,
+                head: target,
+            });
+        self.selection = Some(desired);
+        self.edit_by_default(cx);
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|editing| editing.pane.is_some())
+            && self.selection.is_none_or(|selection| {
+                selection.anchor != desired.anchor || selection.head != desired.head
+            })
+        {
+            self.queue_input(
+                Input::Selection(BufferSelection::new(desired.anchor, desired.head)),
+                cx,
+            );
+        }
+    }
+
     pub fn has_pending_input(&self) -> bool {
         self.editing
             .as_ref()
@@ -329,6 +369,7 @@ impl TextView {
                 // A different pane's edit invalidates composition coordinates.
                 editing.marked = None;
                 editing.cursor = None;
+                self.wrapping.clear();
                 self.cancel_parse.store(true, Ordering::Relaxed);
                 self._parse = None;
                 self._index_refresh = None;
@@ -522,6 +563,7 @@ impl TextView {
         let pane_id = editing.pane.ok_or(SessionError::Pending)?;
         let source = self.source.clone();
         let tab_size = self.style.tab_size;
+        let wrapping = &self.wrapping;
         let result = document.update(cx, |document, cx| {
             let session = document
                 .file
@@ -582,24 +624,41 @@ impl TextView {
                 }
                 Input::Vertical(delta, extend) => {
                     let head = base.selection().head.offset;
-                    let row = source.row_start(head).map_err(TextError::Read)?;
-                    let end = source.row_end(row).map_err(TextError::Read)?;
+                    let row = wrapping
+                        .start(&source, head, tab_size)
+                        .map_err(TextError::Read)?;
+                    let end = wrapping
+                        .end(&source, row, tab_size)
+                        .map_err(TextError::Read)?;
                     let bytes = snapshot.bytes(row..end).map_err(TextError::Read)?;
                     let goal = *editing
                         .goal_column
                         .get_or_insert_with(|| column_at(&bytes, tab_size, (head - row) as usize));
                     let target = if *delta < 0 {
-                        source.previous(&Folds::default(), row)
+                        wrapping.previous(&source, &Folds::default(), row, tab_size)
                     } else {
-                        source.next(&Folds::default(), row)
+                        wrapping.next(&source, &Folds::default(), row, tab_size)
                     }
                     .map_err(TextError::Read)?
                     .unwrap_or(row);
-                    let end = source.row_end(target).map_err(TextError::Read)?;
+                    let end = wrapping
+                        .end(&source, target, tab_size)
+                        .map_err(TextError::Read)?;
                     let bytes = snapshot.bytes(target..end).map_err(TextError::Read)?;
                     let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
                     let content = content.strip_suffix(b"\r").unwrap_or(content);
-                    let target = target + offset_at(content, tab_size, goal) as u64;
+                    // The byte at a soft row's end belongs to the next row.
+                    // Keep vertical movement on the requested row when it is
+                    // shorter than the remembered column (otherwise Up sticks).
+                    let column = if wrapping.enabled()
+                        && content.len() == bytes.len()
+                        && end < snapshot.len()
+                    {
+                        goal.min(column_at(content, tab_size, content.len()).saturating_sub(1))
+                    } else {
+                        goal
+                    };
+                    let target = target + offset_at(content, tab_size, column) as u64;
                     session.set_selection(
                         &base,
                         BufferSelection::new(
@@ -788,10 +847,13 @@ impl TextView {
         // the caret inside the margins. Only one viewport of rows is visited,
         // even for a jump to the other end of a large file.
         let margin = CARET_SCROLL_MARGIN.min(self.page_rows.saturating_sub(1) / 2);
-        let mut earliest = self.source.row_start(offset)?;
+        let mut earliest = self.visual_row_start(offset)?;
         let mut latest = earliest;
         for preceding in 1..=self.page_rows.saturating_sub(margin + 1) {
-            let Some(previous) = self.source.previous(&self.folds, earliest)? else {
+            let Some(previous) =
+                self.wrapping
+                    .previous(&self.source, &self.folds, earliest, self.style.tab_size)?
+            else {
                 break;
             };
             earliest = previous;
@@ -800,7 +862,7 @@ impl TextView {
             }
         }
         // A replacement may have moved line boundaries before the old top.
-        let top = self.source.row_start(self.top)?.clamp(earliest, latest);
+        let top = self.visual_row_start(self.top)?.clamp(earliest, latest);
         // Preserve fractional wheel scrolling while the caret is safely inside
         // the margins. At the upper margin its row must be fully visible.
         let offset = if top == self.top && top < latest {
@@ -811,6 +873,13 @@ impl TextView {
         Ok(ScrollPosition { top, offset })
     }
     pub(super) fn reveal_caret_x(&mut self, width: Pixels) {
+        if self.word_wrap {
+            self.scroll_x = px(0.);
+            if let Some(editing) = &mut self.editing {
+                editing.reveal_caret = false;
+            }
+            return;
+        }
         if !self
             .editing
             .as_ref()
@@ -888,6 +957,11 @@ impl TextView {
         );
     }
     pub(super) fn editing_actions(&self, element: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        let can_insert_emoji = self.editing.as_ref().is_some_and(|editing| {
+            editing.active
+                && editing.pane.is_some()
+                && !editing.document.read(cx).file_operation_pending()
+        });
         element
             .key_context(if self.is_editing() {
                 CONTEXT
@@ -919,6 +993,13 @@ impl TextView {
                     .on_action(
                         cx.listener(|this, _: &Redo, _, cx| this.queue_input(Input::Redo, cx)),
                     )
+                    .when(can_insert_emoji, |element| {
+                        element.on_action(cx.listener(
+                            |_, _: &crate::actions::ShowCharacterPalette, window, _| {
+                                window.show_character_palette()
+                            },
+                        ))
+                    })
                     .on_action(cx.listener(Self::edit_paste))
                     .on_action(cx.listener(Self::edit_cut))
             })

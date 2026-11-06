@@ -11,13 +11,14 @@ mod text_input;
 mod text_view;
 mod theme;
 mod view_source;
+mod wrapping;
 
 use gpui::App;
 
 pub use document::EditingDocument;
 pub use hex_view::{HexView, HexViewStatus};
 pub use text_input::{TextInput, TextInputEvent};
-pub use text_view::{TextStyle, TextView, TextViewStatus};
+pub use text_view::{TextStyle, TextView, TextViewStatus, focused_word_wrap};
 pub use theme::{Theme, Themes};
 
 /// Registers the editor's key bindings.

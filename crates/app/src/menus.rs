@@ -97,6 +97,26 @@ pub(super) fn init(cx: &mut App) {
     cx.on_action(|_: &Documentation, cx| cx.open_url("https://github.com/garlab/plastext#readme"));
     cx.on_action(|_: &ReportIssue, cx| cx.open_url("https://github.com/garlab/plastext/issues"));
     cx.set_menus(menus());
+    #[cfg(all(target_os = "macos", not(test)))]
+    {
+        let app = cx.to_async();
+        if let Err(error) = plastext_platform::menus::install(move || {
+            app.update(|cx| {
+                cx.active_window()
+                    .and_then(|window| {
+                        window
+                            .update(cx, |_, window, cx| {
+                                plastext_editor::focused_word_wrap(window, cx)
+                            })
+                            .ok()
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+        }) {
+            eprintln!("Couldn't configure native menus: {error}");
+        }
+    }
 }
 
 fn menus() -> Vec<Menu> {
@@ -145,6 +165,8 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Find Next", edit::FindNext),
                 MenuItem::action("Find Previous", edit::FindPrevious),
                 MenuItem::action("Find in Files…", ui::SearchProject),
+                MenuItem::separator(),
+                MenuItem::action("Emoji & Symbols", edit::ShowCharacterPalette),
             ],
         },
         Menu {
@@ -154,6 +176,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Show Files", ui::ShowFiles),
                 MenuItem::action("Toggle Outline", ui::ToggleOutline),
                 MenuItem::action("Switch Source / Preview", ui::TogglePreview),
+                MenuItem::action("Word Wrap", edit::ToggleWordWrap),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ui::ZoomIn),
                 MenuItem::action("Zoom Out", ui::ZoomOut),

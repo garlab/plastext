@@ -207,3 +207,49 @@ fn read_only_menu_disables_mutations_and_newer_copy_requests_win(cx: &mut TestAp
         .update(cx, |_, window, _| window.remove_window())
         .unwrap();
 }
+
+#[gpui::test]
+fn word_wrap_layout_reflows_without_changing_copy_or_line_numbers(cx: &mut TestAppContext) {
+    let (_dir, window) = open(cx, true);
+    let content = "alpha beta gamma delta ".repeat(100);
+    cx.update(|cx| cx.write_to_clipboard(ClipboardItem::new_string(content.clone())));
+    cx.simulate_keystrokes(window.into(), "cmd-a cmd-v");
+    window
+        .update(cx, |view, window, cx| {
+            view.toggle_word_wrap(&crate::actions::ToggleWordWrap, window, cx);
+            view.scroll_to_offset(0, cx);
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(300.), px(200.)));
+            let narrow = view.layout(bounds, window, cx);
+            assert!(narrow.rows.len() > 5);
+            assert!(narrow.rows[0].number.is_some());
+            assert!(narrow.rows[1..].iter().all(|row| row.number.is_none()));
+            assert_eq!(view.max_scroll_x, px(0.));
+            let hit = narrow
+                .hits
+                .hit(point(
+                    narrow.hits.text_left + view.char_width,
+                    view.line_height * 2. + px(1.),
+                ))
+                .unwrap();
+            let caret = narrow.hits.caret(hit.offset).unwrap();
+            assert_eq!(caret.top(), view.line_height * 2.);
+            assert_eq!(hit.offset, narrow.hits.rows[2].start + 1);
+            view.mouse_down(hit, 1, false, cx);
+            let wide = view.layout(
+                Bounds::new(bounds.origin, size(px(600.), px(200.))),
+                window,
+                cx,
+            );
+            assert!(wide.hits.rows[0].end > narrow.hits.rows[0].end);
+            let duplicate = view.duplicate(cx);
+            assert!(duplicate.read(cx).word_wrap());
+            view.select_all(&SelectAll, window, cx);
+            view.copy(&Copy, window, cx);
+            assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), content);
+            view.toggle_word_wrap(&crate::actions::ToggleWordWrap, window, cx);
+            let unwrapped = view.layout(bounds, window, cx);
+            assert_eq!(unwrapped.rows.len(), 1);
+            assert!(view.max_scroll_x > px(0.));
+        })
+        .unwrap();
+}

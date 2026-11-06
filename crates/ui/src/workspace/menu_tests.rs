@@ -166,6 +166,7 @@ fn readonly_views_disable_edit_menu_mutations_and_csv_can_toggle(cx: &mut TestAp
                     &edit::Undo,
                     &edit::Redo,
                     &edit::Save,
+                    &edit::ShowCharacterPalette,
                 ] {
                     assert!(!window.is_action_available(action, cx), "{}", action.name());
                 }
@@ -177,4 +178,78 @@ fn readonly_views_disable_edit_menu_mutations_and_csv_can_toggle(cx: &mut TestAp
         std::fs::read_to_string(&path).unwrap(),
         "name,value\nalpha,1\n"
     );
+}
+
+#[gpui::test]
+fn markdown_source_button_keeps_editing_and_character_palette_follows_focus(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("note.md");
+    std::fs::write(&path, "# Original\n").unwrap();
+    let window = open(cx, &path);
+    for _ in 0..3 {
+        focus_tree(cx, window, &path);
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        let button = visual.debug_bounds("md-toggle-source").unwrap();
+        visual.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+        window.update(cx, |workspace, window, cx| {
+            let tab = workspace.panes[&workspace.active_pane].active_tab().unwrap();
+            assert!(matches!(tab.view.status(cx), crate::tab_view::TabStatus::Text(status) if status.editing));
+            assert!(window.is_action_available(&edit::Paste, cx));
+            assert!(window.is_action_available(&edit::ShowCharacterPalette, cx));
+        }).unwrap();
+        dispatch(cx, window, edit::ToggleWordWrap);
+        window
+            .update(cx, |_, window, cx| {
+                assert!(plastext_editor::focused_word_wrap(window, cx))
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "alt-z");
+        window
+            .update(cx, |_, window, cx| {
+                assert!(!plastext_editor::focused_word_wrap(window, cx))
+            })
+            .unwrap();
+        dispatch(cx, window, edit::SelectAll);
+        clipboard(cx, "# Changed 😀\n");
+        dispatch(cx, window, edit::Paste);
+        assert_eq!(text(cx, window), "# Changed 😀\n");
+        cx.simulate_keystrokes(window.into(), "escape");
+        dispatch(cx, window, crate::actions::TogglePreview);
+        window
+            .update(cx, |_, window, cx| {
+                assert!(!window.is_action_available(&edit::ShowCharacterPalette, cx));
+            })
+            .unwrap();
+    }
+    dispatch(cx, window, edit::Find);
+    window
+        .update(cx, |_, window, cx| {
+            assert!(window.is_action_available(&edit::ShowCharacterPalette, cx));
+        })
+        .unwrap();
+}
+
+#[cfg(unix)]
+#[gpui::test]
+fn readonly_markdown_source_never_enables_typing_or_emojis(cx: &mut TestAppContext) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("readonly.md");
+    std::fs::write(&path, "# Read-only\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
+    let window = open(cx, &path);
+    for _ in 0..2 {
+        dispatch(cx, window, crate::actions::TogglePreview);
+        window.update(cx, |workspace, window, cx| {
+            let tab = workspace.panes[&workspace.active_pane].active_tab().unwrap();
+            assert!(matches!(tab.view.status(cx), crate::tab_view::TabStatus::Text(status) if !status.editing));
+            assert!(!window.is_action_available(&edit::Paste, cx));
+            assert!(!window.is_action_available(&edit::ShowCharacterPalette, cx));
+            assert!(window.is_action_available(&edit::ToggleWordWrap, cx));
+        }).unwrap();
+        dispatch(cx, window, crate::actions::TogglePreview);
+    }
 }

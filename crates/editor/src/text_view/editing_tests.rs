@@ -680,3 +680,85 @@ fn edited_syntax_respects_size_limit_and_recovers_after_undo(cx: &mut TestAppCon
     assert_eq!(content(cx, &view), original);
     assert_eq!(highlighted_rows(cx, &view), before);
 }
+
+#[gpui::test]
+fn wrapped_cursor_selection_and_edits_follow_visual_rows(cx: &mut TestAppContext) {
+    let original = b"one two three four five six\nlast\n";
+    let (_dir, view, _other) = setup(cx, original, false);
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.word_wrap = true;
+            view.wrapping.configure(Some(8));
+            view.page_rows = 3;
+        })
+    });
+    send(cx, &view, Input::Selection(BufferSelection::caret(1)));
+    send(cx, &view, Input::Vertical(1, false));
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().head, 9));
+    send(cx, &view, Input::Vertical(1, true));
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.apply_pending_jump(cx);
+            let selected = view.selection.unwrap();
+            assert_eq!((selected.anchor, selected.head), (9, 15));
+            assert!(view.top > 0, "caret scrolls in visual rows");
+            assert_eq!(view.scroll_x, px(0.));
+        });
+    });
+    send(cx, &view, insert("replacement "));
+    assert_eq!(
+        content(cx, &view),
+        "one two treplacement our five six\nlast\n"
+    );
+    send(cx, &view, Input::Undo);
+    assert_eq!(content(cx, &view).as_bytes(), original);
+    // A shorter soft row must not map its end back onto the following row.
+    send(cx, &view, Input::Selection(BufferSelection::caret(7)));
+    send(cx, &view, Input::Vertical(1, false));
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().head, 13));
+    send(cx, &view, Input::Vertical(-1, false));
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().head, 7));
+    cx.update(|cx| {
+        view.update(cx, |view, _| {
+            view.wrapping.configure(Some(40));
+            assert_eq!(view.visual_row_start(15).unwrap(), 0);
+            view.wrapping.configure(None);
+            assert_eq!(view.visual_row_start(15).unwrap(), 0);
+        })
+    });
+}
+
+#[gpui::test]
+fn returning_to_source_moves_the_old_caret_to_the_reading_position(cx: &mut TestAppContext) {
+    let bytes = "line of text\n".repeat(100);
+    let (_dir, view, _other) = setup(cx, bytes.as_bytes(), false);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.page_rows = 20;
+            view.edit_at(13 * 80, cx);
+            assert!(view.is_editing());
+            assert_eq!(view.selection.unwrap().head, 13 * 80);
+            assert!(view.top <= 13 * 80 && view.top >= 13 * 60);
+        })
+    });
+    send(cx, &view, insert("here "));
+    assert!(content(cx, &view)[13 * 80..].starts_with("here line of text"));
+}
+
+#[gpui::test]
+fn requesting_source_during_file_operation_enters_editing_when_it_finishes(
+    cx: &mut TestAppContext,
+) {
+    let (_dir, view, _other) = setup_with_ready(cx, b"original\n", false, false);
+    let document = cx.update(|cx| view.read(cx).editing_document().unwrap());
+    cx.update(|cx| {
+        document.update(cx, |doc, cx| doc.set_file_operation_pending(true, cx));
+        view.update(cx, |view, cx| view.edit_at(0, cx));
+        assert!(!view.read(cx).is_editing());
+        document.update(cx, |doc, cx| doc.set_file_operation_pending(false, cx));
+    });
+    cx.run_until_parked();
+    cx.update(|cx| assert!(view.read(cx).is_editing()));
+    send(cx, &view, insert("changed "));
+    assert_eq!(content(cx, &view), "changed original\n");
+}
