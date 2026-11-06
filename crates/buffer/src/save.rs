@@ -47,13 +47,15 @@ impl DiskVersion {
         &self.target
     }
 
-    /// Check write access without changing the file. Blocks; call on a worker.
+    /// Check the current path's write access without changing the file.
+    /// Blocks; call on a worker. This does not validate the captured version:
+    /// snapshot preparation and saving perform their own consistency checks.
     pub fn is_writable(&self) -> io::Result<bool> {
-        match platform::open(&self.target, true) {
-            Ok(file) => {
-                self.verify(&file).map_err(io::Error::other)?;
-                Ok(true)
-            }
+        // An unrelated metadata update must not turn a permission probe into
+        // a save conflict. Resolve again in case a symlink now points elsewhere.
+        let target = fs::canonicalize(&self.path)?;
+        match platform::open(&target, true) {
+            Ok(_) => Ok(true),
             Err(error)
                 if matches!(
                     error.kind(),

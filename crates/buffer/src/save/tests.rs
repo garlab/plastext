@@ -578,3 +578,57 @@ fn write_access_checks_do_not_modify_files_and_readonly_saves_are_refused() {
     }
     fs::set_permissions(&path, writable).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn metadata_updates_do_not_block_write_access_but_still_invalidate_save_versions() {
+    use rustix::fs::{XattrFlags, fsetxattr};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("document.html");
+    fs::write(&path, b"<p>original</p>\n").unwrap();
+    let disk = DiskVersion::read(&path).unwrap();
+    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    fsetxattr(
+        File::open(&path).unwrap(),
+        c"user.plastext-test",
+        b"metadata update while opening",
+        XattrFlags::empty(),
+    )
+    .unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    assert!(!disk.is_current().unwrap());
+    assert!(disk.is_writable().unwrap());
+    assert_eq!(
+        save_snapshot(
+            &edit("ours"),
+            &disk,
+            SaveOptions::default(),
+            &cancelled(),
+            |_| {},
+        )
+        .unwrap_err()
+        .kind,
+        SaveFailureKind::Conflict
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"<p>original</p>\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn write_access_checks_follow_the_current_symlink_target() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().unwrap();
+    let writable = dir.path().join("writable");
+    let readonly = dir.path().join("readonly");
+    let link = dir.path().join("link");
+    fs::write(&writable, b"writable").unwrap();
+    fs::write(&readonly, b"readonly").unwrap();
+    fs::set_permissions(&readonly, fs::Permissions::from_mode(0o444)).unwrap();
+    symlink(&writable, &link).unwrap();
+    let disk = DiskVersion::read(&link).unwrap();
+    assert!(disk.is_writable().unwrap());
+    fs::remove_file(&link).unwrap();
+    symlink(&readonly, &link).unwrap();
+    assert!(!disk.is_writable().unwrap());
+    assert!(!disk.is_current().unwrap());
+}
