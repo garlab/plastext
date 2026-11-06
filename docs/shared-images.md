@@ -1,7 +1,7 @@
 # Shared image extraction
 
 Bounded image decoding moved into `document-graphics` in release 0.1.5. Plastext
-enables `sgf`, `chess` and `image-native`; mdviewer enables only `images`.
+enables `sgf`, `chess` and `image-native`; gloss enables only `images`.
 Applications retain file-access policy, queues, caches,
 fitting, playback and idle retirement. No new crate or service was introduced.
 
@@ -16,7 +16,7 @@ The follow-up below consolidates request guards and child cleanup.
 ## Comparison
 
 Measured 2026-11-03 on Apple M2 Pro / 16 GiB, macOS 26.4.1, Rust 1.99.0, using
-release binaries. Plastext's comparison binary is from `2c78f11`; mdviewer's
+release binaries. Plastext's comparison binary is from `2c78f11`; gloss's
 comparison binary uses published `document-graphics` 0.1.3. Both use the same
 published Mermaid backend 0.1.3. Builds and tests finished before timing.
 
@@ -38,9 +38,9 @@ right. Timings cover the helper protocol, excluding UI/GPU display.
 | Huge PNG worker peak RSS | 57.86 MiB | 58.11 MiB |
 | Plastext first-frame upper bound | 208.3 ms | 191.4 ms |
 | Plastext release binary | 37,760,816 bytes | 38,082,416 bytes |
-| mdviewer release binary | 16,995,264 bytes | 16,995,312 bytes |
+| gloss release binary | 16,995,264 bytes | 16,995,312 bytes |
 
-Plastext grows 314 KiB (0.85%); mdviewer grows 48 bytes. First-frame measurements
+Plastext grows 314 KiB (0.85%); gloss grows 48 bytes. First-frame measurements
 use a separate empty workspace/configuration and the app's startup profiler,
 with one warm-up and three launches. These sequential short runs do not
 establish a startup improvement or replace the accepted M1 baseline.
@@ -68,7 +68,7 @@ Raw logs, generated images and comparison binaries stay local under ignored
 
 Checks passed: Plastext workspace library tests, snapshot/broker integration and
 Clippy; document-graphics unit, native/portable worker and doc tests, Clippy,
-Rust 1.90, and package verification including all optional features; mdviewer
+Rust 1.90, and package verification including all optional features; gloss
 68 Rust tests, 44 terminal tests and 11 pager tests. The shared crate also
 cross-compiles for Linux and Windows; runtime validation here was on macOS.
 Windows has the portable thumbnail API, not an image worker. Non-macOS Unix
@@ -99,11 +99,11 @@ output remained identical. The huge PNG overview took 1,199.5 → 1,205.8 ms, th
 64 × 64 tile 130.4 → 130.7 ms, and worker peak RSS 58.11 → 57.89 MiB. The terminal
 Mermaid fixture took 44.84 → 45.46 ms at 100 columns and 37.34 → 35.87 ms at 24.
 These short sequential runs show no material regression; they are smoke checks,
-not new performance guarantees. Plastext's binary shrank 32 bytes and mdviewer's
+not new performance guarantees. Plastext's binary shrank 32 bytes and gloss's
 grew 16 bytes. Raw samples remain local.
 
 Default/all-feature library tests, Clippy, Rust 1.90 and package verification
 passed, together with Linux/Windows cross-compilation checks. Both Plastext
-worker adapters passed integration tests. mdviewer passed its 68 Rust tests,
+worker adapters passed integration tests. gloss passed its 68 Rust tests,
 44 terminal checks and 11 pager checks. Cancellation, partial replies, late
 completion, memory limits and process reaping remain covered by regression tests.

@@ -12,7 +12,7 @@ remains the comparison point.
 
 Bounded image decoding and both SVG paths now live in `document-graphics`,
 behind optional features. Plastext retains snapshots, queues, caches and playback;
-mdviewer retains local-file policy, invocation budgets and terminal placement.
+gloss retains local-file policy, invocation budgets and terminal placement.
 The strict document SVG subset and broader isolated image SVG renderer keep
 their own font/resource policies. See [shared image rendering](shared-images.md)
 for the extraction, validation and performance comparison.

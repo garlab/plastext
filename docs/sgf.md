@@ -39,7 +39,7 @@ This is a record viewer, without move editing, scoring or engine analysis.
 ## Boards in Markdown
 
 Fences tagged `sgf` (case-insensitive) show a static board. By default this is
-the first game's final main-line position. Optional fence selectors match mdviewer:
+the first game's final main-line position. Optional fence selectors match gloss:
 
 - `game=2` selects the second game in a collection (one-based).
 - `move=1` selects the first move on the main line; passes count as moves.

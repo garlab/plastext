@@ -1,7 +1,7 @@
 # Shared rendering release checks
 
 `document-graphics` is maintained in its own repository and published on
-crates.io from version tags. Plastext pins published 0.1.7; `katex-native` also
+crates.io from version tags. Plastext pins published 0.1.9; `katex-native` also
 comes from the registry. Use a
 [local override](local-development.md#shared-rendering-libraries) only when
 reviewing changes before a library release.
@@ -30,14 +30,14 @@ tests in a normal terminal: on macOS they install their own process sandbox and
 cannot run inside an enclosing sandbox. The package command verifies the crate without uploading it. Package from a clean checkout; the include list
 limits the archive to library source, tests, metadata, README and license.
 
-From the **mdviewer root**, with its own local override pointing to the same
+From the **gloss root**, with its own local override pointing to the same
 standalone library checkout:
 
 ```sh
 cargo test --locked
 cargo build --locked
-python3 tests/terminal_smoke.py target/debug/mdviewer
-python3 tests/pager_smoke.py target/debug/mdviewer
+python3 tests/terminal_smoke.py target/debug/gloss
+python3 tests/pager_smoke.py target/debug/gloss
 ```
 
 From the **Plastext root**, with the local override active:
@@ -65,7 +65,7 @@ isolated development launch described in [local development](local-development.m
 - Open an ordinary Markdown file without diagrams and check navigation and
   scrolling against normal behavior.
 
-In a Kitty graphics-compatible terminal, run these from the **mdviewer root**:
+In a Kitty graphics-compatible terminal, run these from the **gloss root**:
 
 ```sh
 cargo run --release -- tests/fixtures/mermaid.md --theme dark
@@ -88,14 +88,15 @@ set the new version pin in the root `Cargo.toml`, then from the **Plastext root*
 
 ```sh
 cargo check -p plastext-app
-cargo test --locked -p plastext-platform --test mermaid_preview
-cargo test --locked -p plastext-platform --test image_preview
+cargo test --locked -p plastext-platform --features objc2-foundation/NSEnumerator --test mermaid_preview --test image_preview
 cargo test --locked -p plastext-ui markdown_view::diagrams
 ```
 
 The first check allows Cargo to replace the removed path override in `Cargo.lock`
 with the pinned registry release. Subsequent checks use `--locked`.
+The standalone platform tests enable the Cocoa enumeration feature that the
+normal application build supplies through its other dependencies.
 
 Review and commit the `Cargo.lock` registry source and checksum. Do the same in
-mdviewer and rerun its integration tests. Both apps pin the library's version
+gloss and rerun its integration tests. Both apps pin the library's version
 explicitly; it has its own version and release cycle.

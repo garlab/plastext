@@ -1929,9 +1929,9 @@ dependencies = [
 
 [[package]]
 name = "document-graphics"
-version = "0.1.7"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66c743a06fd056ed1929f2a391fbb8cf3783546f9d7431052dca75afeb4de53b"
+checksum = "548963839d9833acae7d59968a9cd82d72334eed0075dee92078870a3b5381e0"
 dependencies = [
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
@@ -1950,9 +1950,9 @@ dependencies = [
 
 [[package]]
 name = "document-graphics-mermaid"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7308eae350c20181f8a5de0240704509fc0e65330ddf88b1a08b718188e338b8"
+checksum = "6357c019f698925db49e6b1b1f1c2c3d46908aac12d1af79b82cf321b9e7199e"
 dependencies = [
  "anyhow",
  "fontdb 0.23.0",
