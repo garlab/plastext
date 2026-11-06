@@ -94,6 +94,19 @@ pub(crate) const BASH: Lexical = Lexical {
     ]),
 };
 
+pub(crate) const DOCKERFILE: Lexical = Lexical {
+    line_comments: &["#"],
+    quotes: b"\"'",
+    words: words!(Keyword: [
+        "FROM", "AS", "RUN", "CMD", "LABEL", "EXPOSE", "ENV", "ADD", "COPY", "ENTRYPOINT",
+        "VOLUME", "USER", "WORKDIR", "ARG", "ONBUILD", "STOPSIGNAL", "HEALTHCHECK", "SHELL",
+        "MAINTAINER", "NONE",
+        "from", "as", "run", "cmd", "label", "expose", "env", "add", "copy", "entrypoint",
+        "volume", "user", "workdir", "arg", "onbuild", "stopsignal", "healthcheck", "shell",
+        "maintainer", "none",
+    ]),
+};
+
 pub(crate) const C: Lexical = Lexical {
     line_comments: &["//"],
     quotes: b"\"'",
@@ -225,6 +238,23 @@ mod tests {
                 ("true", Constant),
                 ("null", Constant)
             ]
+        );
+    }
+
+    #[test]
+    fn colors_dockerfile_before_the_tree_is_available() {
+        use Highlight::*;
+        assert_eq!(
+            spans(&DOCKERFILE, "# syntax=docker/dockerfile:1"),
+            [("# syntax=docker/dockerfile:1", Comment)]
+        );
+        assert_eq!(
+            spans(&DOCKERFILE, "FROM alpine AS build"),
+            [("FROM", Keyword), ("AS", Keyword)]
+        );
+        assert_eq!(
+            spans(&DOCKERFILE, "run echo \"hello\""),
+            [("run", Keyword), ("\"hello\"", String)]
         );
     }
 

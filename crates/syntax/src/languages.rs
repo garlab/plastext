@@ -119,7 +119,7 @@ macro_rules! language {
     };
 }
 
-static LANGUAGES: [Language; 17] = [
+static LANGUAGES: [Language; 18] = [
     language!(
         "Bash",
         tree_sitter_bash::LANGUAGE,
@@ -156,6 +156,17 @@ static LANGUAGES: [Language; 17] = [
         lexical: Lexical::NONE,
         extensions: ["css"],
         file_names: [],
+        interpreters: [],
+    ),
+    language!(
+        "Dockerfile",
+        tree_sitter_containerfile::LANGUAGE,
+        // The bundled query expects a named child for flags, but this grammar
+        // keeps flags such as --chown=1000:1000 in a single param node.
+        ["(param) @property\n", tree_sitter_containerfile::HIGHLIGHTS_QUERY],
+        lexical: lexical::DOCKERFILE,
+        extensions: ["dockerfile", "containerfile"],
+        file_names: ["Dockerfile", "Containerfile"],
         interpreters: [],
     ),
     language!(
@@ -320,6 +331,21 @@ pub fn detect(path: &Path, head: &[u8]) -> Option<&'static Language> {
             return Some(language);
         }
     }
+    // Environment-specific build files, e.g. Dockerfile.dev. Recognized
+    // extensions take precedence so Dockerfile.md is still Markdown.
+    if let Some(file_name) = file_name
+        && let Some(prefix) = file_name.split('.').next()
+        && (prefix.eq_ignore_ascii_case("dockerfile")
+            || prefix.eq_ignore_ascii_case("containerfile"))
+        && !file_name
+            .rsplit('.')
+            .next()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dockerignore"))
+    {
+        return LANGUAGES
+            .iter()
+            .find(|language| language.name == "Dockerfile");
+    }
     let interpreter = interpreter(head)?;
     LANGUAGES.iter().find(|language| {
         language.interpreters.iter().any(|name| {
@@ -365,6 +391,25 @@ mod tests {
         assert_eq!(name("run", "#!/bin/bash -e\n"), Some("Bash"));
         assert_eq!(name("notes.txt", ""), None);
         assert_eq!(name("run", "#!/usr/bin/perl\n"), None);
+    }
+
+    #[test]
+    fn detects_container_build_files_without_hiding_known_extensions() {
+        for path in [
+            "Dockerfile",
+            "containerfile",
+            "DOCKERFILE",
+            "build/Dockerfile.dev",
+            "build/containerfile.production",
+            "dev.Dockerfile",
+            "prod.CONTAINERFILE",
+        ] {
+            assert_eq!(name(path, ""), Some("Dockerfile"), "{path}");
+        }
+        assert_eq!(name("Dockerfile.md", ""), Some("Markdown"));
+        assert_eq!(name("Dockerfile.json", ""), Some("JSON"));
+        assert_eq!(name("Dockerfile-notes", ""), None);
+        assert_eq!(name("Dockerfile.dev.dockerignore", ""), None);
     }
 
     #[test]

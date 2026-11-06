@@ -365,6 +365,17 @@ mod tests {
                 ],
             ),
             (
+                "Dockerfile",
+                include_str!("../../../docs/fixtures/Dockerfile"),
+                vec![
+                    "FROM alpine\nRUN echo 'café'\n",
+                    "FROM alpine\nCMD [\"echo\", \"hello\"]\n",
+                    "FROM alpine\nRUN <<EOF\necho 'hello'\nEOF\n",
+                    "FROM alpine\nRUN echo \"unfinished",
+                    "",
+                ],
+            ),
+            (
                 "a.html",
                 "<script>let a = 1;</script>",
                 vec![
@@ -399,6 +410,55 @@ mod tests {
                 tree = next;
                 before = after;
             }
+        }
+    }
+
+    #[test]
+    fn highlights_dockerfile_instructions_shell_and_heredocs() {
+        let text = include_str!("../../../docs/fixtures/Dockerfile");
+        let language = detect(Path::new("Dockerfile"), b"").unwrap();
+        let tree = SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+        assert!(!tree.tree.root_node().has_error());
+        let spans = highlighted("Dockerfile", text);
+        assert!(
+            spans
+                .iter()
+                .any(|(text, kind)| text.starts_with("# syntax=") && *kind == Highlight::Comment)
+        );
+        for (token, highlight) in [
+            ("FROM", Highlight::Keyword),
+            ("from", Highlight::Keyword),
+            ("CoPy", Highlight::Keyword),
+            ("VERSION", Highlight::Constant),
+            ("GREETING", Highlight::Property),
+            ("--chown=1000:1000", Highlight::Property),
+            ("8080", Highlight::Number),
+            ("\"/bin/sh\"", Highlight::String),
+            ("echo", Highlight::Function),
+            ("if", Highlight::Keyword),
+            ("\"enabled\"", Highlight::String),
+            ("true", Highlight::Constant),
+        ] {
+            assert!(spans.contains(&(token, highlight)), "{token}: {spans:?}");
+        }
+        // Continued instructions and heredocs fold without hiding the next instruction.
+        let folds = tree.folds(text.as_bytes()).unwrap();
+        for (header, hidden) in [
+            ("RUN echo", "    printf '%s\\n' \"ready\"\n"),
+            (
+                "RUN <<EOF",
+                "if true; then\n    echo \"hello from a heredoc\"\nfi\nEOF\n",
+            ),
+            ("COPY <<EOF", "{\"enabled\": true, \"count\": 2}\nEOF\n"),
+        ] {
+            let fold = folds
+                .iter()
+                .find(|fold| text[fold.header as usize..].starts_with(header))
+                .unwrap();
+            assert_eq!(
+                &text[fold.hidden.start as usize..fold.hidden.end as usize],
+                hidden
+            );
         }
     }
 
@@ -441,6 +501,7 @@ mod tests {
     #[test]
     fn initial_parse_matches_full_viewport_and_is_bounded() {
         for (file, unit) in [
+            ("Dockerfile", "# café\nFROM alpine\nRUN echo 'hello'\n"),
             (
                 "code.c",
                 "/* a comment */\nint f(int x) {\nreturn x + 1;\n}\n",

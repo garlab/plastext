@@ -1,4 +1,4 @@
-//! Embedded HTML languages, discovered and parsed on the background parse job.
+//! Embedded languages, discovered and parsed on the background parse job.
 
 use crate::{Language, detect, highlight::parse_tree};
 use std::{
@@ -31,17 +31,25 @@ pub(crate) fn parse(
     text: &[u8],
     cancelled: &dyn Fn() -> bool,
 ) -> Option<Vec<Injection>> {
-    if language.name != "HTML" {
-        return Some(Vec::new());
-    }
-    static QUERY: OnceLock<Query> = OnceLock::new();
-    let query = QUERY.get_or_init(|| {
-        Query::new(
-            &tree_sitter_html::LANGUAGE.into(),
-            &[tree_sitter_html::INJECTIONS_QUERY, INCOMPLETE_HTML].concat(),
-        )
-        .expect("bundled HTML injection query must compile")
-    });
+    static HTML_QUERY: OnceLock<Query> = OnceLock::new();
+    static DOCKERFILE_QUERY: OnceLock<Query> = OnceLock::new();
+    let query = match language.name {
+        "HTML" => HTML_QUERY.get_or_init(|| {
+            Query::new(
+                &tree_sitter_html::LANGUAGE.into(),
+                &[tree_sitter_html::INJECTIONS_QUERY, INCOMPLETE_HTML].concat(),
+            )
+            .expect("bundled HTML injection query must compile")
+        }),
+        "Dockerfile" => DOCKERFILE_QUERY.get_or_init(|| {
+            Query::new(
+                &tree_sitter_containerfile::LANGUAGE.into(),
+                tree_sitter_containerfile::INJECTIONS_QUERY,
+            )
+            .expect("bundled Dockerfile injection query must compile")
+        }),
+        _ => return Some(Vec::new()),
+    };
     let content = query.capture_index_for_name("injection.content")?;
     let mut cursor = QueryCursor::new();
     let mut progress = |_: &tree_sitter::QueryCursorState| {
@@ -76,7 +84,16 @@ pub(crate) fn parse(
             if range.is_empty() {
                 continue;
             }
-            let Some(language) = content_language(capture.node, text, default) else {
+            let embedded = if language.name == "HTML" {
+                content_language(capture.node, text, default)
+            } else {
+                default.and_then(|name| {
+                    crate::languages()
+                        .iter()
+                        .find(|language| language.name.eq_ignore_ascii_case(name))
+                })
+            };
+            let Some(language) = embedded else {
                 continue;
             };
             // Each block has its own tree: an unfinished comment/string in one

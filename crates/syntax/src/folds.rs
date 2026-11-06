@@ -22,6 +22,9 @@ pub(crate) fn query(language: &str) -> Option<&'static str> {
             "[(compound_statement) (field_declaration_list) (enumerator_list) (initializer_list) (comment) (preproc_if) (preproc_ifdef)] @fold"
         }
         "CSS" => "[(block) (comment)] @fold",
+        "Dockerfile" => {
+            "[(run_instruction) (cmd_instruction) (entrypoint_instruction) (copy_instruction) (add_instruction) (env_instruction) (label_instruction) (healthcheck_instruction) (onbuild_instruction)] @fold"
+        }
         "Go" => "[(block) (field_declaration_list) (literal_value) (comment)] @fold",
         "HTML" | "XML" => "[(element) (script_element) (style_element) (comment)] @fold",
         "JavaScript" | "TypeScript" | "TSX" => {
