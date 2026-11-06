@@ -90,7 +90,7 @@ both the shared library and its Mermaid backend, use this top-level setting
 instead of the patch table above:
 
 ```toml
-paths = ["../document-graphics", "../mermaid-rs-renderer"]
+paths = ["../document-graphics", "../document-graphics-mermaid"]
 ```
 
 The backend checkout's package name is `document-graphics-mermaid`. Keep these
