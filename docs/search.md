@@ -41,5 +41,9 @@ many files could not be fully searched. Other files continue normally. A changed
 partially searched file asks for a new search; this is not a filesystem snapshot. Rerun a search to refresh file listings.
 
 Typing, changing a filter or switching a query option cancels obsolete work.
-Literal/regex matching uses ripgrep's library crates. Recent files receive a
-ranking boost in Quick Open (**⌘P**) when they match its query.
+Literal/regex matching uses ripgrep's library crates.
+
+Quick Open (**⌘P**) matches filenames and relative paths. Matching recent files
+rank first, followed by filename matches, then matches that need the directory
+path. For example, `test` finds `imports-and-tests.md` ahead of unrelated filenames
+under `test/`. Path queries still work, and the palette retains the best 256 matches.

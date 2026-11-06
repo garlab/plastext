@@ -10,7 +10,7 @@ use std::{
 
 use nucleo::{
     Config, Matcher, Utf32String,
-    pattern::{CaseMatching, Normalization, Pattern},
+    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 use rayon::prelude::*;
 
@@ -23,10 +23,12 @@ const CACHED_QUERIES: usize = 32;
 struct Candidate {
     path: Arc<str>,
     text: Utf32String,
-    len: usize,
+    /// Start of the filename in nucleo's character coordinates, not UTF-8 bytes.
+    name_start: usize,
     id: usize,
     recent: usize,
-    ascii_mask: u64,
+    /// Two conservative presence filters: path in low bits, filename in high bits.
+    ascii_masks: u64,
 }
 
 #[derive(Default)]
@@ -246,17 +248,27 @@ impl Drop for FileMatcher {
 
 impl FileInjector {
     pub fn push(&self, path: String) {
-        // A conservative presence filter; non-ASCII paths bypass it so
-        // Unicode normalization and smart-case semantics stay with nucleo.
-        let ascii_mask = if path.is_ascii() {
-            path.bytes().fold(0, |mask, byte| {
-                mask | (1 << (byte.to_ascii_lowercase() & 63))
-            })
+        let text: Utf32String = path.as_str().into();
+        let name_start = text
+            .slice(..)
+            .chars()
+            .rev()
+            .position(std::path::is_separator)
+            .map_or(0, |from_end| text.len() - from_end);
+        // Hash collisions only admit extra work. Non-ASCII paths bypass both
+        // filters so normalization and smart case stay with nucleo. Packing two
+        // 32-bit filters keeps the per-file index footprint unchanged.
+        let ascii_masks = if path.is_ascii() {
+            let mask = |bytes: &[u8]| {
+                bytes.iter().fold(0u32, |mask, byte| {
+                    mask | (1 << (byte.to_ascii_lowercase() & 31))
+                })
+            };
+            u64::from(mask(path.as_bytes()))
+                | (u64::from(mask(&path.as_bytes()[name_start..])) << 32)
         } else {
             u64::MAX
         };
-        let text: Utf32String = path.as_str().into();
-        let len = text.len();
         let recent = self.0.ranks.get(&path).copied().unwrap_or(usize::MAX);
         let notify = {
             let mut index = self.0.index.lock().unwrap();
@@ -264,10 +276,10 @@ impl FileInjector {
             index.pending.push(Candidate {
                 path: path.into(),
                 text,
-                len,
+                name_start,
                 id,
                 recent,
-                ascii_mask,
+                ascii_masks,
             });
             index.count += 1;
             if index.pending.len() >= CHUNK_SIZE {
@@ -287,9 +299,17 @@ impl FileInjector {
     }
 }
 
-// Larger is better. Preserve nucleo's score/length/insertion-order ranking,
-// with the same MRU-first group used by the palette before this optimization.
-type Rank = (Reverse<usize>, u32, Reverse<usize>, Reverse<usize>);
+// Larger is better. Recent matches lead, followed by filename matches (scored
+// within the filename), then path-only matches. Length and insertion order
+// break ties. A directory such as `test/`
+// must not bury a filename containing `tests` below hundreds of its children.
+type Rank = (
+    Reverse<usize>,
+    Option<u32>,
+    u32,
+    Reverse<usize>,
+    Reverse<usize>,
+);
 type Best = BinaryHeap<Reverse<Rank>>;
 
 fn retain_best(best: &mut Best, rank: Rank) {
@@ -307,14 +327,21 @@ fn match_files(
     cancel: &AtomicUsize,
     generation: usize,
 ) -> Option<Snapshot> {
+    // A positive fuzzy match in a filename also matches its full path. Other
+    // patterns must still check path-level anchors and exclusions. Avoid doing
+    // the same fuzzy work twice for the common filename-query case.
+    let name_implies_match = pattern
+        .atoms
+        .iter()
+        .all(|atom| !atom.negative && atom.kind == AtomKind::Fuzzy);
     let required = pattern
         .atoms
         .iter()
         .filter(|atom| !atom.negative)
         .flat_map(|atom| atom.needle_text().chars())
         .filter(char::is_ascii)
-        .fold(0u64, |mask, ch| {
-            mask | (1 << ((ch as u8).to_ascii_lowercase() & 63))
+        .fold(0u32, |mask, ch| {
+            mask | (1 << ((ch as u8).to_ascii_lowercase() & 31))
         });
     let group_size = chunks
         .len()
@@ -332,17 +359,31 @@ fn match_files(
                         if candidate.id % 256 == 0 && cancel.load(Ordering::Relaxed) != generation {
                             return None;
                         }
-                        if candidate.ascii_mask & required != required {
+                        if candidate.ascii_masks as u32 & required != required {
                             continue;
                         }
-                        if let Some(score) = pattern.score(candidate.text.slice(..), matcher) {
+                        let name_score =
+                            if (candidate.ascii_masks >> 32) as u32 & required == required {
+                                pattern.score(candidate.text.slice(candidate.name_start..), matcher)
+                            } else {
+                                None
+                            };
+                        let path_score = if candidate.name_start == 0 {
+                            name_score
+                        } else if name_score.is_some() && name_implies_match {
+                            Some(0)
+                        } else {
+                            pattern.score(candidate.text.slice(..), matcher)
+                        };
+                        if let Some(score) = path_score {
                             matched += 1;
                             retain_best(
                                 &mut best,
                                 (
                                     Reverse(candidate.recent),
-                                    score,
-                                    Reverse(candidate.len),
+                                    name_score,
+                                    if name_score.is_some() { 0 } else { score },
+                                    Reverse(candidate.text.len()),
                                     Reverse(candidate.id),
                                 ),
                             );
@@ -369,7 +410,7 @@ fn match_files(
     ranks.sort_unstable_by(|a, b| b.cmp(a));
     let paths = ranks
         .into_iter()
-        .map(|(_, _, _, Reverse(id))| {
+        .map(|(_, _, _, _, Reverse(id))| {
             let index = chunks.partition_point(|chunk| chunk[0].id <= id) - 1;
             chunks[index][id - chunks[index][0].id].path.clone()
         })
@@ -440,10 +481,46 @@ mod tests {
     }
 
     #[test]
+    fn filename_matches_stay_visible_among_many_matching_directories() {
+        let wanted = "docs/design/imports-and-tests.md";
+        let recent = "test/recent.probl";
+        let mut matcher = FileMatcher::new(&[recent.into()]);
+        let injector = matcher.injector();
+        for i in 0..MAX_FILE_RESULTS * 2 {
+            injector.push(format!("test/fixture-{i}.probl"));
+        }
+        for path in [recent, "docs/testing.md", "src/tests.rs", wanted] {
+            injector.push(path.into());
+        }
+        for query in ["t", "te", "tes", "test", "import", "test"] {
+            matcher.reparse(query, false);
+            settle(&mut matcher);
+        }
+        assert_eq!(matcher.item(0), Some(recent), "retain the MRU boost");
+        assert!(
+            (0..12).any(|i| matcher.item(i) == Some(wanted)),
+            "a filename keyword must be on the first page, ahead of directory-only matches"
+        );
+        assert_eq!(matcher.matched_count(), MAX_FILE_RESULTS);
+        assert_eq!(matcher.total_matches(), MAX_FILE_RESULTS * 2 + 4);
+        matcher.reparse("test/fixture-12", false);
+        settle(&mut matcher);
+        assert_eq!(matcher.item(0), Some("test/fixture-12.probl"));
+    }
+
+    #[test]
     fn bounded_results_agree_with_exhaustive_scoring_and_keep_late_matches() {
         let paths: Vec<String> = (0..1500)
             .map(|i| format!("src/component-{i}/core.rs"))
-            .chain(["core.rs".into(), "src/café.rs".into(), "src/CAFÉ.rs".into()])
+            .chain([
+                "core.rs".into(),
+                "src/café.rs".into(),
+                "src/CAFÉ.rs".into(),
+                "docs/design/imports-and-tests.md".into(),
+                "test/fixtures/ordinary.md".into(),
+                "src/tests.rs".into(),
+                "δοκιμές/cafe\u{301}/Imports-and-Tests.md".into(),
+            ])
             .collect();
         let mut matcher = FileMatcher::new(&[]);
         for path in &paths {
@@ -456,6 +533,14 @@ mod tests {
             "!component",
             "^src core",
             "'core.rs$",
+            "test",
+            "Test",
+            "ImTst",
+            "docs tests",
+            "!fixtures test",
+            "!docs test",
+            "^test",
+            "^Imports",
             "",
         ] {
             matcher.reparse(query, false);
@@ -467,9 +552,23 @@ mod tests {
                 .enumerate()
                 .filter_map(|(id, path)| {
                     let text: Utf32String = path.as_str().into();
-                    pattern
-                        .score(text.slice(..), &mut scorer)
-                        .map(|score| (Reverse(score), text.len(), id))
+                    pattern.score(text.slice(..), &mut scorer).map(|score| {
+                        // Build the filename independently, so this also checks
+                        // the stored boundary for Unicode/grapheme paths.
+                        let name = std::path::Path::new(path)
+                            .file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap();
+                        let name: Utf32String = name.into();
+                        let name_score = pattern.score(name.slice(..), &mut scorer);
+                        (
+                            Reverse(name_score),
+                            Reverse(if name_score.is_some() { 0 } else { score }),
+                            text.len(),
+                            id,
+                        )
+                    })
                 })
                 .collect();
             all.sort_unstable();
@@ -477,7 +576,7 @@ mod tests {
             let expected: Vec<_> = all
                 .iter()
                 .take(MAX_FILE_RESULTS)
-                .map(|(_, _, id)| paths[*id].as_str())
+                .map(|(_, _, _, id)| paths[*id].as_str())
                 .collect();
             let actual: Vec<_> = (0..matcher.matched_count())
                 .map(|i| matcher.item(i).unwrap())
