@@ -92,7 +92,8 @@ fn welcome_buttons_and_recent_folders_dispatch_shared_menu_actions(cx: &mut Test
     let content = visual.debug_bounds("welcome-content").unwrap();
     let viewport = visual.debug_bounds("welcome").unwrap();
     assert_eq!(content.center().x, viewport.center().x);
-    assert!(content.size.width <= px(560.));
+    assert!((content.center().y - viewport.center().y).abs() <= px(1.));
+    assert!(content.size.width <= px(520.));
     for selector in [
         "welcome-open-folder",
         "welcome-open-file",
@@ -109,6 +110,42 @@ fn welcome_buttons_and_recent_folders_dispatch_shared_menu_actions(cx: &mut Test
     // GPUI retains old debug selectors between frames; use the newly laid-out
     // content bounds to verify that clearing history removed the recent list.
     assert!(visual.debug_bounds("welcome-content").unwrap().size.height < content.size.height);
+    let content = visual.debug_bounds("welcome-content").unwrap();
+    assert!((content.center().y - viewport.center().y).abs() <= px(1.));
+}
+
+#[gpui::test]
+fn welcome_stays_usable_in_small_windows_with_a_full_recent_list(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        crate::init(cx);
+        cx.set_global(welcome::RecentFolders(
+            (0..10)
+                .map(|i| std::env::temp_dir().join(format!("project-{i}")))
+                .collect(),
+        ));
+    });
+    let window = cx.add_window(|window, cx| Workspace::new(None, Arc::default(), window, cx));
+    let visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    visual.simulate_resize(gpui::size(px(480.), px(420.)));
+    cx.run_until_parked();
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    let viewport = visual.debug_bounds("welcome").unwrap();
+    let content = visual.debug_bounds("welcome-content").unwrap();
+    let recent = visual.debug_bounds("welcome-recent-list").unwrap();
+    assert_eq!(content.center().x, viewport.center().x);
+    assert!(
+        content.origin.y >= viewport.origin.y,
+        "content must start above the fold, not scroll off the top"
+    );
+    assert!(content.size.width <= viewport.size.width - px(48.));
+    assert!(recent.size.height <= px(216.));
+    for selector in ["welcome-open-folder", "welcome-open-file"] {
+        let button = visual.debug_bounds(selector).unwrap();
+        assert!(
+            viewport.contains(&button.center()),
+            "{selector} must remain visible"
+        );
+    }
 }
 
 #[gpui::test]

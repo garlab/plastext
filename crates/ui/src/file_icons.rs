@@ -1,4 +1,4 @@
-//! Embedded Material artwork and its VS Code-compatible association data.
+//! Embedded application artwork, Material file icons and their associations.
 use gpui::{AssetSource, SharedString};
 use std::borrow::Cow;
 
@@ -10,6 +10,9 @@ macro_rules! assets {
         impl AssetSource for Assets {
             fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
                 Ok(match path {
+                    "app-icon.png" => Some(Cow::Borrowed(
+                        include_bytes!("../../app/assets/plastext.png").as_slice()
+                    )),
                     $(concat!("file-icons/", $file, ".svg") => Some(Cow::Borrowed(
                         include_bytes!(concat!("../assets/file-icons/", $file, ".svg")).as_slice()
                     ))),+,
@@ -17,7 +20,7 @@ macro_rules! assets {
                 })
             }
             fn list(&self, prefix: &str) -> gpui::Result<Vec<SharedString>> {
-                Ok([$(concat!("file-icons/", $file, ".svg")),+].into_iter()
+                Ok(["app-icon.png", $(concat!("file-icons/", $file, ".svg")),+].into_iter()
                     .filter(|path| path.starts_with(prefix)).map(Into::into).collect())
             }
         }

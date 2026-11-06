@@ -1929,7 +1929,9 @@ impl Render for Workspace {
             .flex_col()
             .bg(theme.background)
             .text_color(theme.text)
-            .when(welcome, |view| view.child(self.render_welcome(theme, cx)))
+            .when(welcome, |view| {
+                view.child(self.render_welcome(theme, window, cx))
+            })
             .when(!welcome, |view| {
                 view.child(
                     div()
