@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use crate::Theme;
+use crate::actions::{Copy, Cut, Paste, SelectAll};
 
 actions!(
     text_input,
@@ -21,12 +22,8 @@ actions!(
         Right,
         SelectLeft,
         SelectRight,
-        SelectAll,
         Home,
-        End,
-        Paste,
-        Cut,
-        Copy
+        End
     ]
 );
 

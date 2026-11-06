@@ -1,5 +1,6 @@
 //! The plastext application: startup, windows, single-instance server and session restore (spec §7.3).
 
+mod menus;
 mod windows;
 
 use std::{
@@ -14,8 +15,8 @@ use std::{
 use clap::Parser as _;
 use futures::{StreamExt as _, channel::mpsc};
 use gpui::{
-    App, Application, Bounds, Focusable, Global, KeyBinding, Menu, MenuItem, SharedString,
-    TitlebarOptions, WindowBounds, WindowHandle, WindowOptions, actions, prelude::*, px, size,
+    App, Application, Bounds, Focusable, Global, SharedString, TitlebarOptions, WindowBounds,
+    WindowHandle, WindowOptions, actions, prelude::*, px, size,
 };
 use plastext_cli::Cli;
 use plastext_platform::instance::{self, OpenRequest};
@@ -137,12 +138,8 @@ fn main() -> ExitCode {
             })
             .detach();
         }
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "plastext".into(),
-            items: vec![MenuItem::action("Quit plastext", Quit)],
-        }]);
-        // Nothing can open a folder from the UI yet, so a windowless app is useless.
+        menus::init(cx);
+        // Keep the existing last-window exit behavior, including profiling.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
                 if env::var_os("PLASTEXT_PROFILE_READING").is_some() {
@@ -280,6 +277,10 @@ fn open_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut Ap
         return;
     }
 
+    create_window(request, notice, cx);
+}
+
+fn create_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut App) {
     let options = WindowOptions {
         focus: should_activate(),
         kind: if env::var_os("PLASTEXT_PROFILE_READING").is_some()

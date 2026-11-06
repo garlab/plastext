@@ -1,5 +1,6 @@
 use super::*;
 use crate::EditingDocument;
+pub(super) use crate::actions::{Cut, Paste, Redo, Save, Undo};
 use gpui::{ElementInputHandler, EntityInputHandler, UTF16Selection};
 use plastext_buffer::{
     Bias, CursorCommand, Direction, PaneId, PendingCommand, Selection as BufferSelection,
@@ -15,15 +16,10 @@ actions!(
     [
         EnterEdit,
         LeaveEdit,
-        Save,
-        Undo,
-        Redo,
         Backspace,
         Delete,
         InsertNewline,
         InsertTab,
-        Paste,
-        Cut,
         Left,
         Right,
         Up,
@@ -912,15 +908,24 @@ impl TextView {
             }))
             .on_action(cx.listener(Self::enter_edit))
             .on_action(cx.listener(Self::leave_edit))
-            .on_action(cx.listener(|this, _: &Save, _, cx| this.queue_input(Input::Save, cx)))
-            .on_action(cx.listener(|this, _: &Undo, _, cx| this.queue_input(Input::Undo, cx)))
-            .on_action(cx.listener(|this, _: &Redo, _, cx| this.queue_input(Input::Redo, cx)))
+            .when(self.is_editing(), |element| {
+                element
+                    .on_action(
+                        cx.listener(|this, _: &Save, _, cx| this.queue_input(Input::Save, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &Undo, _, cx| this.queue_input(Input::Undo, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &Redo, _, cx| this.queue_input(Input::Redo, cx)),
+                    )
+                    .on_action(cx.listener(Self::edit_paste))
+                    .on_action(cx.listener(Self::edit_cut))
+            })
             .on_action(
                 cx.listener(|this, _: &InsertNewline, _, cx| this.queue_input(Input::Newline, cx)),
             )
             .on_action(cx.listener(|this, _: &InsertTab, _, cx| this.queue_input(Input::Tab, cx)))
-            .on_action(cx.listener(Self::edit_paste))
-            .on_action(cx.listener(Self::edit_cut))
             .on_action(cx.listener(|this, _: &Backspace, _, cx| {
                 this.queue_input(
                     Input::Cursor(CursorCommand::Delete {

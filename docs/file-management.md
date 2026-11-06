@@ -1,5 +1,8 @@
 # File management
 
+The native [menu bar](menus.md) also provides File and Edit commands. Use **⌘O**
+to open files and **⌘⌥O** to open a project folder through the system picker.
+
 Single-click a file in the navigation pane to preview it. Keyboard focus stays
 in the file pane. Double-click or press Enter to keep the tab open and focus the
 editor. Up and Down change the selected file.

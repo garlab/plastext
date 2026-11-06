@@ -1,5 +1,6 @@
 //! GPUI views: workspace, sidebar, tree, tabs, splits, palette and banners (spec §4.1).
 
+pub mod actions;
 mod csv_view;
 mod file_icons;
 mod file_tree;

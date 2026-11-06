@@ -634,9 +634,15 @@ impl Render for CsvView {
         };
         div()
             .relative()
+            .key_context("Csv")
+            .on_action(
+                cx.listener(|this, _: &crate::actions::TogglePreview, window, cx| {
+                    this.toggle(window, cx)
+                }),
+            )
             .track_focus(&self.focus)
             .when(!self.show_raw, |view| {
-                view.key_context("CsvTable")
+                view.key_context("Csv CsvTable")
                     .on_action(cx.listener(Self::copy))
                     .on_action(cx.listener(Self::select_all))
                     .on_action(cx.listener(Self::clear_selection))

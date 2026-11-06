@@ -30,6 +30,8 @@ use crate::{
     view_source::ViewSource,
 };
 
+pub(crate) use crate::actions::{Copy, Find, FindNext, FindPrevious, SelectAll};
+
 actions!(
     text_view,
     [
@@ -41,15 +43,10 @@ actions!(
         ScrollRight,
         Top,
         Bottom,
-        Copy,
-        SelectAll,
         ClearSelection,
         ToggleFold,
         FoldAll,
         UnfoldAll,
-        Find,
-        FindNext,
-        FindPrevious,
         CloseFind
     ]
 );

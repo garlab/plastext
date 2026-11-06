@@ -10,7 +10,8 @@ use std::{
     rc::Rc,
 };
 
-actions!(markdown_selection, [Copy, SelectAll, Clear]);
+use plastext_editor::actions::{Copy, SelectAll};
+actions!(markdown_selection, [Clear]);
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-c", Copy, Some("MarkdownPreview")),

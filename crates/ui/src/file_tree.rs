@@ -165,9 +165,6 @@ impl FileTreeView {
         if event.keystroke.modifiers.platform {
             let action = match key {
                 "backspace" => FileAction::Trash,
-                "c" => FileAction::Copy,
-                "x" => FileAction::Cut,
-                "v" => FileAction::Paste,
                 _ => return,
             };
             cx.emit(FileTreeEvent::Action(action));
@@ -255,6 +252,21 @@ impl Render for FileTreeView {
             .size_full()
             .track_focus(&self.focus)
             .key_context("FileTree")
+            .when(self.selected.is_some(), |view| {
+                view.on_action(cx.listener(|_, _: &plastext_editor::actions::Copy, _, cx| {
+                    cx.emit(FileTreeEvent::Action(FileAction::Copy))
+                }))
+                .on_action(cx.listener(
+                    |_, _: &plastext_editor::actions::Cut, _, cx| {
+                        cx.emit(FileTreeEvent::Action(FileAction::Cut))
+                    },
+                ))
+            })
+            .on_action(
+                cx.listener(|_, _: &plastext_editor::actions::Paste, _, cx| {
+                    cx.emit(FileTreeEvent::Action(FileAction::Paste))
+                }),
+            )
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Left,

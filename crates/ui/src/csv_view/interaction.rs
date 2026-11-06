@@ -19,11 +19,13 @@ use std::{
     },
 };
 
-actions!(csv_view, [Copy, SelectAll, ClearSelection]);
+use plastext_editor::actions::{Copy, SelectAll};
+actions!(csv_view, [ClearSelection]);
 
 pub(crate) fn init(cx: &mut App) {
     let context = Some("CsvTable");
     cx.bind_keys([
+        KeyBinding::new("cmd-shift-v", crate::actions::TogglePreview, Some("Csv")),
         KeyBinding::new("cmd-c", Copy, context),
         KeyBinding::new("cmd-a", SelectAll, context),
         KeyBinding::new("escape", ClearSelection, context),

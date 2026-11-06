@@ -40,6 +40,8 @@ mod file_actions;
 mod file_menu;
 use file_menu::FileMenu;
 mod editing;
+#[cfg(test)]
+mod menu_tests;
 mod opening;
 pub use editing::request_quit;
 use opening::{Destination, OpenKind, Openings, Placement};
@@ -48,6 +50,7 @@ actions!(
     workspace,
     [
         CloseTab,
+        CloseWindow,
         NewFile,
         SplitRight,
         SplitDown,
@@ -101,10 +104,32 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-]", GoForward, context),
         KeyBinding::new("cmd-shift-o", GoToSymbol, context),
         KeyBinding::new("cmd-shift-p", OpenCommandPalette, context),
+        KeyBinding::new("cmd-alt-b", ToggleOutline, context),
+        // Canonical modified bindings also supply native menu shortcut labels;
+        // read-mode aliases such as `n` and `/` remain local to their views.
+        KeyBinding::new("cmd-c", plastext_editor::actions::Copy, context),
+        KeyBinding::new("cmd-x", plastext_editor::actions::Cut, context),
+        KeyBinding::new("cmd-v", plastext_editor::actions::Paste, context),
+        KeyBinding::new("cmd-a", plastext_editor::actions::SelectAll, context),
+        KeyBinding::new("cmd-z", plastext_editor::actions::Undo, context),
+        KeyBinding::new("cmd-shift-z", plastext_editor::actions::Redo, context),
+        KeyBinding::new("cmd-f", plastext_editor::actions::Find, context),
+        KeyBinding::new("cmd-g", plastext_editor::actions::FindNext, context),
+        KeyBinding::new(
+            "cmd-shift-g",
+            plastext_editor::actions::FindPrevious,
+            context,
+        ),
+        KeyBinding::new("cmd-shift-v", crate::actions::TogglePreview, context),
         // A read-mode key (spec §4.2), so only where the text view has focus.
         KeyBinding::new("o", ToggleOutline, Some("TextView")),
         KeyBinding::new("o", ToggleOutline, Some("MarkdownPreview")),
         KeyBinding::new("cmd-w", CloseTab, context),
+        KeyBinding::new("cmd-shift-w", CloseWindow, context),
+        KeyBinding::new("cmd-s", plastext_editor::actions::Save, context),
+        KeyBinding::new("cmd-c", plastext_editor::actions::Copy, Some("FileTree")),
+        KeyBinding::new("cmd-x", plastext_editor::actions::Cut, Some("FileTree")),
+        KeyBinding::new("cmd-v", plastext_editor::actions::Paste, Some("FileTree")),
         KeyBinding::new("cmd-d", SplitRight, context),
         KeyBinding::new("cmd-shift-d", SplitDown, context),
         KeyBinding::new("cmd-+", ZoomIn, context),
@@ -1826,6 +1851,31 @@ impl Render for Workspace {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::close_active_tab))
+            .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                this.confirm_close(editing::CloseTarget::Window, window, cx);
+            }))
+            .when(
+                self.panes[&self.active_pane]
+                    .active_tab()
+                    .and_then(|tab| tab.view.editing_document(cx))
+                    .is_some_and(|doc| doc.read(cx).is_editing() || doc.read(cx).is_dirty()),
+                |view| {
+                    view.on_action(cx.listener(
+                        |this, _: &plastext_editor::actions::Save, _, cx| {
+                            if let Some(document) = this.panes[&this.active_pane]
+                                .active_tab()
+                                .and_then(|tab| tab.view.editing_document(cx))
+                            {
+                                if document.read(cx).has_pending_input() {
+                                    this.show_notice("Finish the pending edit before saving.", cx);
+                                } else {
+                                    document.update(cx, |doc, cx| doc.save(cx));
+                                }
+                            }
+                        },
+                    ))
+                },
+            )
             .on_action(cx.listener(Self::new_file))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))

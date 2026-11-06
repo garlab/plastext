@@ -23,7 +23,8 @@ use std::{
 };
 use viewport::Viewport;
 
-actions!(image_view, [ToggleSource, TogglePlayback]);
+use crate::actions::TogglePreview as ToggleSource;
+actions!(image_view, [TogglePlayback]);
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Image")),

@@ -19,7 +19,9 @@ use std::{
     },
 };
 
+use crate::actions::TogglePreview as ToggleSource;
 use crate::tab_view::format_size;
+use plastext_editor::actions::Save;
 mod diagrams;
 mod editing;
 mod find;
@@ -34,16 +36,7 @@ type CodeHighlights = Arc<Vec<(std::ops::Range<usize>, Highlight)>>;
 
 actions!(
     markdown,
-    [
-        ToggleSource,
-        Save,
-        ScrollDown,
-        ScrollUp,
-        PageDown,
-        PageUp,
-        ToStart,
-        ToEnd
-    ]
+    [ScrollDown, ScrollUp, PageDown, PageUp, ToStart, ToEnd]
 );
 
 pub fn init(cx: &mut App) {
@@ -1609,7 +1602,12 @@ impl Render for MarkdownView {
             .flex()
             .flex_col()
             .on_action(cx.listener(Self::toggle_source))
-            .on_action(cx.listener(Self::save))
+            .when(
+                self.editing_document
+                    .as_ref()
+                    .is_some_and(|doc| doc.read(cx).is_editing() || doc.read(cx).is_dirty()),
+                |view| view.on_action(cx.listener(Self::save)),
+            )
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::next_match))
             .on_action(cx.listener(Self::previous_match))

@@ -21,10 +21,10 @@ use std::{
     },
 };
 
+use crate::actions::TogglePreview as ToggleSource;
 actions!(
     record_view,
     [
-        ToggleSource,
         Next,
         Previous,
         First,

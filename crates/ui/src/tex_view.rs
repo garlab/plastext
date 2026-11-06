@@ -10,7 +10,8 @@ use plastext_editor::{TextStyle, TextView, Theme};
 use plastext_syntax::{Language, Symbol};
 use std::{path::PathBuf, sync::Arc};
 
-actions!(tex_view, [ToggleSource, Rebuild]);
+use crate::actions::TogglePreview as ToggleSource;
+actions!(tex_view, [Rebuild]);
 pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Tex")),

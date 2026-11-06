@@ -24,16 +24,10 @@ use std::{
 };
 use viewport::Viewport;
 
+use crate::actions::TogglePreview as ToggleBinary;
 actions!(
     pdf_view,
-    [
-        ToggleBinary,
-        NextPage,
-        PreviousPage,
-        FirstPage,
-        LastPage,
-        Reload
-    ]
+    [NextPage, PreviousPage, FirstPage, LastPage, Reload]
 );
 
 pub(crate) fn init(cx: &mut App) {

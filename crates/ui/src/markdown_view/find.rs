@@ -1,9 +1,10 @@
 use super::*;
+use plastext_editor::actions::{Find, FindNext as Next, FindPrevious as Previous};
 use plastext_editor::{TextInput, TextInputEvent};
 use plastext_markdown::RenderedMatch;
 
 const LIMIT: usize = 10_000;
-actions!(markdown_find, [Find, Next, Previous, Close]);
+actions!(markdown_find, [Close]);
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
