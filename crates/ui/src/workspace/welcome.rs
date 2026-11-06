@@ -1,6 +1,6 @@
 use super::*;
 use crate::actions::{ClearRecentFolders, OpenFile, OpenFolder, OpenRecentFolder};
-use gpui::{FontWeight, Global, img, svg};
+use gpui::{FontWeight, Global, img, rems, svg};
 
 /// Presentation state; persistence and folder opening belong to the app.
 #[derive(Default)]
@@ -43,6 +43,8 @@ impl Workspace {
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let zoom = self.zoom.factor();
+        let stacked = window.viewport_size().width < px(448. * zoom);
         let recent = cx
             .try_global::<RecentFolders>()
             .map(|history| history.0.as_slice())
@@ -51,42 +53,43 @@ impl Workspace {
             .flex()
             .flex_col()
             .items_center()
-            .gap_3()
-            .child(img("app-icon.png").size(px(88.)).flex_none())
+            .gap(rems(0.75 * zoom))
+            .child(img("app-icon.png").size(px(88. * zoom)).flex_none())
             .child(
                 div()
-                    .text_size(px(30.))
+                    .text_size(px(30. * zoom))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("plastext"),
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_size(rems(0.875 * zoom))
                     .text_color(theme.text_muted)
                     .text_center()
                     .child("Open a folder or file to get started."),
             );
         let actions = div()
             .flex()
-            .gap_3()
-            .child(open_action(true, theme))
-            .child(open_action(false, theme));
+            .when(stacked, |view| view.flex_col())
+            .gap(rems(0.75 * zoom))
+            .child(open_action(true, theme, zoom, stacked))
+            .child(open_action(false, theme, zoom, stacked));
         let recent_folders = div()
             .flex()
             .flex_col()
-            .gap_3()
+            .gap(rems(0.75 * zoom))
             .border_t_1()
             .border_color(theme.border)
-            .pt_5()
+            .pt(rems(1.25 * zoom))
             .child(
                 div()
                     .flex()
                     .justify_between()
                     .items_center()
-                    .px_3()
+                    .px(rems(0.75 * zoom))
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(rems(0.75 * zoom))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(theme.text_muted)
                             .child("Recent folders"),
@@ -95,7 +98,7 @@ impl Workspace {
                         div()
                             .id("welcome-clear-recent")
                             .debug_selector(|| "welcome-clear-recent".into())
-                            .text_xs()
+                            .text_size(rems(0.75 * zoom))
                             .text_color(theme.text_muted)
                             .cursor_pointer()
                             .hover(|button| button.text_color(theme.text))
@@ -109,22 +112,22 @@ impl Workspace {
                 div()
                     .id("welcome-recent-list")
                     .debug_selector(|| "welcome-recent-list".into())
-                    .max_h(px(216.))
+                    .max_h(px(216. * zoom))
                     .overflow_y_scroll()
                     .children(
                         recent
                             .iter()
                             .enumerate()
-                            .map(|(index, path)| recent_folder(index, path, theme)),
+                            .map(|(index, path)| recent_folder(index, path, theme, zoom)),
                     ),
             );
         let content = div()
             .debug_selector(|| "welcome-content".into())
             .w_full()
-            .max_w(px(520.))
+            .max_w(px(520. * zoom))
             .flex()
             .flex_col()
-            .gap_6()
+            .gap(rems(1.5 * zoom))
             .child(header)
             .child(actions)
             .when(!recent.is_empty(), |view| view.child(recent_folders));
@@ -139,6 +142,7 @@ impl Workspace {
             })
         .max(px(0.));
         div()
+            .text_size(rems(zoom))
             .id("welcome")
             .debug_selector(|| "welcome".into())
             .flex_1()
@@ -152,13 +156,13 @@ impl Workspace {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .p_6()
+                    .p(rems(1.5 * zoom))
                     .child(content),
             )
     }
 }
 
-fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
+fn open_action(folder: bool, theme: Theme, zoom: f32, stacked: bool) -> impl IntoElement {
     let id = if folder {
         "welcome-open-folder"
     } else {
@@ -173,14 +177,15 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
     div()
         .id(id)
         .debug_selector(move || id.into())
-        .flex_1()
+        .when(!stacked, |button| button.flex_1())
         .min_w_0()
-        .h(px(64.))
-        .px_4()
+        .h(px(64. * zoom))
+        .when(stacked, |button| button.flex_none().w_full())
+        .px(rems(zoom))
         .flex()
         .items_center()
-        .gap_3()
-        .rounded_lg()
+        .gap(rems(0.75 * zoom))
+        .rounded(rems(0.5 * zoom))
         .border_1()
         .border_color(theme.border)
         .bg(theme.surface)
@@ -193,7 +198,7 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
                 } else {
                     "file-icons/document.svg"
                 })
-                .size(px(22.))
+                .size(px(22. * zoom))
                 .flex_none()
                 .text_color(theme.syntax(plastext_syntax::Highlight::Link)),
         )
@@ -202,10 +207,10 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap(rems(0.25 * zoom))
                 .child(
                     div()
-                        .text_sm()
+                        .text_size(rems(0.875 * zoom))
                         .font_weight(FontWeight::MEDIUM)
                         .overflow_hidden()
                         .whitespace_nowrap()
@@ -216,7 +221,12 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
                             "Open File…"
                         }),
                 )
-                .child(div().text_xs().text_color(theme.text_muted).child(shortcut)),
+                .child(
+                    div()
+                        .text_size(rems(0.75 * zoom))
+                        .text_color(theme.text_muted)
+                        .child(shortcut),
+                ),
         )
         .on_click(move |_, window, cx| {
             if folder {
@@ -227,23 +237,23 @@ fn open_action(folder: bool, theme: Theme) -> impl IntoElement {
         })
 }
 
-fn recent_folder(index: usize, path: &Path, theme: Theme) -> impl IntoElement {
+fn recent_folder(index: usize, path: &Path, theme: Theme, zoom: f32) -> impl IntoElement {
     let path = path.to_owned();
     div()
         .id(("welcome-recent", index))
         .debug_selector(move || format!("welcome-recent-{index}"))
         .flex()
         .items_center()
-        .gap_3()
-        .px_3()
-        .py_2()
-        .rounded_md()
+        .gap(rems(0.75 * zoom))
+        .px(rems(0.75 * zoom))
+        .py(rems(0.5 * zoom))
+        .rounded(rems(0.375 * zoom))
         .cursor_pointer()
         .hover(|row| row.bg(theme.surface))
         .child(
             svg()
                 .path("file-icons/folder-base.svg")
-                .size(px(18.))
+                .size(px(18. * zoom))
                 .flex_none()
                 .text_color(theme.text_muted),
         )
@@ -253,10 +263,10 @@ fn recent_folder(index: usize, path: &Path, theme: Theme) -> impl IntoElement {
                 .flex_1()
                 .flex()
                 .flex_col()
-                .gap_1()
+                .gap(rems(0.25 * zoom))
                 .child(
                     div()
-                        .text_sm()
+                        .text_size(rems(0.875 * zoom))
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -269,7 +279,7 @@ fn recent_folder(index: usize, path: &Path, theme: Theme) -> impl IntoElement {
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(rems(0.75 * zoom))
                         .text_color(theme.text_muted)
                         .overflow_hidden()
                         .whitespace_nowrap()

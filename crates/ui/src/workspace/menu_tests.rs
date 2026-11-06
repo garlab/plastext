@@ -151,6 +151,65 @@ fn welcome_stays_usable_in_small_windows_with_a_full_recent_list(cx: &mut TestAp
 }
 
 #[gpui::test]
+fn welcome_zoom_shortcuts_scale_content_and_stack_actions_in_small_windows(
+    cx: &mut TestAppContext,
+) {
+    cx.update(crate::init);
+    let window = cx.add_window(|window, cx| {
+        let workspace = Workspace::new(None, Arc::default(), window, cx);
+        workspace.focus_handle(cx).focus(window);
+        workspace
+    });
+    cx.run_until_parked();
+    let bounds = |cx: &mut TestAppContext, selector: &'static str| {
+        gpui::VisualTestContext::from_window(window.into(), cx)
+            .debug_bounds(selector)
+            .unwrap()
+    };
+    let initial = bounds(cx, "welcome-content");
+    let button = bounds(cx, "welcome-open-folder");
+    cx.simulate_keystrokes(window.into(), "cmd-+");
+    cx.run_until_parked();
+    assert!(
+        (bounds(cx, "welcome-content").size.width - initial.size.width * 1.1).abs() < px(1.),
+        "before {initial:?}, after {:?}",
+        bounds(cx, "welcome-content")
+    );
+    assert!(
+        (bounds(cx, "welcome-open-folder").size.height - button.size.height * 1.1).abs() < px(1.)
+    );
+    cx.simulate_keystrokes(window.into(), "cmd--");
+    cx.run_until_parked();
+    assert_eq!(bounds(cx, "welcome-content"), initial);
+    cx.simulate_keystrokes(window.into(), "cmd--");
+    cx.run_until_parked();
+    assert!(bounds(cx, "welcome-content").size.width < initial.size.width);
+    cx.simulate_keystrokes(window.into(), "cmd-0");
+    cx.run_until_parked();
+    assert_eq!(bounds(cx, "welcome-content"), initial);
+
+    gpui::VisualTestContext::from_window(window.into(), cx)
+        .simulate_resize(gpui::size(px(480.), px(420.)));
+    for _ in 0..5 {
+        dispatch(cx, window, ZoomIn);
+    }
+    let content = bounds(cx, "welcome-content");
+    let viewport = bounds(cx, "welcome");
+    let folder = bounds(cx, "welcome-open-folder");
+    let file = bounds(cx, "welcome-open-file");
+    assert_eq!(content.center().x, viewport.center().x);
+    assert!(content.origin.y >= viewport.origin.y);
+    assert!(content.size.width <= viewport.size.width);
+    assert_eq!(
+        folder.size.height,
+        px(128.),
+        "content {content:?}, folder {folder:?}, file {file:?}"
+    );
+    assert!(file.origin.y >= folder.bottom());
+    assert_eq!(folder.size.width, content.size.width);
+}
+
+#[gpui::test]
 fn close_tab_is_available_only_while_a_tab_is_open(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("note.txt");
