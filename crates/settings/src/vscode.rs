@@ -93,6 +93,12 @@ pub fn import_vscode_theme(path: &Path) -> Result<ThemeOverrides, ThemeImportErr
             "editor.findMatchBackground",
         ])?,
         scrollbar_thumb: get(&["scrollbarSlider.background"])?,
+        git_staged: get(&[
+            "gitDecoration.stageModifiedResourceForeground",
+            "gitDecoration.addedResourceForeground",
+        ])?,
+        git_modified: get(&["gitDecoration.modifiedResourceForeground"])?,
+        git_conflict: get(&["gitDecoration.conflictingResourceForeground"])?,
         ..Default::default()
     };
     let rules: Vec<_> = theme
@@ -334,7 +340,11 @@ impl ThemeOverrides {
             text_muted,
             selection,
             find_match,
-            scrollbar_thumb
+            scrollbar_thumb,
+            git_staged,
+            git_modified,
+            git_mixed,
+            git_conflict
         );
         overlay!(
             self.syntax,
@@ -371,7 +381,7 @@ mod tests {
         fs::write(
             dir.path().join("themes/base.json"),
             r##"{
-            "colors": { "editor.background": "#123", "editor.foreground": "#abc" },
+            "colors": { "editor.background": "#123", "editor.foreground": "#abc", "gitDecoration.addedResourceForeground": "#123456", "gitDecoration.modifiedResourceForeground": "#654321" },
             "tokenColors": [
                 { "scope": "comment", "settings": { "foreground": "#456" } },
                 { "scope": "keyword.operator", "settings": { "foreground": "#f00" } }
@@ -390,7 +400,7 @@ mod tests {
                 { "scope": "source.rust comment", "settings": { "foreground": "#f00" } },
             ], /* trailing comment */
         }"##).unwrap();
-        fs::write(dir.path().join("config.toml"), "[theme.dark]\nimport = 'themes/theme.json'\nbackground = '#000'\n[theme.dark.syntax]\ncomment = '#fff'\n").unwrap();
+        fs::write(dir.path().join("config.toml"), "[theme.dark]\nimport = 'themes/theme.json'\nbackground = '#000'\ngit_staged = '#00ff00'\ngit_mixed = '#ff00ff'\n[theme.dark.syntax]\ncomment = '#fff'\n").unwrap();
         let theme = crate::Settings::load_from(&dir.path().join("config.toml"))
             .unwrap()
             .theme
@@ -398,6 +408,9 @@ mod tests {
         assert_eq!(theme.background, Some(Color(0x000000ff)));
         assert_eq!(theme.text, Some(Color(0xaabbccff)));
         assert_eq!(theme.selection, Some(Color(0x12345678)));
+        assert_eq!(theme.git_staged, Some(Color(0x00ff00ff)));
+        assert_eq!(theme.git_modified, Some(Color(0x654321ff)));
+        assert_eq!(theme.git_mixed, Some(Color(0xff00ffff)));
         assert_eq!(theme.syntax.comment, Some(Color(0xffffffff)));
         assert_eq!(theme.syntax.function, Some(Color(0x00ff00ff)));
         assert_eq!(theme.syntax.number, Some(Color(0x00ff00ff)));

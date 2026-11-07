@@ -186,7 +186,8 @@ impl Workspace {
         docs.dedup_by_key(|d| d.entity_id());
         docs
     }
-    pub(super) fn update_disk_watches(&mut self, cx: &App) {
+    pub(super) fn update_disk_watches(&mut self, cx: &mut Context<Self>) {
+        self.update_git_scope(cx);
         let mut paths: Vec<_> = self
             .disk_documents(cx)
             .iter()
@@ -199,7 +200,9 @@ impl Workspace {
             .as_ref()
             .map(|tree| tree.read(cx).watched_directories().to_vec())
             .unwrap_or_default();
+        directories.extend(self.git.directories());
         directories.sort();
+        directories.dedup();
         if paths != self.disk.paths || directories != self.disk.directories {
             self.disk.versions.retain(|p, _| paths.contains(p));
             self.disk
@@ -210,6 +213,9 @@ impl Workspace {
         }
     }
     fn observe_disk(&mut self, mut batch: Batch, polled: bool, cx: &mut Context<Self>) {
+        if !polled && (batch.rescan || !batch.events.is_empty()) {
+            self.git.request();
+        }
         if let Some(tree) = &self.tree {
             tree.update(cx, |tree, cx| tree.refresh_external(&batch, polled, cx));
         }

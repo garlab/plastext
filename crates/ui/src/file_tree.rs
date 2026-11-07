@@ -68,6 +68,7 @@ pub struct FileTreeView {
     relist: HashSet<PathBuf>,
     directory_versions: HashMap<PathBuf, DirectoryVersion>,
     creation: Option<Creation>,
+    git_status: Option<Arc<plastext_git::Snapshot>>,
     icons: Entity<IconThemes>,
     _icons_changed: Subscription,
 }
@@ -112,6 +113,7 @@ impl FileTreeView {
             relist: HashSet::new(),
             directory_versions: HashMap::new(),
             creation: None,
+            git_status: None,
             icons,
             _icons_changed: icons_changed,
         };
@@ -125,6 +127,17 @@ impl FileTreeView {
     }
     pub fn selected(&self) -> Option<PathBuf> {
         self.selected.clone()
+    }
+    pub(crate) fn set_git_status(
+        &mut self,
+        snapshot: Option<Arc<plastext_git::Snapshot>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_status = snapshot;
+        cx.notify();
+    }
+    pub(crate) fn git_status(&self, path: &std::path::Path) -> Option<plastext_git::FileStatus> {
+        self.git_status.as_ref()?.status(path)
     }
     pub(crate) fn watched_directories(&self) -> &[PathBuf] {
         self.tree.visible_directories()
@@ -500,11 +513,17 @@ impl Render for FileTreeView {
                                         .when(!selected, |row| {
                                             row.hover(|row| row.bg(theme.background))
                                         })
-                                        .text_color(if entry.ignored {
-                                            theme.text_muted
-                                        } else {
-                                            theme.text
-                                        })
+                                        .text_color(
+                                            crate::workspace::git::color(
+                                                this.git_status(&entry.path),
+                                                theme,
+                                            )
+                                            .unwrap_or(if entry.ignored {
+                                                theme.text_muted
+                                            } else {
+                                                theme.text
+                                            }),
+                                        )
                                         // A file icon occupies the disclosure column.
                                         // An extra empty chevron slot makes files look
                                         // like children of their sibling directories.

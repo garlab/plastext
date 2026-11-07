@@ -14,6 +14,10 @@ pub struct Theme {
     pub selection: Rgba,
     pub find_match: Rgba,
     pub scrollbar_thumb: Rgba,
+    pub git_staged: Rgba,
+    pub git_modified: Rgba,
+    pub git_mixed: Rgba,
+    pub git_conflict: Rgba,
     /// One color per [`Highlight`], in declaration order.
     syntax: [Rgba; HIGHLIGHTS.len()],
 }
@@ -85,6 +89,10 @@ impl Theme {
             selection: rgb(0xd6e4fa),
             find_match: rgb(0xfff1a8),
             scrollbar_thumb: rgb(0xc9cbd1),
+            git_staged: rgb(0x187534),
+            git_modified: rgb(0x8c5900),
+            git_mixed: rgb(0x8250df),
+            git_conflict: rgb(0xcf222e),
             syntax: HIGHLIGHTS.map(|highlight| builtin_syntax(highlight, false).map_or(text, rgb)),
         }
     }
@@ -100,6 +108,10 @@ impl Theme {
             selection: rgb(0x2c3d58),
             find_match: rgb(0x5b4b1c),
             scrollbar_thumb: rgb(0x4a4d56),
+            git_staged: rgb(0x73c991),
+            git_modified: rgb(0xe2c08d),
+            git_mixed: rgb(0xc5a5ff),
+            git_conflict: rgb(0xff8585),
             syntax: HIGHLIGHTS.map(|highlight| builtin_syntax(highlight, true).map_or(text, rgb)),
         }
     }
@@ -118,6 +130,10 @@ impl Theme {
         set(&mut self.selection, overrides.selection);
         set(&mut self.find_match, overrides.find_match);
         set(&mut self.scrollbar_thumb, overrides.scrollbar_thumb);
+        set(&mut self.git_staged, overrides.git_staged);
+        set(&mut self.git_modified, overrides.git_modified);
+        set(&mut self.git_mixed, overrides.git_mixed);
+        set(&mut self.git_conflict, overrides.git_conflict);
         let syntax = &overrides.syntax;
         let syntax_overrides = [
             syntax.keyword,

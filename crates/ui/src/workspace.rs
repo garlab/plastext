@@ -41,6 +41,7 @@ mod file_menu;
 use file_menu::FileMenu;
 mod editing;
 mod external;
+pub(crate) mod git;
 #[cfg(test)]
 mod menu_tests;
 #[cfg(test)]
@@ -152,6 +153,7 @@ pub fn init(cx: &mut App) {
 /// A window's root view: one project with its file tree, panes of tabs and
 /// status bar (spec §4.1, PRJ-1).
 pub struct Workspace {
+    git: git::State,
     disk: external::DiskState,
     root: Option<PathBuf>,
     tree: Option<Entity<FileTreeView>>,
@@ -360,6 +362,7 @@ impl Workspace {
         });
         Self {
             disk: external::DiskState::new(window, cx),
+            git: git::State::new(root.clone(), cx),
             root,
             tree,
             icon_themes,
@@ -1786,6 +1789,16 @@ impl Workspace {
                             .when(tab.preview && !tab.view.is_dirty(cx), |title| {
                                 title.italic()
                             })
+                            .when_some(
+                                git::color(
+                                    self.git
+                                        .snapshot
+                                        .as_ref()
+                                        .and_then(|snapshot| snapshot.status(&tab.path)),
+                                    theme,
+                                ),
+                                |title, color| title.text_color(color),
+                            )
                             .child(if tab.view.is_dirty(cx) {
                                 format!("{} ●", tab.title).into()
                             } else {
@@ -1870,6 +1883,7 @@ impl Workspace {
             .child(if status.as_ref().is_some_and(|status| matches!(status, crate::tab_view::TabStatus::Text(status) if status.editing)) { "EDIT" } else { "READ" })
             .children(notice)
             .children(view_message)
+            .children(self.git.label())
             .child(div().flex_1())
             .when(self.zoom != Zoom::default(), |d| {
                 d.child(format!("{}%", self.zoom.percent()))

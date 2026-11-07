@@ -22,6 +22,7 @@ plastext-assets.workspace = true
 document-graphics.workspace = true
 image = { version = "0.25", default-features = false }
 plastext-editor.workspace = true
+plastext-git.workspace = true
 plastext-markdown.workspace = true
 plastext-math.workspace = true
 plastext-project.workspace = true

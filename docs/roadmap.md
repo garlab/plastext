@@ -63,7 +63,10 @@ Next, in order:
 3. Add continuous Markdown source/preview scroll sync, double-click-to-source, tail mode
    and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
 
-M4 Git review and M5 release hardening follow M3.
+M4 Git review and M5 release hardening follow M3. The first
+[Git status increment](git-status.md) now colors tracked filenames in the tree
+and tabs, with background refreshes and linked-worktree support. Nested-repository
+aggregation, untracked status, gutter markers and the Changes view remain in M4.
 
 ## M2 follow-ups
 

@@ -26,6 +26,10 @@ pub struct ThemeOverrides {
     pub selection: Option<Color>,
     pub find_match: Option<Color>,
     pub scrollbar_thumb: Option<Color>,
+    pub git_staged: Option<Color>,
+    pub git_modified: Option<Color>,
+    pub git_mixed: Option<Color>,
+    pub git_conflict: Option<Color>,
     pub syntax: SyntaxOverrides,
 }
 
