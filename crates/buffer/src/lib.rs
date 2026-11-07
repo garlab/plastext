@@ -14,6 +14,7 @@ mod grapheme;
 mod line_index;
 mod line_summary;
 mod piece_tree;
+mod reload;
 pub mod rows;
 mod save;
 mod serialize;

@@ -2,8 +2,8 @@
 
 The M3 file model is implemented in `plastext-buffer`. Its jobs can run on a
 worker while input continues against the shared document session. [Text/code
-editing](editing.md) now uses its save jobs. Filesystem watchers, interactive
-conflict resolution and Save As remain to integrate.
+editing](editing.md) uses its save and reload jobs, with filesystem watches and
+interactive conflict resolution. Save As and recovery-copy actions remain.
 
 ## Saving existing files
 
@@ -88,8 +88,9 @@ apply it with `finish_external`:
 
 - Unchanged disk versions do nothing, including events from the app's own save.
 - A clean document prepares an immutable replacement, then installs it only if
-  its original session generation is still current. Pane selections are clamped
-  to the new document; old contents/history are returned for off-thread retirement.
+  its original session generation is still current. Pane selections and scroll
+  positions are mapped to the new document; old contents/history are returned
+  for off-thread retirement.
 - A dirty document retains all edits and reports a conflict. Missing files also
   retain their in-memory contents.
 - Checks overlapping a save are deferred. Older results are rejected after a
@@ -100,8 +101,34 @@ apply it with `finish_external`:
 Conflict resolution is explicit. `begin_overwrite` takes the disk version the
 user chose to replace and still rejects a later outside change.
 `reload_discarding_edits` accepts a user-selected discard, but newer typing
-invalidates that request. Neither action is selected automatically. New-file/
-Save As handling and the corresponding GUI choices remain to be integrated.
+invalidates that request. Neither action is selected automatically.
+
+The application watches parent directories, so atomic replacements do not detach
+the watch. Registration and teardown run off the UI thread. Events are coalesced
+with a 300 ms document debounce, cancelled reloads retire their results on a
+worker, and only one reload copy per document runs at a time. A two-second
+metadata fallback catches lost events and unavailable watchers. Watches cover
+open text/code and Markdown documents and resolved symlink targets, without
+recursively watching the repository. Split panes share the document and reload.
+
+For versions up to 8 MiB, bounded patience line diffs map unchanged content and
+trim shared bytes within changed regions. Diff work is capped at 100,000 lines
+per version and one million line visits; ambiguous or larger repeated-line
+regions become a single replacement. Larger documents map the registered pane
+positions by line and byte column, loading only required cache blocks. Moving
+to an unmapped position during preparation makes that large reload stale and
+requests a fresh check. Markdown preview-only opening keeps its existing lazy
+path; the first external update prepares an immutable version and retains the
+reading byte offset. Subsequent snapshot-based reloads remap the reading anchor.
+
+Dirty-file banners offer comparison, explicit discard/reload and Keep Mine.
+Keep Mine dismisses the current warning; it never changes the save checkpoint.
+Save then asks for Overwrite, bound to the reviewed disk version. A new outside
+write still aborts it. Comparisons are read-only snapshots: unified diffs up to
+8 MiB, otherwise two paged views. Deletion keeps the document and pins a preview
+tab. Paired renames are followed only after checking the destination's identity
+and that the old path is gone; unpaired moves show the missing-file banner.
+Save As, recreation of deleted files and recovery-copy actions remain pending.
 
 ## Validation
 

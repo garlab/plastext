@@ -62,6 +62,16 @@ impl FileDocument {
     pub fn has_conflict(&self) -> bool {
         self.conflict
     }
+    /// A watcher-paired rename, verified off-thread by identity. Retain the old
+    /// content stamp so edits made during the move still cause a conflict.
+    pub fn follow_rename(&mut self, expected: &DiskVersion, current: &DiskVersion) -> bool {
+        if self.is_saving() || &self.disk != expected || !expected.same_file(current) {
+            return false;
+        }
+        self.disk = expected.relocated(current);
+        self.advance();
+        true
+    }
     pub fn is_saving(&self) -> bool {
         self.saving.strong_count() != 0
     }
@@ -145,6 +155,7 @@ impl FileDocument {
             force_reload: false,
             encoding_hint: self.encoding_hint,
             options,
+            positions: self.session.reload_positions(),
         }
     }
 
@@ -211,7 +222,12 @@ impl FileDocument {
                         self.conflict = true;
                         ExternalState::Conflict
                     } else if let Some(buffer) = buffer {
-                        return match self.session.reload(base, buffer, *discard_edits) {
+                        return match self.session.reload(
+                            base,
+                            buffer,
+                            *discard_edits,
+                            observation.mapping.as_ref().unwrap(),
+                        ) {
                             Ok(retired) => {
                                 self.disk = current.clone();
                                 self.encoding_hint = observation.encoding_hint;
@@ -293,6 +309,7 @@ impl SaveCompletion {
 }
 
 pub struct ExternalCheck {
+    positions: Vec<u64>,
     expected: DiskVersion,
     base: DocumentSnapshot,
     epoch: u64,
@@ -307,6 +324,7 @@ impl ExternalCheck {
     /// only probes the disk version, avoiding unnecessary full-file copies.
     pub fn run(self, cancel: &AtomicBool, progress: impl FnMut(u64, u64)) -> ExternalObservation {
         let mut buffer = None;
+        let mut mapping = None;
         let observed = (|| {
             crate::edit::check_cancel(cancel)?;
             let current = DiskVersion::read(self.expected.path())?;
@@ -317,6 +335,12 @@ impl ExternalCheck {
                     self.encoding_hint,
                     cancel,
                     progress,
+                )?);
+                mapping = Some(crate::reload::Mapping::prepare(
+                    self.base.text(),
+                    &buffer.as_ref().unwrap().snapshot(),
+                    &self.positions,
+                    cancel,
                 )?);
             }
             Ok(current)
@@ -330,11 +354,13 @@ impl ExternalCheck {
             discard_edits: self.discard_edits,
             force_reload: self.force_reload,
             encoding_hint: self.encoding_hint,
+            mapping,
         }
     }
 }
 
 pub struct ExternalObservation {
+    mapping: Option<crate::reload::Mapping>,
     expected: DiskVersion,
     base: DocumentSnapshot,
     epoch: u64,
@@ -343,6 +369,12 @@ pub struct ExternalObservation {
     discard_edits: bool,
     force_reload: bool,
     encoding_hint: EncodingHint,
+}
+
+impl ExternalObservation {
+    pub fn disk_version(&self) -> Option<&DiskVersion> {
+        self.observed.as_ref().ok()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

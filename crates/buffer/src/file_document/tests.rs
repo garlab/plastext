@@ -88,7 +88,7 @@ fn dropping_a_job_releases_the_save_slot_and_foreign_completions_are_rejected() 
 }
 
 #[test]
-fn clean_reload_keeps_panes_clamps_anchors_and_returns_old_history_for_retirement() {
+fn clean_reload_keeps_panes_maps_anchors_and_returns_old_history_for_retirement() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("file");
     fs::write(&path, b"original text").unwrap();
@@ -106,10 +106,99 @@ fn clean_reload_keeps_panes_clamps_anchors_and_returns_old_history_for_retiremen
     assert!(!doc.session().is_current(&old));
     assert_eq!(
         doc.session().pane_snapshot(pane).unwrap().selection(),
-        Selection::new(2, 2)
+        Selection::new(0, 2)
     );
     assert_eq!(old.text().bytes(0..13).unwrap().as_ref(), b"original text");
     assert_eq!(check(&mut doc).state, ExternalState::Unchanged);
+}
+
+#[test]
+fn reload_tracks_disjoint_insertions_for_selections_and_viewports() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("file");
+    fs::write(&path, "first\nsecond\nthird\nfourth\n").unwrap();
+    let mut doc = open(&path);
+    let pane = doc
+        .session_mut()
+        .attach_pane(Selection::new(13, 18))
+        .unwrap();
+    doc.session_mut().set_viewport(pane, 6);
+    fs::write(&path, "intro\nfirst\nsecond\ninserted\nthird\nfourth\n").unwrap();
+    assert_eq!(check(&mut doc).state, ExternalState::Reloaded);
+    assert_eq!(
+        doc.session()
+            .pane_snapshot(pane)
+            .unwrap()
+            .selection()
+            .range(),
+        28..33
+    );
+    assert_eq!(doc.session().viewport(pane), Some(12));
+}
+
+#[test]
+fn paired_rename_keeps_dirty_history_and_does_not_accept_unseen_disk_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    let from = dir.path().join("old");
+    let to = dir.path().join("new");
+    fs::write(&from, "base").unwrap();
+    let mut doc = open(&from);
+    append(&mut doc, " mine");
+    let expected = doc.disk_version().clone();
+    fs::rename(&from, &to).unwrap();
+    fs::write(&to, "outside").unwrap();
+    let current = DiskVersion::read(&to).unwrap();
+    assert!(doc.follow_rename(&expected, &current));
+    assert_eq!(doc.disk_version().path(), to);
+    assert_eq!(text(&doc), b"base mine");
+    assert_eq!(check(&mut doc).state, ExternalState::Conflict);
+    let result = doc
+        .begin_save(SaveOptions::default())
+        .unwrap()
+        .run(&cancel(), |_| {});
+    assert_eq!(
+        doc.finish_save(&result).unwrap_err().kind,
+        SaveFailureKind::Conflict
+    );
+    assert_eq!(fs::read(&to).unwrap(), b"outside");
+}
+
+#[test]
+fn large_reload_maps_line_columns_and_retries_if_the_selection_moves() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large");
+    let original = "abcdefghij\n".repeat(800_000);
+    fs::write(&path, &original).unwrap();
+    let mut doc = open(&path);
+    let pane = doc
+        .session_mut()
+        .attach_pane(Selection::caret(11 * 700_000 + 3))
+        .unwrap();
+    doc.session_mut().set_viewport(pane, 11 * 699_990);
+    let updated = "abcdefghijkl\n".repeat(800_000);
+    fs::write(&path, &updated).unwrap();
+    let observation = doc
+        .external_check(OpenOptions::default())
+        .run(&cancel(), |_, _| {});
+    let base = doc.session().pane_snapshot(pane).unwrap();
+    doc.session_mut()
+        .set_selection(&base, Selection::caret(11 * 700_000 + 4))
+        .unwrap();
+    assert_eq!(
+        apply_external(&mut doc, observation).state,
+        ExternalState::Stale
+    );
+    assert_eq!(check(&mut doc).state, ExternalState::Reloaded);
+    assert_eq!(
+        doc.session()
+            .pane_snapshot(pane)
+            .unwrap()
+            .selection()
+            .head
+            .offset,
+        13 * 700_000 + 4
+    );
+    assert_eq!(doc.session().viewport(pane), Some(13 * 699_990));
 }
 
 #[test]

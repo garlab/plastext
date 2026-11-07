@@ -15,7 +15,7 @@ mod wrapping;
 
 use gpui::App;
 
-pub use document::{EditingDocument, configure_editing};
+pub use document::{DiskChange, EditingDocument, configure_editing};
 pub use hex_view::{HexView, HexViewStatus};
 pub use text_input::{TextInput, TextInputEvent};
 pub use text_view::{TextStyle, TextView, TextViewStatus, focused_word_wrap};

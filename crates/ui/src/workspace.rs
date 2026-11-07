@@ -40,6 +40,7 @@ mod file_actions;
 mod file_menu;
 use file_menu::FileMenu;
 mod editing;
+mod external;
 #[cfg(test)]
 mod menu_tests;
 mod opening;
@@ -149,6 +150,7 @@ pub fn init(cx: &mut App) {
 /// A window's root view: one project with its file tree, panes of tabs and
 /// status bar (spec §4.1, PRJ-1).
 pub struct Workspace {
+    disk: external::DiskState,
     root: Option<PathBuf>,
     tree: Option<Entity<FileTreeView>>,
     icon_themes: Entity<IconThemes>,
@@ -341,6 +343,7 @@ impl Workspace {
             tree
         });
         Self {
+            disk: external::DiskState::new(window, cx),
             root,
             tree,
             icon_themes,
@@ -732,10 +735,28 @@ impl Workspace {
             .into();
         let status = view.observe(cx);
         let editing_status = view.editing_document(cx).map(|document| {
-            cx.observe(&document, |this, _, cx| {
+            cx.observe(&document, |this, document, cx| {
+                let path = document.read(cx).path().to_owned();
                 for pane in this.panes.values_mut() {
                     for tab in &mut pane.tabs {
+                        if tab.view.editing_document(cx).as_ref() == Some(&document)
+                            && tab.path != path
+                        {
+                            tab.path = path.clone();
+                            tab.title = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned()
+                                .into();
+                        }
                         if tab.view.is_dirty(cx) {
+                            tab.preview = false;
+                        }
+                        if tab.view.editing_document(cx).as_ref() == Some(&document)
+                            && document.read(cx).disk_change()
+                                == Some(plastext_editor::DiskChange::Missing)
+                        {
                             tab.preview = false;
                         }
                     }
@@ -1681,6 +1702,11 @@ impl Workspace {
             .when(!pane.tabs.is_empty(), |pane_element| {
                 pane_element.child(self.render_tab_bar(id, theme, cx))
             })
+            .children(
+                pane.active_tab()
+                    .and_then(|tab| tab.view.editing_document(cx))
+                    .and_then(|document| self.render_disk_banner(document, theme, cx)),
+            )
             .child(content)
     }
 
@@ -1881,6 +1907,7 @@ impl Focusable for Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_disk_watches(cx);
         for pane in self.panes.values() {
             for (index, tab) in pane.tabs.iter().enumerate() {
                 tab.view.set_visible(pane.active == Some(index), cx);

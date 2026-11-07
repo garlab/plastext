@@ -365,6 +365,9 @@ impl TextView {
         }
     }
     pub(super) fn sync_editing(&mut self, cx: &mut Context<Self>) {
+        if let Some(document) = self.editing_document() {
+            self.set_file_path(document.read(cx).path());
+        }
         let Some(editing) = &mut self.editing else {
             return;
         };
@@ -401,7 +404,8 @@ impl TextView {
             let edits = editing
                 .generation
                 .map(|generation| session.edits_since(generation));
-            Some((snapshot, pane, document.active, edits))
+            let viewport = editing.pane.and_then(|pane| session.viewport(pane));
+            Some((snapshot, pane, document.active, edits, viewport))
         });
         if state.is_none() {
             editing.active = editing.document.read(cx).preparing;
@@ -412,7 +416,7 @@ impl TextView {
         let mut missing = None;
         let mut syntax_refresh = None;
         let mut syntax_changes = None;
-        if let Some((snapshot, pane, active, edits)) = state {
+        if let Some((snapshot, pane, active, edits, viewport)) = state {
             let changed = editing.generation != Some(snapshot.generation());
             editing.active = active;
             if changed {
@@ -430,6 +434,7 @@ impl TextView {
                         *range = selection.range();
                     }
                 }
+                let reloaded = matches!(edits, Some(None));
                 syntax_changes = edits;
                 syntax_refresh = Some(editing.generation.is_none());
                 editing.generation = Some(snapshot.generation());
@@ -458,7 +463,12 @@ impl TextView {
                         drop(old);
                     })
                     .detach();
-                self.top = self.top.min(self.source.len());
+                self.top = if reloaded {
+                    viewport.unwrap_or(self.top)
+                } else {
+                    self.top
+                }
+                .min(self.source.len());
                 self.pending_jump = Some(Jump::Offset(self.top));
                 self.loading = None;
                 self.error = None;

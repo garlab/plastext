@@ -91,8 +91,20 @@ Saves run on a worker, preserve encoding and line endings unless explicitly conf
 undo history. Typing during a save remains dirty until that newer version is
 saved. Atomic saves preserve metadata and write through symlinks; hard-linked
 files use the backend's in-place save with a recovery copy. If the disk file has
-changed, saving reports the conflict and leaves both disk contents and local
-edits intact. See [save semantics and limits](m3-saving.md).
+changed, saving requires an explicit **Overwrite** confirmation and still refuses
+to replace a newer disk version. See [save semantics and limits](m3-saving.md).
+
+Text/code and Markdown tabs watch their files, including files opened outside the
+workspace. Clean documents reload automatically. Dirty documents show **Changed
+on disk**, with **Show Diff**, **Reload (Discard Changes)** and **Keep Mine**.
+Keep Mine retains your edits without saving or authorizing an overwrite. Reload
+cannot discard typing that arrives after the request. Deleted files stay open;
+watcher-paired renames follow the new path when file identity matches.
+
+Show Diff opens a read-only comparison against the disk version in the banner.
+Up to 8 MiB per version, it shows a unified diff; larger documents use two native,
+paged text views labelled Disk and Your changes. Comparisons are snapshots and
+do not update as either version changes.
 
 Closing the last tab for a dirty document, closing its window, or quitting offers
 Save, Cancel and Discard. A newer edit invalidates a pending discard decision.
@@ -168,9 +180,8 @@ Remaining M3 work:
   toggles remain read-only until their synchronization is connected.
 - Save As, column selection and restoring historical cursor selections on undo
   remain to implement. New File is available from the File menu and navigation pane.
-- Filesystem reload notifications and interactive conflict resolution are not
-  connected yet. A save refuses changed disk contents; it does not overwrite
-  them automatically.
+- Save As and recovery-copy actions remain to integrate. Deleted files are not
+  recreated automatically; their open text remains available for copying.
 - Cut/copy are limited to 64 MiB. A cut whose selection is uncached first loads
   it and asks for Cut again; it never deletes before copying.
 

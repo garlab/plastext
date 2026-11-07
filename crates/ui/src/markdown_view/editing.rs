@@ -18,7 +18,11 @@ impl MarkdownView {
             return;
         }
         document.update(cx, |doc, _| doc.retain_view());
-        self._document_observer = Some(cx.observe(&document, |this, _, cx| {
+        self._document_observer = Some(cx.observe(&document, |this, document, cx| {
+            if this.path != document.read(cx).path() {
+                this.path = document.read(cx).path().to_owned();
+                this.clear_images(cx);
+            }
             this.refresh_preview(false, cx);
             cx.notify();
         }));
@@ -105,6 +109,14 @@ impl MarkdownView {
             return;
         };
         let generation = version.generation();
+        let offset = self
+            .pending_offset
+            .map_or_else(|| self.position(cx), |offset| offset as u64);
+        if let Some(mapped) = document.update(cx, |doc, _| {
+            doc.track_reading_position(&mut self.reading_position, offset)
+        }) {
+            self.pending_offset = Some(mapped as usize);
+        }
         if self.preview_generation == Some(generation) {
             return;
         }

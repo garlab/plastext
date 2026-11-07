@@ -17,6 +17,7 @@ async-channel = "2"
 gpui.workspace = true
 nucleo.workspace = true
 plastext-buffer.workspace = true
+plastext-diff.workspace = true
 plastext-assets.workspace = true
 document-graphics.workspace = true
 image = { version = "0.25", default-features = false }

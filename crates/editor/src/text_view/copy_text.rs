@@ -22,9 +22,10 @@ impl Drop for CopyTask {
 
 impl TextView {
     pub fn set_file_path(&mut self, path: &std::path::Path) {
-        self.file_name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned());
+        let name = path.file_name().map(|name| name.to_string_lossy());
+        if self.file_name.as_deref() != name.as_deref() {
+            self.file_name = name.map(|name| name.into_owned());
+        }
     }
 
     pub(super) fn copy_text(&mut self, format: Format, cx: &mut Context<Self>) {

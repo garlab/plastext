@@ -150,6 +150,7 @@ impl From<TextError> for SessionError {
 }
 
 struct Pane {
+    viewport: u64,
     resolved: RefCell<Vec<Selection>>,
     selection: Selection,
     additional: Vec<Selection>,
@@ -232,6 +233,7 @@ impl DocumentSession {
         self.panes.insert(
             id,
             Pane {
+                viewport: selection.range().start,
                 resolved: RefCell::new(vec![selection]),
                 selection,
                 additional: Vec::new(),
@@ -246,6 +248,27 @@ impl DocumentSession {
             self.last_actor = None;
         }
         self.panes.remove(&id).is_some()
+    }
+
+    pub fn set_viewport(&mut self, id: PaneId, offset: u64) {
+        if let Some(pane) = self.panes.get_mut(&id) {
+            pane.viewport = offset.min(crate::ByteSource::len(&self.buffer.snapshot()));
+        }
+    }
+    pub fn viewport(&self, id: PaneId) -> Option<u64> {
+        self.panes.get(&id).map(|pane| pane.viewport)
+    }
+    pub(crate) fn reload_positions(&self) -> Vec<u64> {
+        self.panes
+            .values()
+            .flat_map(|pane| {
+                std::iter::once(pane.viewport).chain(
+                    std::iter::once(pane.selection)
+                        .chain(pane.additional.iter().copied())
+                        .flat_map(|s| [s.anchor.offset, s.head.offset]),
+                )
+            })
+            .collect()
     }
 
     pub fn pane_snapshot(&self, id: PaneId) -> Result<PaneSnapshot, SessionError> {
@@ -503,19 +526,36 @@ impl DocumentSession {
         base: &DocumentSnapshot,
         buffer: EditBuffer,
         discard_edits: bool,
+        mapping: &crate::reload::Mapping,
     ) -> Result<EditBuffer, Box<EditBuffer>> {
         if (self.is_dirty() && !discard_edits) || !self.is_current(base) {
             return Err(Box::new(buffer));
         }
-        let len = crate::ByteSource::len(&buffer.snapshot());
+        if self.reload_positions().iter().any(|&offset| {
+            mapping
+                .map(Anchor {
+                    offset,
+                    bias: Bias::Before,
+                })
+                .is_none()
+        }) {
+            return Err(Box::new(buffer));
+        }
         let retired = std::mem::replace(&mut self.buffer, buffer);
         for pane in self.panes.values_mut() {
             pane.resolved.get_mut().clear();
-            pane.additional.clear();
-            pane.selection.anchor.offset = pane.selection.anchor.offset.min(len);
-            pane.selection.head.offset = pane.selection.head.offset.min(len);
-            if pane.selection.anchor.offset == pane.selection.head.offset {
-                pane.selection = Selection::caret(pane.selection.head.offset);
+            pane.viewport = mapping
+                .map(Anchor {
+                    offset: pane.viewport,
+                    bias: Bias::After,
+                })
+                .unwrap();
+            for selection in std::iter::once(&mut pane.selection).chain(&mut pane.additional) {
+                selection.anchor.offset = mapping.map(selection.anchor).unwrap();
+                selection.head.offset = mapping.map(selection.head).unwrap();
+                if selection.anchor.offset == selection.head.offset {
+                    *selection = Selection::caret(selection.head.offset);
+                }
             }
         }
         self.last_actor = None;
@@ -571,6 +611,9 @@ impl DocumentSession {
 
 fn rebase_panes(panes: &mut BTreeMap<PaneId, Pane>, edit: &EditDelta) {
     for pane in panes.values_mut() {
+        let mut viewport = Selection::new(pane.viewport, pane.viewport);
+        viewport.rebase(edit);
+        pane.viewport = viewport.anchor.offset;
         pane.resolved.get_mut().clear();
         pane.selection.rebase(edit);
         for selection in &mut pane.additional {

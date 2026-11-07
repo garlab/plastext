@@ -307,6 +307,21 @@ struct ScrollbarDrag {
 }
 
 impl TextView {
+    /// Read-only view of an immutable version, used for external comparisons.
+    pub fn from_snapshot(
+        snapshot: plastext_buffer::TextSnapshot,
+        style: TextStyle,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let source = Arc::new(FileSource::from_bytes(Bytes::new()));
+        let index = LineIndex::for_source(source.clone()).expect("empty index");
+        let mut view = Self::new(source.clone(), index, style, None, cx);
+        view.source = Arc::new(ViewSource {
+            original: source,
+            snapshot: Some(snapshot),
+        });
+        view
+    }
     /// A view of `source`, highlighted as `language`: parsed if it's in
     /// memory and small enough, otherwise line by line.
     pub fn new(
@@ -2042,6 +2057,15 @@ fn spans_within(
 
 impl Render for TextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(editing) = &self.editing
+            && let Some(pane) = editing.pane
+        {
+            editing.document.update(cx, |doc, _| {
+                if let Some(file) = &mut doc.file {
+                    file.session_mut().set_viewport(pane, self.top);
+                }
+            });
+        }
         self.sync_caret_blink(window, cx);
         let view = cx.entity();
         let theme = Theme::get(window, cx);

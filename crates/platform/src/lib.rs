@@ -12,6 +12,7 @@ pub mod pdf;
 #[cfg(target_os = "macos")]
 pub mod quit;
 pub mod tex;
+pub mod watch;
 
 /// Set the running macOS application's Dock / app-switcher icon, including when
 /// launched as a bare executable. Call on the UI thread after AppKit starts.

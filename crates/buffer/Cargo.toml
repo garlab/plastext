@@ -14,6 +14,7 @@ chardetng = "1.0"
 memchr.workspace = true
 tempfile.workspace = true
 unicode-segmentation.workspace = true
+plastext-diff.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }

@@ -46,6 +46,16 @@ impl DiskVersion {
     pub fn target(&self) -> &Path {
         &self.target
     }
+    pub fn same_file(&self, other: &Self) -> bool {
+        self.stamp.identity == other.stamp.identity
+    }
+    pub(crate) fn relocated(&self, current: &Self) -> Self {
+        Self {
+            path: current.path.clone(),
+            target: current.target.clone(),
+            stamp: self.stamp.clone(),
+        }
+    }
 
     /// Check the current path's write access without changing the file.
     /// Blocks; call on a worker. This does not validate the captured version:

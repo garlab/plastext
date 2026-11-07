@@ -79,6 +79,7 @@ pub struct MarkdownView {
     editing_document: Option<Entity<plastext_editor::EditingDocument>>,
     _document_observer: Option<Subscription>,
     preview_generation: Option<u64>,
+    reading_position: Option<(plastext_buffer::PaneId, u64)>,
     refresh_generation: Option<u64>,
     refresh_task: Option<Task<()>>,
     index: Arc<LineIndex>,
@@ -206,7 +207,10 @@ impl MarkdownView {
             this.diagrams.clear(owner, cx);
             this.clear_images(cx);
             if let Some(document) = this.editing_document.take() {
-                document.update(cx, |doc, _| doc.release_view());
+                document.update(cx, |doc, _| {
+                    doc.release_reading_position(this.reading_position.take());
+                    doc.release_view();
+                });
             }
             let source = std::mem::replace(
                 &mut this.preview_source,
@@ -226,6 +230,7 @@ impl MarkdownView {
             editing_document: None,
             _document_observer: None,
             preview_generation: None,
+            reading_position: None,
             refresh_generation: None,
             refresh_task: None,
             source,
@@ -1532,6 +1537,18 @@ impl Focusable for MarkdownView {
 }
 impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.rendered
+            && let Some(document) = self.editing_document.clone()
+            && document
+                .read(cx)
+                .version()
+                .is_some_and(|v| Some(v.generation()) == self.preview_generation)
+        {
+            let offset = self.position(cx);
+            document.update(cx, |doc, _| {
+                doc.track_reading_position(&mut self.reading_position, offset);
+            });
+        }
         self.reading.hits = Default::default();
         if self.diagrams.begin_frame(cx.entity_id(), cx) {
             let view = cx.entity().downgrade();

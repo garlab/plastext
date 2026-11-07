@@ -42,6 +42,10 @@ caret/selection, native input and composition, shared undo/redo, background save
 and dirty-file close guards. Markdown previews refresh from unsaved snapshots,
 with debounced updates in visible split panes. Existing read-mode opening keeps its original path;
 core performance diagnostics remain separate from the accepted baselines.
+External-change handling now connects parent-directory watches to clean reloads,
+dirty-file banners, disk comparisons, confirmed overwrite, deletion retention
+and identity-checked paired renames. [Bounds and remaining limits](m3-saving.md#external-changes-and-explicit-resolution)
+include line-based mapping and paged comparisons for large files.
 [File management](file-management.md) adds Duplicate, Copy/Cut/Paste, Rename,
 Move and system-Bin deletion, with separate navigation-pane focus and guards
 for unsaved edits.
@@ -52,10 +56,10 @@ Next, in order:
    are implemented: multi-cursor, word movement/deletion, find/replace, line and
    indentation commands, EditorConfig, encoding/newline menus and editing settings.
    See [controls and limits](editing.md#editing-commands-and-settings).
-2. Integrate save/reload jobs with debounced filesystem events, explicit
-   conflict/recovery choices and Save As. New File is implemented. Current saves refuse
-   conflicts while retaining edits. Validate native platform behavior and injected
-   save failures.
+2. Add Save As and recovery-copy actions, then validate native platform behavior
+   and injected save failures. Debounced external reloads and conflict choices
+   are implemented, as is New File. Finish content anchoring on the first reload
+   of preview-only documents, which currently retains the reading byte offset.
 3. Add continuous Markdown source/preview scroll sync, double-click-to-source, tail mode
    and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
 

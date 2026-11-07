@@ -1,5 +1,9 @@
 //! One UI owner per path; disk work and bulk version retirement run on workers.
+mod external;
+#[cfg(test)]
+mod external_tests;
 mod preferences;
+pub use external::DiskChange;
 
 use gpui::{App, AppContext, Context, Entity, Global, SharedString, Task, WeakEntity};
 use plastext_buffer::{ByteSource, DiskVersion, FileDocument, OpenOptions, SaveOptions};
@@ -25,11 +29,13 @@ pub fn configure_editing(editor: plastext_settings::Editor, cx: &mut App) {
 }
 
 pub struct EditingDocument {
+    external: external::External,
     pub(crate) views: usize,
     pub(crate) pending_inputs: usize,
     pub(crate) file: Option<FileDocument>,
     pub(crate) active: bool,
     pub(crate) preparing: bool,
+    writable: bool,
     pub(crate) notice: Option<SharedString>,
     pub(crate) preferences: plastext_settings::Editor,
     path: PathBuf,
@@ -58,6 +64,9 @@ impl EditingDocument {
         let entity = cx.new(|cx| {
             cx.on_release(|this: &mut Self, cx| {
                 this.cancel.store(true, Ordering::Relaxed);
+                if let Some(cancel) = &this.external.cancel {
+                    cancel.store(true, Ordering::Relaxed);
+                }
                 if let Some(file) = this.file.take() {
                     cx.background_executor()
                         .spawn(async move {
@@ -68,11 +77,13 @@ impl EditingDocument {
             })
             .detach();
             Self {
+                external: external::External::default(),
                 views: 0,
                 pending_inputs: 0,
                 file: None,
                 active: false,
                 preparing: false,
+                writable: true,
                 notice: None,
                 preferences: cx
                     .try_global::<Preferences>()
@@ -161,11 +172,15 @@ impl EditingDocument {
             return;
         }
         if self.file.is_some() {
-            self.active = true;
+            self.active = self.writable;
+            if !self.writable {
+                self.notice = Some("Read-only file".into());
+            }
             cx.notify();
             return;
         }
         if self.preparing {
+            self.edit_after_operation = Some(offset);
             return;
         }
         self.preparing = true;
@@ -202,6 +217,7 @@ impl EditingDocument {
                 this.preparing = false;
                 match result.take().unwrap() {
                     Ok(Some((file, preferences))) => {
+                        this.edit_after_operation = None;
                         this.file = Some(file);
                         this.active = true;
                         this.notice = match preferences {
@@ -221,6 +237,10 @@ impl EditingDocument {
                     Err(error) => {
                         this.notice = Some(format!("Couldn't enter edit mode: {error}").into())
                     }
+                }
+                if this.external.pending_read {
+                    this.external.pending_read = false;
+                    this.load_external_version(cx);
                 }
                 cx.notify();
             })
@@ -288,10 +308,11 @@ impl EditingDocument {
             let mut observation = work.await;
             let retired = this.update(cx, |this, cx| {
                 this.preparing = false;
-                let result = this
-                    .file
-                    .as_mut()
-                    .map(|file| file.finish_external(&mut observation));
+                let result = this.file.as_mut().map(|file| {
+                    let result = file.finish_external(&mut observation);
+                    file.session_mut().defer_history_drop();
+                    result
+                });
                 this.notice = result.as_ref().and_then(|result| match &result.state {
                     plastext_buffer::ExternalState::Reloaded => None,
                     other => Some(format!("Couldn't reopen with encoding: {other:?}").into()),
@@ -309,6 +330,12 @@ impl EditingDocument {
 
     pub fn save(&mut self, cx: &mut Context<Self>) {
         if self.file_operation || self.is_saving() {
+            return;
+        }
+        if self.external.change.is_some() && self.external.overwrite.is_none() {
+            self.external.confirm_save = true;
+            self.external.hidden = false;
+            cx.notify();
             return;
         }
         let options = self.preferences.clone();
@@ -370,12 +397,29 @@ impl EditingDocument {
         if self.file_operation {
             return;
         }
-        let Some(job) = self.file.as_mut().and_then(|file| {
-            file.begin_save(SaveOptions {
-                atomic: self.preferences.atomic_save,
-            })
-        }) else {
+        let overwrite = self.external.overwrite.take();
+        let Some(file) = &mut self.file else {
             return;
+        };
+        let job = {
+            let options = SaveOptions {
+                atomic: self.preferences.atomic_save,
+            };
+            if let Some(reviewed) = overwrite {
+                file.begin_overwrite(reviewed, options)
+            } else {
+                Ok(file.begin_save(options))
+            }
+        };
+        let job = match job {
+            Ok(Some(job)) => job,
+            Ok(None) => return,
+            Err(error) => {
+                self.notice = Some(format!("Couldn't overwrite: {}", error.message).into());
+                self.external_changed(cx);
+                cx.notify();
+                return;
+            }
         };
         self.notice = Some("Saving…".into());
         let cancel = self.cancel.clone();
@@ -395,6 +439,10 @@ impl EditingDocument {
                         format!("Couldn't save: {}{recovery}", error.message).into()
                     });
                 }
+                this.external.change = None;
+                this.external.reviewed = None;
+                this.external.confirm_save = false;
+                this.external_changed(cx);
                 cx.notify();
             })
             .ok();
