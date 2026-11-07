@@ -1,11 +1,14 @@
 //! End-to-end decoder protocol tests, including the actual child sandbox.
+#[cfg(unix)]
 use plastext_platform::images::{self, Document, Region, SCALE_UNIT};
+#[cfg(unix)]
 use std::{
     path::Path,
     sync::{Arc, atomic::AtomicBool},
     time::Instant,
 };
 
+#[cfg(unix)]
 fn main() {
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--image-worker")) {
         images::worker_main().unwrap();
@@ -107,6 +110,7 @@ fn main() {
     println!("Image snapshot, broker and shared-worker integration passed");
 }
 
+#[cfg(unix)]
 fn assert_pixels(actual: &[u8], expected: &[u8], tolerance: i16) {
     assert_eq!(actual.len(), expected.len());
     for (i, (&a, &b)) in actual.iter().zip(expected).enumerate() {
@@ -115,4 +119,25 @@ fn assert_pixels(actual: &[u8], expected: &[u8], tolerance: i16) {
             "pixel byte {i}: {a} != {b}"
         );
     }
+}
+
+#[cfg(not(unix))]
+fn main() {
+    use plastext_platform::images::{self, Document};
+    use std::sync::{Arc, atomic::AtomicBool};
+
+    // The shared worker currently transfers the image snapshot through a Unix
+    // file descriptor. Unsupported hosts must fail explicitly, without decoding
+    // the image in the app process as a fallback.
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("image.png");
+    image::RgbaImage::new(1, 1).save(&path).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let expected = "Isolated image previews are unavailable on this platform";
+    assert_eq!(
+        Document::open(&path, &cancel).err().as_deref(),
+        Some(expected)
+    );
+    assert_eq!(images::worker_main().err().as_deref(), Some(expected));
+    println!("Image integration: unsupported-platform errors passed");
 }
