@@ -8,6 +8,9 @@ use std::{
     },
 };
 
+mod discovery;
+pub use discovery::DiscoveryCache;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FileStatus {
     pub staged: bool,
@@ -24,6 +27,11 @@ pub enum Decoration {
 }
 
 impl FileStatus {
+    fn merge(&mut self, other: Self) {
+        self.staged |= other.staged;
+        self.modified |= other.modified;
+        self.conflict |= other.conflict;
+    }
     pub fn decoration(self) -> Option<Decoration> {
         match (self.staged, self.modified, self.conflict) {
             (_, _, true) => Some(Decoration::Conflict),
@@ -49,11 +57,12 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Default)]
 pub struct RepositorySet {
     repositories: HashMap<PathBuf, Option<Arc<Snapshot>>>,
+    folders: Arc<HashMap<PathBuf, FileStatus>>,
 }
 
 impl RepositorySet {
-    pub fn for_roots(roots: &[PathBuf], previous: &Self) -> Self {
-        Self {
+    pub fn for_roots(roots: &[PathBuf], previous: &Self) -> Result<Self, String> {
+        let mut result = Self {
             repositories: roots
                 .iter()
                 .map(|root| {
@@ -63,7 +72,17 @@ impl RepositorySet {
                     )
                 })
                 .collect(),
+            folders: previous.folders.clone(),
+        };
+        // New boundaries can mask paths formerly reported by a parent repo.
+        if roots.len() != previous.repositories.len()
+            || roots
+                .iter()
+                .any(|root| !previous.repositories.contains_key(root))
+        {
+            result.folders = Arc::new(result.aggregate_folders()?);
         }
+        Ok(result)
     }
     pub fn status(&self, path: &Path) -> Option<FileStatus> {
         for ancestor in path.ancestors() {
@@ -75,6 +94,9 @@ impl RepositorySet {
     }
     pub fn repository(&self, root: &Path) -> Option<&Arc<Snapshot>> {
         self.repositories.get(root)?.as_ref()
+    }
+    pub fn folder_status(&self, path: &Path) -> Option<FileStatus> {
+        self.folders.get(path).copied()
     }
     pub fn roots(&self) -> impl Iterator<Item = &PathBuf> {
         self.repositories.keys()
@@ -120,9 +142,58 @@ impl RepositorySet {
         if paths > limits.changed_paths || bytes > limits.path_bytes {
             return Err("Git status exceeds the window's changed-file limit".into());
         }
-        self.repositories
+        let old = self
+            .repositories
             .insert(root.to_owned(), snapshot.map(Arc::new));
+        match self.aggregate_folders() {
+            Ok(folders) => self.folders = Arc::new(folders),
+            Err(error) => {
+                if let Some(old) = old {
+                    self.repositories.insert(root.to_owned(), old);
+                } else {
+                    self.repositories.remove(root);
+                }
+                return Err(error);
+            }
+        }
         Ok(true)
+    }
+
+    fn aggregate_folders(&self) -> Result<HashMap<PathBuf, FileStatus>, String> {
+        let mut folders = HashMap::<PathBuf, FileStatus>::new();
+        let mut bytes = 0;
+        for (root, snapshot) in &self.repositories {
+            let Some(snapshot) = snapshot else { continue };
+            for (relative, status) in &snapshot.files {
+                let path = root.join(relative);
+                let is_repo_entry = self.repositories.contains_key(&path);
+                let nearest = path
+                    .parent()
+                    .into_iter()
+                    .flat_map(Path::ancestors)
+                    .find(|ancestor| self.repositories.contains_key(*ancestor));
+                if nearest != Some(root.as_path()) {
+                    continue;
+                }
+                let first = if is_repo_entry {
+                    Some(path.as_path())
+                } else {
+                    path.parent()
+                };
+                for parent in first.into_iter().flat_map(Path::ancestors) {
+                    if let Some(entry) = folders.get_mut(parent) {
+                        entry.merge(*status);
+                    } else {
+                        bytes += parent.as_os_str().len();
+                        if folders.len() >= 100_000 || bytes > 16 * 1024 * 1024 {
+                            return Err("Git folder status exceeds the summary limit".into());
+                        }
+                        folders.insert(parent.to_owned(), *status);
+                    }
+                }
+            }
+        }
+        Ok(folders)
     }
 }
 

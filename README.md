@@ -87,9 +87,10 @@ Files opened explicitly through Quick Open, search results or the CLI stay open.
 Right-click a file or folder in the navigation pane for **Copy Path** (absolute)
 or **Copy Relative Path** (relative to the project root).
 
-Git changes color filenames in the tree and tabs: green for staged changes,
+Git changes color files and folders in the tree and filenames in tabs: green for staged changes,
 amber for unstaged changes, purple for both, and red for conflicts. The unsaved
-dot still refers to editor edits. Status refreshes in the background; untracked
+dot still refers to editor edits. Collapsing folders retains their cached colors.
+Status refreshes in the background; untracked
 files stay neutral until staged. See [Git status and performance limits](docs/git-status.md).
 
 TeX opens in preview with an installed TeX Live pdfLaTeX. Roots and local inputs

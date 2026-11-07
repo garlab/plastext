@@ -148,7 +148,7 @@ fn folderless_window_discovers_the_open_files_repository(cx: &mut TestAppContext
         })
         .unwrap();
     cx.run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(400));
+    cx.executor().advance_clock(Duration::from_secs(2));
     cx.run_until_parked();
     expect(window, &other_path, Some(Decoration::Staged), cx);
     window
@@ -168,7 +168,7 @@ fn folderless_window_discovers_the_open_files_repository(cx: &mut TestAppContext
     window
         .update(cx, |workspace, window, _| {
             assert!(workspace.git.scopes.is_empty());
-            assert!(workspace.git.snapshot.is_none());
+            assert_eq!(workspace.git.snapshot.as_ref().unwrap().roots().count(), 2);
             window.remove_window();
         })
         .unwrap();
@@ -210,7 +210,8 @@ fn parent_folder_discovers_expanded_repositories_and_keeps_failures_separate(
     cx.run_until_parked();
     window
         .update(cx, |workspace, _, _| {
-            assert_eq!(workspace.git.snapshot.as_ref().unwrap().roots().count(), 0);
+            // Listed child repositories are discovered before being expanded.
+            assert_eq!(workspace.git.snapshot.as_ref().unwrap().roots().count(), 2);
         })
         .unwrap();
     toggle_folder(window, &repos[0], cx);
@@ -278,8 +279,8 @@ fn parent_folder_discovers_expanded_repositories_and_keeps_failures_separate(
     window
         .update(cx, |workspace, window, _| {
             let snapshot = workspace.git.snapshot.as_ref().unwrap();
-            assert_eq!(snapshot.roots().count(), 1);
-            assert!(snapshot.status(&paths[0]).is_none());
+            assert_eq!(snapshot.roots().count(), 2);
+            assert!(snapshot.status(&paths[0]).is_some());
             window.remove_window();
         })
         .unwrap();
@@ -290,4 +291,138 @@ fn slow_scans_reduce_refresh_frequency() {
     assert_eq!(cooldown(Duration::from_millis(20)), Duration::from_secs(1));
     assert_eq!(cooldown(Duration::from_secs(2)), Duration::from_secs(8));
     assert_eq!(cooldown(Duration::from_secs(90)), Duration::from_secs(60));
+}
+
+#[gpui::test]
+fn collapse_reopen_keeps_colors_without_scanning_and_disk_events_are_targeted(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let repos = [root.join("alpha"), root.join("beta")];
+    for repo in &repos {
+        std::fs::create_dir(repo).unwrap();
+        git(repo, &["init", "-qb", "main"]);
+        std::fs::create_dir(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/file.txt"), "initial\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "initial"]);
+        std::fs::write(repo.join("src/file.txt"), "modified\n").unwrap();
+    }
+    cx.update(crate::init);
+    let window =
+        cx.add_window(|window, cx| Workspace::new(Some(root.clone()), Arc::default(), window, cx));
+    cx.run_until_parked();
+    let (counts, cached) = window
+        .update(cx, |workspace, _, cx| {
+            let tree = workspace.tree.as_ref().unwrap().read(cx);
+            for repo in &repos {
+                assert_eq!(
+                    tree.git_folder_status(repo).unwrap().decoration(),
+                    Some(Decoration::Modified)
+                );
+                assert_eq!(
+                    tree.git_folder_status(&repo.join("src"))
+                        .unwrap()
+                        .decoration(),
+                    Some(Decoration::Modified)
+                );
+            }
+            (
+                workspace.git.scan_counts.clone(),
+                workspace
+                    .git
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .repository(&repos[0])
+                    .unwrap()
+                    .clone(),
+            )
+        })
+        .unwrap();
+    assert_eq!(counts[&repos[0]], 1);
+    assert_eq!(counts[&repos[1]], 1);
+    for _ in 0..4 {
+        window
+            .update(cx, |workspace, window, cx| {
+                let tree = workspace.tree.as_ref().unwrap();
+                tree.focus_handle(cx).focus(window);
+                tree.update(cx, |tree, cx| tree.select(Some(repos[0].clone()), cx));
+            })
+            .unwrap();
+        cx.simulate_keystrokes(window.into(), "enter");
+        // Assert before any timer: reopening has colors immediately.
+        window
+            .update(cx, |workspace, _, cx| {
+                let tree = workspace.tree.as_ref().unwrap().read(cx);
+                assert_eq!(
+                    tree.git_status(&repos[0].join("src/file.txt"))
+                        .unwrap()
+                        .decoration(),
+                    Some(Decoration::Modified)
+                );
+                assert_eq!(
+                    tree.git_folder_status(&repos[0]).unwrap().decoration(),
+                    Some(Decoration::Modified)
+                );
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+    }
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.scan_counts, counts);
+            assert!(Arc::ptr_eq(
+                &cached,
+                workspace
+                    .git
+                    .snapshot
+                    .as_ref()
+                    .unwrap()
+                    .repository(&repos[0])
+                    .unwrap()
+            ));
+            workspace.git.pending.paths.insert(root.join("unrelated"));
+            workspace.git.wake();
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.scan_counts, counts)
+        })
+        .unwrap();
+
+    git(&repos[0], &["add", "."]);
+    git(&repos[0], &["commit", "-qm", "saved"]);
+    window
+        .update(cx, |workspace, _, _| {
+            workspace
+                .git
+                .pending
+                .paths
+                .insert(repos[0].join(".git/index"));
+            workspace.git.wake();
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, window, cx| {
+            assert_eq!(workspace.git.scan_counts[&repos[1]], counts[&repos[1]]);
+            assert!(workspace.git.scan_counts[&repos[0]] > counts[&repos[0]]);
+            let tree = workspace.tree.as_ref().unwrap().read(cx);
+            assert!(tree.git_folder_status(&repos[0]).is_none());
+            assert!(tree.git_folder_status(&repos[1]).is_some());
+            window.remove_window();
+        })
+        .unwrap();
 }

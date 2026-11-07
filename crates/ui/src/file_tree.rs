@@ -139,6 +139,31 @@ impl FileTreeView {
     pub(crate) fn git_status(&self, path: &std::path::Path) -> Option<plastext_git::FileStatus> {
         self.git_status.as_ref()?.status(path)
     }
+    pub(crate) fn git_folder_status(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<plastext_git::FileStatus> {
+        self.git_status.as_ref()?.folder_status(path)
+    }
+    pub(crate) fn git_revision(&self) -> u64 {
+        self.tree.revision()
+    }
+    pub(crate) fn git_discovery_directories(&self) -> Vec<PathBuf> {
+        // Probe listed child folders too, without recursively enumerating them.
+        self.tree
+            .visible_directories()
+            .iter()
+            .cloned()
+            .chain(
+                self.tree
+                    .rows()
+                    .iter()
+                    .filter(|row| row.entry.kind == EntryKind::Dir)
+                    .map(|row| row.entry.path.clone()),
+            )
+            .take(4000)
+            .collect()
+    }
     pub(crate) fn watched_directories(&self) -> &[PathBuf] {
         self.tree.visible_directories()
     }
@@ -515,7 +540,11 @@ impl Render for FileTreeView {
                                         })
                                         .text_color(
                                             crate::workspace::git::color(
-                                                this.git_status(&entry.path),
+                                                if entry.kind == EntryKind::Dir {
+                                                    this.git_folder_status(&entry.path)
+                                                } else {
+                                                    this.git_status(&entry.path)
+                                                },
                                                 theme,
                                             )
                                             .unwrap_or(if entry.ignored {

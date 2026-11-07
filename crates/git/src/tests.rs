@@ -226,7 +226,7 @@ fn discovery_is_lazy_deduplicated_and_nested_status_masks_the_parent() {
     );
     let roots = discover(&[root.clone(), nested.clone(), nested.join("src")], &cancel).unwrap();
     assert_eq!(roots, [root.clone(), nested.clone()]);
-    let mut set = RepositorySet::for_roots(&roots, &RepositorySet::default());
+    let mut set = RepositorySet::for_roots(&roots, &RepositorySet::default()).unwrap();
     set.update(&root, Some(scan(&root)), Limits::default())
         .unwrap();
     assert!(
@@ -273,6 +273,111 @@ fn discovery_is_lazy_deduplicated_and_nested_status_masks_the_parent() {
 }
 
 #[test]
+fn discovery_cache_reuses_positive_and_negative_results_until_invalidated() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let paths = std::slice::from_ref(&root);
+    let now = Instant::now();
+    let mut cache = DiscoveryCache::default();
+    let cancel = AtomicBool::new(false);
+    assert!(cache.needs_refresh(paths, now));
+    cache.refresh(paths, now, &cancel);
+    assert!(!cache.needs_refresh(paths, now + std::time::Duration::from_secs(59)));
+    assert!(cache.cached(paths).unwrap().is_empty());
+    git(&root, &["init", "-qb", "main"]);
+    assert!(
+        cache.cached(paths).unwrap().is_empty(),
+        "cached lookup does not access disk"
+    );
+    cache.invalidate(&root);
+    cache.refresh(paths, now, &cancel);
+    assert_eq!(cache.cached(paths).unwrap(), paths);
+    assert!(!cache.needs_refresh(paths, now + std::time::Duration::from_secs(59)));
+    assert!(cache.needs_refresh(paths, now + std::time::Duration::from_secs(60)));
+}
+
+#[test]
+fn folder_summaries_combine_descendants_and_clear_without_visiting_the_filesystem() {
+    let root = PathBuf::from("projects/repo");
+    let nested = root.join("nested");
+    let staged = FileStatus {
+        staged: true,
+        ..Default::default()
+    };
+    let modified = FileStatus {
+        modified: true,
+        ..Default::default()
+    };
+    let conflict = FileStatus {
+        conflict: true,
+        ..Default::default()
+    };
+    let snapshot = |files: &[(&str, FileStatus)]| Snapshot {
+        root: root.clone(),
+        watch_directories: Vec::new(),
+        files: files
+            .iter()
+            .map(|(path, status)| (PathBuf::from(path), *status))
+            .collect(),
+    };
+    let mut set =
+        RepositorySet::for_roots(&[root.clone(), nested.clone()], &RepositorySet::default())
+            .unwrap();
+    set.update(
+        &root,
+        Some(snapshot(&[
+            ("src/staged", staged),
+            ("src/deleted", modified),
+            ("nested/hidden", conflict),
+        ])),
+        Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        set.folder_status(&root.join("src")).unwrap().decoration(),
+        Some(Decoration::Mixed)
+    );
+    assert_eq!(
+        set.folder_status(&root).unwrap().decoration(),
+        Some(Decoration::Mixed)
+    );
+    assert_eq!(
+        set.folder_status(Path::new("projects"))
+            .unwrap()
+            .decoration(),
+        Some(Decoration::Mixed)
+    );
+    assert!(
+        set.folder_status(&nested).is_none(),
+        "nested boundary masks parent changes"
+    );
+    let inner = Snapshot {
+        root: nested.clone(),
+        watch_directories: Vec::new(),
+        files: HashMap::from([(PathBuf::from("conflict"), conflict)]),
+    };
+    set.update(&nested, Some(inner), Limits::default()).unwrap();
+    assert_eq!(
+        set.folder_status(&root).unwrap().decoration(),
+        Some(Decoration::Conflict)
+    );
+    set.update(
+        &nested,
+        Some(Snapshot {
+            root: nested.clone(),
+            watch_directories: Vec::new(),
+            files: HashMap::new(),
+        }),
+        Limits::default(),
+    )
+    .unwrap();
+    set.update(&root, Some(snapshot(&[])), Limits::default())
+        .unwrap();
+    assert!(set.folder_status(&root).is_none());
+    assert!(set.folder_status(Path::new("projects")).is_none());
+}
+
+#[test]
 #[ignore = "creates a disposable 100k-file repository for performance measurement"]
 fn warm_status_100k_files() {
     let dir = repo();
@@ -295,4 +400,49 @@ fn warm_status_100k_files() {
         times.push(start.elapsed().as_secs_f64() * 1000.);
     }
     println!("100k tracked files, 1 modified, warm status ms: {times:?}");
+}
+
+#[test]
+#[ignore = "measures folder-summary construction for 100k changed files"]
+fn folder_summary_100k_changes() {
+    let root = PathBuf::from("projects/repository");
+    let modified = FileStatus {
+        modified: true,
+        ..Default::default()
+    };
+    let mut files = HashMap::new();
+    for module in 0..1000 {
+        for file in 0..100 {
+            files.insert(
+                PathBuf::from(format!("crates/module{module}/src/file{file}.rs")),
+                modified,
+            );
+        }
+    }
+    let mut set =
+        RepositorySet::for_roots(std::slice::from_ref(&root), &RepositorySet::default()).unwrap();
+    let mut times = Vec::new();
+    for pass in 0..5 {
+        let mut snapshot = Snapshot {
+            root: root.clone(),
+            watch_directories: Vec::new(),
+            files: files.clone(),
+        };
+        snapshot
+            .files
+            .get_mut(Path::new("crates/module0/src/file0.rs"))
+            .unwrap()
+            .staged = pass % 2 == 0;
+        let start = Instant::now();
+        assert!(
+            set.update(&root, Some(snapshot), Limits::default())
+                .unwrap()
+        );
+        times.push(start.elapsed().as_secs_f64() * 1000.);
+        assert!(
+            set.folder_status(&root.join("crates/module999/src"))
+                .is_some()
+        );
+    }
+    println!("100k changed files, 1000 modules, folder aggregation ms: {times:?}");
 }

@@ -135,6 +135,7 @@ pub struct FileTree {
     expanded: HashSet<PathBuf>,
     rows: Vec<TreeRow>,
     visible_directories: Vec<PathBuf>,
+    revision: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +153,7 @@ impl FileTree {
             children: HashMap::new(),
             expanded: HashSet::new(),
             rows: Vec::new(),
+            revision: 0,
         }
     }
 
@@ -161,6 +163,9 @@ impl FileTree {
 
     pub fn rows(&self) -> &[TreeRow] {
         &self.rows
+    }
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
     /// Only directories whose children are currently displayed, including root.
     pub fn visible_directories(&self) -> &[PathBuf] {
@@ -227,6 +232,7 @@ impl FileTree {
     }
 
     fn rebuild(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
         let mut rows = Vec::with_capacity(self.rows.len());
         let mut directories = vec![self.root.clone()];
         self.push_rows(&self.root, 0, &mut rows, &mut directories);

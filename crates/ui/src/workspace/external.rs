@@ -213,9 +213,7 @@ impl Workspace {
         }
     }
     fn observe_disk(&mut self, mut batch: Batch, polled: bool, cx: &mut Context<Self>) {
-        if !polled && (batch.rescan || !batch.events.is_empty()) {
-            self.git.request();
-        }
+        self.git.observe(&batch);
         if let Some(tree) = &self.tree {
             tree.update(cx, |tree, cx| tree.refresh_external(&batch, polled, cx));
         }
