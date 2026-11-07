@@ -47,7 +47,8 @@ actions!(
         ToggleFold,
         FoldAll,
         UnfoldAll,
-        CloseFind
+        CloseFind,
+        ReplaceCurrent
     ]
 );
 
@@ -62,6 +63,7 @@ use editing::Editing;
 
 const KEY_CONTEXT: &str = "TextView";
 const FIND_KEY_CONTEXT: &str = "FindBar";
+const REPLACE_KEY_CONTEXT: &str = "ReplaceField";
 /// Searches stop after this many matches.
 const MAX_MATCHES: usize = 1_000_000;
 /// Bytes loaded on each side of what's visible, so scrolling rarely waits on the disk.
@@ -121,6 +123,7 @@ pub(crate) fn init(cx: &mut App) {
         KeyBinding::new("cmd-shift-g", FindPrevious, context),
         KeyBinding::new("escape", CloseFind, context),
         KeyBinding::new("cmd-f", Find, context),
+        KeyBinding::new("enter", ReplaceCurrent, Some(REPLACE_KEY_CONTEXT)),
     ]);
 }
 
@@ -1207,7 +1210,15 @@ impl TextView {
                         .items_center()
                         .gap_2()
                         .bg(theme.surface)
-                        .child(div().flex_1().child(replacement.clone()))
+                        .child(
+                            div()
+                                .key_context(REPLACE_KEY_CONTEXT)
+                                .on_action(cx.listener(|this, _: &ReplaceCurrent, _, cx| {
+                                    this.replace_matches(false, cx)
+                                }))
+                                .flex_1()
+                                .child(replacement.clone()),
+                        )
                         .child(button("replace-one", "Replace").on_click(
                             cx.listener(|this, _, _, cx| this.replace_matches(false, cx)),
                         ))

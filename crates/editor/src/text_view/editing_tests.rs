@@ -932,6 +932,67 @@ fn replace_all_uses_captures_scope_and_a_single_undo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn enter_replaces_only_when_the_replacement_field_is_focused(cx: &mut TestAppContext) {
+    let (_dir, view, _other) = setup(cx, b"cat cat cat", false);
+    cx.update(crate::init);
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            view.update(cx, |view, cx| {
+                view.open_replace(&crate::actions::Replace, window, cx)
+            });
+            view.clone()
+        })
+        .unwrap()
+    });
+    cx.simulate_keystrokes(window.into(), "c a t");
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 0..3));
+    cx.simulate_keystrokes(window.into(), "enter");
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 4..7));
+    cx.simulate_keystrokes(window.into(), "shift-enter");
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 0..3));
+    assert_eq!(content(cx, &view), "cat cat cat");
+
+    let replacement = cx.update(|cx| {
+        view.read(cx)
+            .find
+            .as_ref()
+            .unwrap()
+            .replacement
+            .clone()
+            .unwrap()
+    });
+    window
+        .update(cx, |_, window, cx| {
+            replacement.focus_handle(cx).focus(window);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "d o g enter");
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), "dog cat cat");
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 4..7));
+    window
+        .update(cx, |_, window, cx| {
+            assert!(replacement.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "enter");
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), "dog dog cat");
+
+    // An empty replacement deletes the match, and each replacement is undoable.
+    cx.simulate_keystrokes(window.into(), "cmd-a backspace enter");
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), "dog dog ");
+    send(cx, &view, Input::Undo);
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), "dog dog cat");
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+}
+
+#[gpui::test]
 fn refreshing_find_after_edits_preserves_the_editing_caret(cx: &mut TestAppContext) {
     let (_dir, view, _other) = setup(cx, b"needle\nkeep\nremove me\nneedle\n", false);
     let window = cx.update(|cx| {
