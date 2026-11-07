@@ -179,8 +179,8 @@ struct Change {
     edits: Vec<EditDelta>,
 }
 
-#[derive(Clone)]
-pub(super) struct EditDelta {
+#[derive(Clone, Debug)]
+pub struct EditDelta {
     pub range: Range<u64>,
     pub inserted: u64,
 }

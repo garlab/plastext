@@ -68,8 +68,10 @@ scroll synchronization and double-clicking rendered blocks to edit remain to do.
 Entering edit mode preserves syntax highlighting. Edits refresh it on a worker
 after a 40 ms pause, reusing unchanged syntax-tree nodes; newer edits cancel older
 work. Parsing retains the configured file-size limit. While a refresh is pending,
-changed rows use lexical highlighting; unchanged rows at the same offsets retain
-their parsed colors. Syntax-tree folding, outline and sticky definitions are not
+unchanged text keeps its parsed colors through insertions, deletions and undo,
+including text shifted to new offsets. Newly inserted text uses lexical colors
+until the parse completes. The coordinate cache is bounded and shared-session
+edits update each pane independently. Syntax-tree folding, outline and sticky definitions are not
 yet connected to edited snapshots.
 
 Saves run on a worker, preserve the existing encoding and line endings, and keep

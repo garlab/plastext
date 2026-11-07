@@ -5,6 +5,101 @@ const EDIT_PARSE_DELAY: Duration = Duration::from_millis(40);
 const COPY_CHUNK: u64 = 256 * 1024;
 
 impl TextView {
+    pub(super) fn map_syntax_edits(&mut self, edits: Option<&[plastext_buffer::EditDelta]>) {
+        let Some(text) = &self.syntax_text else {
+            return;
+        };
+        let map = self
+            .syntax_map
+            .get_or_insert_with(|| vec![(0..text.len() as u64, 0)]);
+        let Some(edits) = edits else {
+            map.clear();
+            return;
+        };
+        for edit in edits {
+            let mut next = Vec::new();
+            for (range, original) in map.drain(..) {
+                let before = range.end.min(edit.range.start);
+                if range.start < before {
+                    next.push((range.start..before, original));
+                }
+                let after = range.start.max(edit.range.end);
+                if after < range.end {
+                    let shifted = edit.range.start + edit.inserted + (after - edit.range.end);
+                    next.push((
+                        shifted..shifted + range.end - after,
+                        original + after - range.start,
+                    ));
+                }
+            }
+            *map = next;
+            if map.len() > 4096 {
+                map.clear();
+                break;
+            }
+        }
+    }
+
+    /// Keep colors on surviving bytes, including the unchanged suffix of an
+    /// edited line. Only newly inserted text uses lexical colors until parsing.
+    pub(super) fn mapped_highlights(
+        &self,
+        visible: Range<u64>,
+        line: &[u8],
+    ) -> Option<Vec<(Range<u64>, Highlight)>> {
+        let map = self.syntax_map.as_ref()?;
+        let tree = self.syntax.as_ref()?;
+        let text = self.syntax_text.as_ref()?;
+        let mut spans = Vec::new();
+        let mut gaps = vec![visible.clone()];
+        for (range, original) in map
+            .iter()
+            .skip_while(|(range, _)| range.end <= visible.start)
+            .take_while(|(range, _)| range.start < visible.end)
+        {
+            let a = range.start.max(visible.start);
+            let b = range.end.min(visible.end);
+            let old_a = original + a - range.start;
+            let old_b = old_a + b - a;
+            if old_b > tree.parsed_len() as u64 {
+                continue;
+            }
+            spans.extend(
+                tree.highlights(text, old_a as usize..old_b as usize)
+                    .into_iter()
+                    .filter_map(|(r, kind)| {
+                        let start = (r.start as u64).max(old_a);
+                        let end = (r.end as u64).min(old_b);
+                        (start < end).then_some((a + start - old_a..a + end - old_a, kind))
+                    }),
+            );
+            gaps = gaps
+                .into_iter()
+                .flat_map(|gap| {
+                    let mut left = Vec::new();
+                    if gap.start < a {
+                        left.push(gap.start..gap.end.min(a));
+                    }
+                    if gap.end > b {
+                        left.push(gap.start.max(b)..gap.end);
+                    }
+                    left
+                })
+                .collect();
+        }
+        for (r, kind) in self.language?.lexical.highlights(line) {
+            let r = visible.start + r.start as u64..visible.start + r.end as u64;
+            for gap in &gaps {
+                let start = r.start.max(gap.start);
+                let end = r.end.min(gap.end);
+                if start < end {
+                    spans.push((start..end, kind));
+                }
+            }
+        }
+        Some(spans)
+    }
+
     pub(super) fn refresh_edit_syntax(&mut self, immediate: bool, cx: &mut Context<Self>) {
         self.cancel_parse.store(true, Ordering::Relaxed);
         if let Some(task) = self._edit_parse.take() {
@@ -87,6 +182,7 @@ impl TextView {
                 }
                 if let Some((tree, text)) = ready.take() {
                     let old = (this.syntax.replace(tree), this.syntax_text.replace(text));
+                    this.syntax_map = None;
                     cx.background_executor()
                         .spawn(async move {
                             drop(old);

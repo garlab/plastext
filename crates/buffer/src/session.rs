@@ -1,6 +1,9 @@
 //! One editing owner per document, with pane-local byte anchors. The UI can
 //! own this model in one entity; background tasks receive immutable snapshots.
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    ops::Range,
+};
 
 use crate::{
     Bias, Direction, EditBuffer, GraphemeSearch, TextError, TextFormat, TextSnapshot, UndoGroup,
@@ -148,6 +151,7 @@ pub struct DocumentSession {
     panes: BTreeMap<PaneId, Pane>,
     next_pane: u64,
     last_actor: Option<PaneId>,
+    changes: VecDeque<(u64, Vec<EditDelta>)>,
 }
 
 impl DocumentSession {
@@ -158,6 +162,7 @@ impl DocumentSession {
             panes: BTreeMap::new(),
             next_pane: 0,
             last_actor: None,
+            changes: VecDeque::new(),
         }
     }
 
@@ -181,6 +186,29 @@ impl DocumentSession {
     pub fn is_current(&self, snapshot: &DocumentSnapshot) -> bool {
         snapshot.generation == self.generation
             && snapshot.text.same_version(&self.buffer.snapshot())
+    }
+
+    /// Bounded coordinate changes for view caches. None means the caller must
+    /// discard its cache (reload, or more than 256 unobserved changes).
+    pub fn edits_since(&self, generation: u64) -> Option<Vec<EditDelta>> {
+        if generation == self.generation {
+            return Some(Vec::new());
+        }
+        if generation > self.generation
+            || self
+                .changes
+                .front()
+                .is_none_or(|(first, _)| generation + 1 < *first)
+        {
+            return None;
+        }
+        Some(
+            self.changes
+                .iter()
+                .filter(|(g, _)| *g > generation)
+                .flat_map(|(_, edits)| edits.iter().cloned())
+                .collect(),
+        )
     }
 
     pub fn attach_pane(&mut self, selection: Selection) -> Result<PaneId, SessionError> {
@@ -267,7 +295,7 @@ impl DocumentSession {
         rebase_panes(&mut self.panes, &edit);
         self.update_selection(base.id, Selection::caret(edit.range.start + edit.inserted));
         self.last_actor = Some(base.id);
-        self.changed();
+        self.changed(vec![edit]);
         Ok(())
     }
 
@@ -289,7 +317,7 @@ impl DocumentSession {
         }
         let changed = self.buffer.set_format(format);
         if changed {
-            self.changed();
+            self.changed(Vec::new());
             self.last_actor = None;
         }
         Ok(changed)
@@ -298,13 +326,16 @@ impl DocumentSession {
     pub fn undo(&mut self, base: &PaneSnapshot) -> Result<bool, SessionError> {
         self.validate(base)?;
         let panes = &mut self.panes;
+        let mut changes = Vec::new();
         let changed = self.buffer.undo_with(|edits| {
             for edit in edits.iter().rev() {
-                rebase_panes(panes, &edit.inverse());
+                let inverse = edit.inverse();
+                rebase_panes(panes, &inverse);
+                changes.push(inverse);
             }
         });
         if changed {
-            self.changed();
+            self.changed(changes);
         }
         self.last_actor = None;
         Ok(changed)
@@ -313,13 +344,15 @@ impl DocumentSession {
     pub fn redo(&mut self, base: &PaneSnapshot) -> Result<bool, SessionError> {
         self.validate(base)?;
         let panes = &mut self.panes;
+        let mut changes = Vec::new();
         let changed = self.buffer.redo_with(|edits| {
             for edit in edits {
                 rebase_panes(panes, edit);
+                changes.push(edit.clone());
             }
         });
         if changed {
-            self.changed();
+            self.changed(changes);
         }
         self.last_actor = None;
         Ok(changed)
@@ -368,7 +401,8 @@ impl DocumentSession {
             }
         }
         self.last_actor = None;
-        self.changed();
+        self.changed(Vec::new());
+        self.changes.clear();
         Ok(retired)
     }
 
@@ -396,11 +430,22 @@ impl DocumentSession {
             .expect("pane generation exhausted");
     }
 
-    fn changed(&mut self) {
+    fn changed(&mut self, edits: Vec<EditDelta>) {
         self.generation = self
             .generation
             .checked_add(1)
             .expect("document generation exhausted");
+        self.changes.push_back((self.generation, edits));
+        while self.changes.len() > 256
+            || self
+                .changes
+                .iter()
+                .map(|(_, edits)| edits.len())
+                .sum::<usize>()
+                > 4096
+        {
+            self.changes.pop_front();
+        }
     }
 }
 

@@ -762,3 +762,52 @@ fn requesting_source_during_file_operation_enters_editing_when_it_finishes(
     send(cx, &view, insert("changed "));
     assert_eq!(content(cx, &view), "changed original\n");
 }
+
+#[gpui::test]
+fn deleting_and_undoing_keep_shifted_toml_colors_before_reparse(cx: &mut TestAppContext) {
+    let text = "[workspace]\nmembers = [\"crates/app\"]\nresolver = \"2\"\n";
+    let (_dir, view, other) = setup(cx, text.as_bytes(), false);
+    for target in [&view, &other] {
+        cx.update(|cx| {
+            target.update(cx, |view, cx| {
+                view.language = plastext_syntax::detect(std::path::Path::new("Cargo.toml"), b"");
+                view.style.max_parse_size = 1024;
+                view.refresh_edit_syntax(true, cx);
+            })
+        });
+    }
+    cx.run_until_parked();
+    let before = highlighted_rows(cx, &view);
+    let at = text.find("crates/app").unwrap() as u64 + 3;
+    send(cx, &view, Input::Selection(BufferSelection::caret(at)));
+    send(
+        cx,
+        &view,
+        Input::Cursor(CursorCommand::Delete {
+            direction: Direction::Backward,
+        }),
+    );
+    // Do not advance the 40 ms parser timer: inspect the very next paint.
+    for target in [&view, &other] {
+        let spans = highlighted_rows(cx, target);
+        for (range, kind) in before.iter().filter(|(r, _)| r.start >= at) {
+            assert!(
+                spans.contains(&(range.start - 1..range.end - 1, *kind)),
+                "lost {range:?} {kind:?}"
+            );
+        }
+    }
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    send(cx, &view, Input::Undo);
+    let spans = highlighted_rows(cx, &view);
+    for (range, kind) in before.iter().filter(|(r, _)| r.start >= at) {
+        assert!(
+            spans.contains(&(range.clone(), *kind)),
+            "undo lost {range:?} {kind:?}"
+        );
+    }
+    cx.executor().advance_clock(Duration::from_millis(60));
+    cx.run_until_parked();
+    assert_eq!(highlighted_rows(cx, &view), before);
+}

@@ -351,7 +351,10 @@ impl TextView {
                 }
                 session.pane_snapshot(editing.pane.unwrap())
             })();
-            Some((snapshot, pane, document.active))
+            let edits = editing
+                .generation
+                .map(|generation| session.edits_since(generation));
+            Some((snapshot, pane, document.active, edits))
         });
         if state.is_none() {
             editing.active = editing.document.read(cx).preparing;
@@ -360,10 +363,12 @@ impl TextView {
         editing.dirty = editing.document.read(cx).is_dirty();
         let mut missing = None;
         let mut syntax_refresh = None;
-        if let Some((snapshot, pane, active)) = state {
+        let mut syntax_changes = None;
+        if let Some((snapshot, pane, active, edits)) = state {
             let changed = editing.generation != Some(snapshot.generation());
             editing.active = active;
             if changed {
+                syntax_changes = edits;
                 syntax_refresh = Some(editing.generation.is_none());
                 editing.generation = Some(snapshot.generation());
                 // A different pane's edit invalidates composition coordinates.
@@ -434,6 +439,9 @@ impl TextView {
             self.load(range, cx);
         }
         if let Some(immediate) = syntax_refresh {
+            if let Some(edits) = syntax_changes {
+                self.map_syntax_edits(edits.as_deref());
+            }
             self.refresh_edit_syntax(immediate, cx);
         }
         cx.notify();

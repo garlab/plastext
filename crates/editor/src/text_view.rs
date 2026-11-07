@@ -191,6 +191,7 @@ pub struct TextView {
     syntax: Option<Arc<SyntaxTree>>,
     /// The exact input paired with the tree; shared with the reader until edits.
     syntax_text: Option<Bytes>,
+    syntax_map: Option<Vec<(Range<u64>, u64)>>,
     _edit_parse: Option<Task<()>>,
     syntax_folds: Option<Arc<Vec<Fold>>>,
     /// The file's definitions, found after parsing.
@@ -447,6 +448,7 @@ impl TextView {
             language,
             syntax: None,
             syntax_text,
+            syntax_map: None,
             _edit_parse: None,
             syntax_folds: None,
             symbols: None,
@@ -605,6 +607,7 @@ impl TextView {
         let wrap_columns = self.wrapping.columns();
         let syntax = self.syntax.clone();
         let syntax_text = self.syntax_text.clone();
+        let syntax_map = self.syntax_map.clone();
         let syntax_folds = self.syntax_folds.clone();
         let symbols = self.symbols.clone();
         let language = self.language;
@@ -634,6 +637,7 @@ impl TextView {
             view.language = language;
             view.syntax = syntax;
             view.syntax_text = syntax_text;
+            view.syntax_map = syntax_map;
             view.syntax_folds = syntax_folds;
             view.symbols = symbols;
             view.top = top;
@@ -1741,6 +1745,10 @@ impl TextView {
                     _ => ranges.push(*start..end),
                 }
             } else {
+                if let Some(mapped) = self.mapped_highlights(*start..end, line) {
+                    spans.extend(mapped);
+                    continue;
+                }
                 // Scrolling beyond the initial parse uses the lexical fallback
                 // until the full tree is ready, never an unrelated partial tree.
                 spans.extend(
