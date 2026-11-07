@@ -108,8 +108,12 @@ the watch. Registration and teardown run off the UI thread. Events are coalesced
 with a 300 ms document debounce, cancelled reloads retire their results on a
 worker, and only one reload copy per document runs at a time. A two-second
 metadata fallback catches lost events and unavailable watchers. Watches cover
-open text/code and Markdown documents and resolved symlink targets, without
-recursively watching the repository. Split panes share the document and reload.
+open text/code and Markdown documents and resolved symlink targets, plus the
+navigation tree's root and expanded folders. Renames, additions and removals
+refresh affected directory listings in the background, even with no tabs open.
+Unchanged directory polls only check metadata; collapsed folders refresh when
+reopened. This avoids recursively watching or scanning the repository. Split
+panes share the document and reload.
 
 For versions up to 8 MiB, bounded patience line diffs map unchanged content and
 trim shared bytes within changed regions. Diff work is capped at 100,000 lines

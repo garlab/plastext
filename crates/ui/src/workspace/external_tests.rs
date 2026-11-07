@@ -9,6 +9,7 @@ fn check(window: WindowHandle<Workspace>, cx: &mut TestAppContext) {
                     rescan: true,
                     ..Batch::default()
                 },
+                false,
                 cx,
             )
         })
@@ -16,6 +17,69 @@ fn check(window: WindowHandle<Workspace>, cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(400));
     cx.run_until_parked();
+}
+
+#[gpui::test]
+fn navigation_updates_with_no_open_tabs_and_opens_renamed_and_new_files(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(root.join("a.txt"), "renamed").unwrap();
+    std::fs::write(root.join("z.txt"), "removed").unwrap();
+    cx.update(crate::init);
+    let window = cx
+        .add_window(|window, cx| Workspace::new(Some(root.to_owned()), Arc::default(), window, cx));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, window, cx| {
+            assert!(workspace.disk.paths.is_empty());
+            assert_eq!(workspace.disk.directories, [root.to_owned()]);
+            workspace
+                .tree
+                .as_ref()
+                .unwrap()
+                .focus_handle(cx)
+                .focus(window);
+        })
+        .unwrap();
+    std::fs::rename(root.join("a.txt"), root.join("b.txt")).unwrap();
+    std::fs::remove_file(root.join("z.txt")).unwrap();
+    std::fs::write(root.join("c.txt"), "created").unwrap();
+    check(window, cx);
+    window
+        .update(cx, |workspace, window, cx| {
+            assert!(
+                workspace
+                    .tree
+                    .as_ref()
+                    .unwrap()
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+            assert!(workspace.panes[&workspace.active_pane].tabs.is_empty());
+        })
+        .unwrap();
+    for (index, name) in ["b.txt", "c.txt"].into_iter().enumerate() {
+        let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+        visual.simulate_click(
+            gpui::point(px(80.), px(TAB_BAR_HEIGHT + 4. + 24. * index as f32 + 12.)),
+            Default::default(),
+        );
+        visual.run_until_parked();
+        window
+            .update(cx, |workspace, _, _| {
+                assert_eq!(
+                    workspace.panes[&workspace.active_pane]
+                        .active_tab()
+                        .unwrap()
+                        .path,
+                    root.join(name)
+                );
+            })
+            .unwrap();
+    }
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
 }
 
 #[gpui::test]

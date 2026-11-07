@@ -134,6 +134,7 @@ pub struct FileTree {
     children: HashMap<PathBuf, Vec<Arc<DirEntry>>>,
     expanded: HashSet<PathBuf>,
     rows: Vec<TreeRow>,
+    visible_directories: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +147,7 @@ pub struct TreeRow {
 impl FileTree {
     pub fn new(root: PathBuf) -> Self {
         Self {
+            visible_directories: vec![root.clone()],
             root,
             children: HashMap::new(),
             expanded: HashSet::new(),
@@ -159,6 +161,10 @@ impl FileTree {
 
     pub fn rows(&self) -> &[TreeRow] {
         &self.rows
+    }
+    /// Only directories whose children are currently displayed, including root.
+    pub fn visible_directories(&self) -> &[PathBuf] {
+        &self.visible_directories
     }
 
     pub fn is_loaded(&self, dir: &Path) -> bool {
@@ -175,10 +181,35 @@ impl FileTree {
     }
 
     /// Records the listing of `dir`, as returned by [`read_dir`].
-    pub fn set_children(&mut self, dir: &Path, entries: Vec<DirEntry>) {
+    /// Returns removed/retyped paths so asynchronous consumers can retire
+    /// listings and selection state below them.
+    pub fn set_children(&mut self, dir: &Path, entries: Vec<DirEntry>) -> Vec<PathBuf> {
+        let current: HashMap<_, _> = entries
+            .iter()
+            .map(|entry| (&entry.path, entry.kind))
+            .collect();
+        let removed: Vec<_> = self
+            .children
+            .get(dir)
+            .into_iter()
+            .flatten()
+            .filter(|entry| {
+                current
+                    .get(&entry.path)
+                    .is_none_or(|kind| *kind != entry.kind)
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
+        if !removed.is_empty() {
+            self.children
+                .retain(|path, _| !removed.iter().any(|removed| path.starts_with(removed)));
+            self.expanded
+                .retain(|path| !removed.iter().any(|removed| path.starts_with(removed)));
+        }
         let entries = entries.into_iter().map(Arc::new).collect();
         self.children.insert(dir.to_owned(), entries);
         self.rebuild();
+        removed
     }
 
     /// Expands or collapses `dir`. Returns whether it must be listed first, in
@@ -193,11 +224,19 @@ impl FileTree {
 
     fn rebuild(&mut self) {
         let mut rows = Vec::with_capacity(self.rows.len());
-        self.push_rows(&self.root, 0, &mut rows);
+        let mut directories = vec![self.root.clone()];
+        self.push_rows(&self.root, 0, &mut rows, &mut directories);
         self.rows = rows;
+        self.visible_directories = directories;
     }
 
-    fn push_rows(&self, dir: &Path, depth: usize, rows: &mut Vec<TreeRow>) {
+    fn push_rows(
+        &self,
+        dir: &Path,
+        depth: usize,
+        rows: &mut Vec<TreeRow>,
+        directories: &mut Vec<PathBuf>,
+    ) {
         let Some(children) = self.children.get(dir) else {
             return;
         };
@@ -209,7 +248,8 @@ impl FileTree {
                 expanded,
             });
             if expanded {
-                self.push_rows(&child.path, depth + 1, rows);
+                directories.push(child.path.clone());
+                self.push_rows(&child.path, depth + 1, rows, directories);
             }
         }
     }
@@ -320,5 +360,60 @@ mod tests {
         assert_eq!(tree.rows().len(), 5);
         assert!(!tree.toggle(&z), "z's listing is kept while collapsed");
         assert_eq!(tree.rows().len(), 7);
+    }
+
+    #[test]
+    fn refreshing_removed_or_retyped_folders_discards_cached_descendants() {
+        let root = PathBuf::from("project");
+        let dir = root.join("dir");
+        let other = root.join("other");
+        let entry = |path: &Path, kind| DirEntry {
+            path: path.to_owned(),
+            name: path.file_name().unwrap().to_string_lossy().into_owned(),
+            kind,
+            ignored: false,
+        };
+        for replacement in [None, Some(EntryKind::File)] {
+            let mut tree = FileTree::new(root.clone());
+            tree.set_children(
+                &root,
+                vec![entry(&dir, EntryKind::Dir), entry(&other, EntryKind::Dir)],
+            );
+            for path in [&dir, &other] {
+                tree.expand(path);
+                tree.set_children(path, vec![entry(&path.join("child"), EntryKind::File)]);
+            }
+            assert_eq!(
+                tree.visible_directories(),
+                [root.clone(), dir.clone(), other.clone()]
+            );
+            let mut entries = vec![entry(&other, EntryKind::Dir)];
+            if let Some(kind) = replacement {
+                entries.push(entry(&dir, kind));
+            }
+            assert_eq!(
+                tree.set_children(&root, entries),
+                std::slice::from_ref(&dir)
+            );
+            assert!(!tree.is_loaded(&dir));
+            assert!(tree.is_loaded(&other));
+            assert_eq!(tree.visible_directories(), [root.clone(), other.clone()]);
+            tree.set_children(
+                &root,
+                vec![entry(&dir, EntryKind::Dir), entry(&other, EntryKind::Dir)],
+            );
+            assert!(tree.toggle(&dir), "recreated folder must be listed again");
+            assert!(
+                !tree
+                    .rows()
+                    .iter()
+                    .any(|r| r.entry.path == dir.join("child"))
+            );
+            assert!(
+                tree.rows()
+                    .iter()
+                    .any(|r| r.entry.path == other.join("child"))
+            );
+        }
     }
 }

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, KeyDownEvent,
@@ -6,6 +10,7 @@ use gpui::{
     UniformListScrollHandle, Window, canvas, div, img, point, prelude::*, px, uniform_list,
 };
 use plastext_editor::Theme;
+use plastext_platform::watch::Batch;
 use plastext_project::{EntryKind, FileTree, TreeOptions, read_dir};
 
 use crate::icon_themes::{IconThemes, language_id};
@@ -13,6 +18,10 @@ use plastext_settings::icons::Appearance;
 
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
+
+#[cfg(test)]
+#[path = "file_tree_tests.rs"]
+mod tests;
 
 pub enum FileTreeEvent {
     Action(FileAction),
@@ -46,8 +55,30 @@ pub struct FileTreeView {
     focus: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     listings: HashMap<PathBuf, Task<()>>,
+    relist: HashSet<PathBuf>,
+    directory_versions: HashMap<PathBuf, DirectoryVersion>,
     icons: Entity<IconThemes>,
     _icons_changed: Subscription,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct DirectoryVersion {
+    target: PathBuf,
+    modified: Option<std::time::SystemTime>,
+    created: Option<std::time::SystemTime>,
+    len: u64,
+}
+
+impl DirectoryVersion {
+    fn read(path: &std::path::Path) -> std::io::Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            target: std::fs::canonicalize(path)?,
+            modified: metadata.modified().ok(),
+            created: metadata.created().ok(),
+            len: metadata.len(),
+        })
+    }
 }
 
 impl EventEmitter<FileTreeEvent> for FileTreeView {}
@@ -67,6 +98,8 @@ impl FileTreeView {
             focus: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
             listings: HashMap::new(),
+            relist: HashSet::new(),
+            directory_versions: HashMap::new(),
             icons,
             _icons_changed: icons_changed,
         };
@@ -80,6 +113,24 @@ impl FileTreeView {
     }
     pub fn selected(&self) -> Option<PathBuf> {
         self.selected.clone()
+    }
+    pub(crate) fn watched_directories(&self) -> &[PathBuf] {
+        self.tree.visible_directories()
+    }
+
+    pub(crate) fn refresh_external(&mut self, batch: &Batch, polled: bool, cx: &mut Context<Self>) {
+        let ignore_changed = batch.ignore_rules_changed();
+        for dir in self.tree.visible_directories().to_vec() {
+            let forced = ignore_changed
+                || batch.affects_directory(&dir)
+                || self
+                    .directory_versions
+                    .get(&dir)
+                    .is_some_and(|version| batch.affects_directory(&version.target));
+            if forced || polled && !self.listings.contains_key(&dir) {
+                self.list_if_changed(dir, forced, cx);
+            }
+        }
     }
     pub fn is_directory(&self, path: &std::path::Path) -> bool {
         self.tree
@@ -203,20 +254,63 @@ impl FileTreeView {
     }
 
     fn list(&mut self, dir: PathBuf, cx: &mut Context<Self>) {
+        self.list_if_changed(dir, true, cx);
+    }
+
+    fn list_if_changed(&mut self, dir: PathBuf, force: bool, cx: &mut Context<Self>) {
+        // Coalesce changes arriving during enumeration into one follow-up.
+        if self.listings.contains_key(&dir) {
+            if force {
+                self.relist.insert(dir);
+            }
+            return;
+        }
         let root = self.tree.root().to_owned();
         let options = self.options.clone();
+        let previous = self.directory_versions.get(&dir).cloned();
         let listing = cx.background_executor().spawn({
             let dir = dir.clone();
-            async move { read_dir(&root, &dir, &options) }
+            async move {
+                // Read metadata before listing so changes during enumeration
+                // are caught on the next check. Unchanged polls only stat.
+                let version = DirectoryVersion::read(&dir).ok();
+                if !force && version.is_some() && version == previous {
+                    return None;
+                }
+                Some((version, read_dir(&root, &dir, &options)))
+            }
         });
         let task = cx.spawn({
             let dir = dir.clone();
             async move |this, cx| {
-                let entries = listing.await;
+                let result = listing.await;
                 this.update(cx, |this, cx| {
                     this.listings.remove(&dir);
+                    if this.relist.remove(&dir) {
+                        this.list(dir, cx);
+                        return;
+                    }
+                    let Some((version, entries)) = result else {
+                        return;
+                    };
+                    this.directory_versions.remove(&dir);
+                    if entries.is_ok()
+                        && let Some(version) = version
+                    {
+                        this.directory_versions.insert(dir.clone(), version);
+                    }
                     // An unreadable directory shows as empty.
-                    this.tree.set_children(&dir, entries.unwrap_or_default());
+                    let removed = this.tree.set_children(&dir, entries.unwrap_or_default());
+                    if !removed.is_empty() {
+                        let survives =
+                            |path: &PathBuf| !removed.iter().any(|old| path.starts_with(old));
+                        this.listings.retain(|path, _| survives(path));
+                        this.relist.retain(survives);
+                        this.directory_versions.retain(|path, _| survives(path));
+                        if this.selected.as_ref().is_some_and(|path| !survives(path)) {
+                            this.selected = None;
+                        }
+                    }
                     cx.notify();
                 })
                 .ok();
@@ -233,8 +327,13 @@ impl FileTreeView {
         self.selected = Some(entry.path.clone());
         match entry.kind {
             EntryKind::Dir => {
-                if self.tree.toggle(&entry.path) {
-                    self.list(entry.path.clone(), cx);
+                self.tree.toggle(&entry.path);
+                // Collapsed directories are not watched. Refresh all newly
+                // visible listings, including previously expanded descendants.
+                for dir in self.tree.visible_directories().to_vec() {
+                    if dir.starts_with(&entry.path) {
+                        self.list(dir, cx);
+                    }
                 }
             }
             EntryKind::File => cx.emit(FileTreeEvent::Open {

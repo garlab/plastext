@@ -11,6 +11,7 @@ mod tests;
 pub(super) struct DiskState {
     watches: FileWatches,
     paths: Vec<PathBuf>,
+    directories: Vec<PathBuf>,
     versions: HashMap<PathBuf, Option<DiskVersion>>,
     checking: bool,
     comparison: Option<Arc<AtomicBool>>,
@@ -39,9 +40,8 @@ impl DiskState {
                 }
                 if this
                     .update_in(cx, |this, _, cx| {
-                        let mut batch = this.disk.watches.take();
-                        batch.rescan |= polled;
-                        this.observe_disk(batch, cx);
+                        let batch = this.disk.watches.take();
+                        this.observe_disk(batch, polled, cx);
                     })
                     .is_err()
                 {
@@ -52,6 +52,7 @@ impl DiskState {
         Self {
             watches,
             paths: Vec::new(),
+            directories: Vec::new(),
             versions: HashMap::new(),
             checking: false,
             comparison: None,
@@ -192,13 +193,26 @@ impl Workspace {
             .collect();
         paths.sort();
         paths.dedup();
-        if paths != self.disk.paths {
+        let mut directories = self
+            .tree
+            .as_ref()
+            .map(|tree| tree.read(cx).watched_directories().to_vec())
+            .unwrap_or_default();
+        directories.sort();
+        if paths != self.disk.paths || directories != self.disk.directories {
             self.disk.versions.retain(|p, _| paths.contains(p));
-            self.disk.watches.set_paths(paths.clone());
+            self.disk
+                .watches
+                .set_paths_and_directories(paths.clone(), directories.clone());
             self.disk.paths = paths;
+            self.disk.directories = directories;
         }
     }
-    fn observe_disk(&mut self, batch: Batch, cx: &mut Context<Self>) {
+    fn observe_disk(&mut self, mut batch: Batch, polled: bool, cx: &mut Context<Self>) {
+        if let Some(tree) = &self.tree {
+            tree.update(cx, |tree, cx| tree.refresh_external(&batch, polled, cx));
+        }
+        batch.rescan |= polled;
         for document in self.disk_documents(cx) {
             let Some(expected) = document.read(cx).disk_version().or_else(|| {
                 self.disk
@@ -303,7 +317,10 @@ impl Workspace {
                         != current.as_ref().map(DiskVersion::target);
                     this.disk.versions.insert(path, current);
                     if target_changed {
-                        this.disk.watches.set_paths(this.disk.paths.clone());
+                        this.disk.watches.set_paths_and_directories(
+                            this.disk.paths.clone(),
+                            this.disk.directories.clone(),
+                        );
                     }
                     if changed {
                         doc.update(cx, |doc, cx| doc.load_external_version(cx));

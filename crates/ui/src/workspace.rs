@@ -317,6 +317,7 @@ impl Workspace {
         let tree = root.clone().map(|root| {
             let tree =
                 cx.new(|cx| FileTreeView::new(root, tree_options.clone(), icon_themes.clone(), cx));
+            subscriptions.push(cx.observe(&tree, |this, _, cx| this.update_disk_watches(cx)));
             subscriptions.push(
                 cx.subscribe_in(&tree, window, |this, _, event, window, cx| match event {
                     FileTreeEvent::Open { path, preview } => {
