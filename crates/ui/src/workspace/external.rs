@@ -94,7 +94,7 @@ impl Workspace {
         self.show_notice("Preparing comparison…", cx);
         let work = cx.background_executor().spawn(async move {
             let disk = FileDocument::open(&path, options, &cancel, |_, _| {})?;
-            if disk.disk_version() != &reviewed {
+            if disk.disk_version() != Some(&reviewed) {
                 return Err(std::io::Error::other(
                     "File changed again; refresh the comparison",
                 ));
@@ -180,6 +180,7 @@ impl Workspace {
             .values()
             .flat_map(|p| &p.tabs)
             .filter_map(|tab| tab.view.editing_document(cx))
+            .filter(|doc| !doc.read(cx).is_untitled())
             .collect();
         docs.sort_by_key(Entity::entity_id);
         docs.dedup_by_key(|d| d.entity_id());

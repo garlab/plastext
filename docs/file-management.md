@@ -10,11 +10,19 @@ editor. Up and Down change the selected file.
 Right-click empty space in the file pane for **New File**, **New Folder** and
 **Paste File**. These actions target the project root, regardless of the previous
 selection. Paste File is disabled when the clipboard contains no file.
-**⌘N** opens the same New File dialog from the editor or navigation pane.
+The toolbar above the tree provides **New File**, **New Folder** and **Collapse
+All Folders**. Creation targets the selected folder, the selected file's parent,
+or the project root when nothing is selected. Type the name in the tree and press
+Enter to create it. Escape or Enter with an empty name cancels without creating
+anything. Invalid names and collisions show an inline error. New files open in
+a tab; new Markdown files open in Source. New folders stay selected in the tree.
 
-New File and New Folder ask for a name, validate it inline and refuse to replace
-an existing item. New files open in a tab; new Markdown files open in Source.
-New folders are selected in the tree. Cancel or Escape dismisses the name dialog.
+**⌘N** starts inline file creation when the navigation pane has focus. Elsewhere,
+it opens an empty **Untitled** tab in the active editor pane, even without a
+project folder. Untitled tabs keep their contents in memory until **⌘S** opens
+the system Save dialog. Closing a nonempty draft offers Save, Cancel and Discard;
+empty drafts close immediately. Saving keeps undo history and updates all split
+views of the draft. No automatic saving is performed.
 
 Right-click a file or folder for these actions:
 

@@ -61,7 +61,14 @@ fn navigation_updates_with_no_open_tabs_and_opens_renamed_and_new_files(cx: &mut
     for (index, name) in ["b.txt", "c.txt"].into_iter().enumerate() {
         let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
         visual.simulate_click(
-            gpui::point(px(80.), px(TAB_BAR_HEIGHT + 4. + 24. * index as f32 + 12.)),
+            gpui::point(
+                px(80.),
+                px(TAB_BAR_HEIGHT
+                    + crate::file_tree::TOOLBAR_HEIGHT
+                    + 4.
+                    + 24. * index as f32
+                    + 12.),
+            ),
             Default::default(),
         );
         visual.run_until_parked();

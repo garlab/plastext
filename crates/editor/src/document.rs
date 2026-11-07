@@ -44,6 +44,8 @@ pub struct EditingDocument {
     task: Option<Task<()>>,
     file_operation: bool,
     save_preparing: bool,
+    save_directory: PathBuf,
+    save_destination: Option<(PathBuf, Option<DiskVersion>)>,
     edit_after_operation: Option<u64>,
 }
 impl EditingDocument {
@@ -95,6 +97,8 @@ impl EditingDocument {
                 task: None,
                 file_operation: false,
                 save_preparing: false,
+                save_directory: PathBuf::new(),
+                save_destination: None,
                 edit_after_operation: None,
             }
         });
@@ -103,12 +107,39 @@ impl EditingDocument {
         documents.insert(key, entity.downgrade());
         entity
     }
+    pub fn untitled(directory: PathBuf, options: OpenOptions, cx: &mut App) -> Entity<Self> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        // An identity for tabs/history only; it is never passed to filesystem APIs.
+        let entity = Self::shared(
+            PathBuf::from(format!("untitled:/Untitled-{id}")),
+            options,
+            cx,
+        );
+        entity.update(cx, |this, cx| {
+            let mut file = FileDocument::untitled();
+            file.session_mut().defer_history_drop();
+            this.file = Some(file);
+            this.active = true;
+            this.save_directory = directory;
+            cx.notify();
+        });
+        entity
+    }
+    pub fn is_untitled(&self) -> bool {
+        self.file
+            .as_ref()
+            .is_some_and(|file| file.disk_version().is_none())
+    }
     pub fn is_dirty(&self) -> bool {
         self.pending_inputs != 0
-            || self
-                .file
-                .as_ref()
-                .is_some_and(|file| file.session().is_dirty())
+            || self.file.as_ref().is_some_and(|file| {
+                if file.disk_version().is_none() {
+                    !file.session().snapshot().text().is_empty()
+                } else {
+                    file.session().is_dirty()
+                }
+            })
     }
     /// Register a tab that owns an embedded source editor or a preview.
     pub fn retain_view(&mut self) {
@@ -332,6 +363,10 @@ impl EditingDocument {
         if self.file_operation || self.is_saving() {
             return;
         }
+        if self.is_untitled() && self.save_destination.is_none() {
+            self.choose_save_path(cx);
+            return;
+        }
         if self.external.change.is_some() && self.external.overwrite.is_none() {
             self.external.confirm_save = true;
             self.external.hidden = false;
@@ -384,7 +419,10 @@ impl EditingDocument {
                 this.changed(cx);
                 match result {
                     Ok(()) => this.save_now(cx),
-                    Err(error) => this.notice = Some(error.into()),
+                    Err(error) => {
+                        this.save_destination = None;
+                        this.notice = Some(error.into());
+                    }
                 }
                 cx.notify();
             })
@@ -405,7 +443,9 @@ impl EditingDocument {
             let options = SaveOptions {
                 atomic: self.preferences.atomic_save,
             };
-            if let Some(reviewed) = overwrite {
+            if let Some((path, expected)) = self.save_destination.take() {
+                file.begin_save_as(path, expected, options)
+            } else if let Some(reviewed) = overwrite {
                 file.begin_overwrite(reviewed, options)
             } else {
                 Ok(file.begin_save(options))
@@ -438,6 +478,16 @@ impl EditingDocument {
                             .unwrap_or_default();
                         format!("Couldn't save: {}{recovery}", error.message).into()
                     });
+                    if let Some(version) = file.disk_version() {
+                        let path = version.path().to_owned();
+                        if path != this.path {
+                            let old = std::mem::replace(&mut this.path, path);
+                            let entity = cx.entity().downgrade();
+                            let documents = &mut cx.global_mut::<Documents>().0;
+                            documents.remove(&old);
+                            documents.insert(this.path.clone(), entity);
+                        }
+                    }
                 }
                 this.external.change = None;
                 this.external.reviewed = None;
@@ -453,6 +503,57 @@ impl EditingDocument {
                 .detach();
         })
         .detach();
+        cx.notify();
+    }
+
+    fn choose_save_path(&mut self, cx: &mut Context<Self>) {
+        self.save_preparing = true;
+        let selection = cx.prompt_for_new_path(
+            &self.save_directory,
+            self.path.file_name().and_then(|name| name.to_str()),
+        );
+        cx.spawn(async move |this, cx| {
+            let selected = selection.await;
+            let selected = match selected {
+                Ok(Ok(Some(path))) => {
+                    let work = cx.background_executor().spawn(async move {
+                        let expected = match DiskVersion::read(&path) {
+                            Ok(version) => Some(version),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                            Err(error) => return Err(error.to_string()),
+                        };
+                        Ok(Some((path, expected)))
+                    });
+                    work.await
+                }
+                Ok(Ok(None)) | Err(_) => Ok(None),
+                Ok(Err(error)) => Err(error.to_string()),
+            };
+            this.update(cx, |this, cx| {
+                this.save_preparing = false;
+                match selected {
+                    Ok(Some((path, expected))) => {
+                        let in_use = Self::all(cx).iter().any(|doc| {
+                            doc.entity_id() != cx.entity().entity_id() && {
+                                let doc = doc.read(cx);
+                                doc.path == path || expected.as_ref().is_some_and(|target| {
+                                    doc.disk_version().is_some_and(|other| other.same_file(target))
+                                })
+                            }
+                        });
+                        if in_use {
+                            this.notice = Some("That file is already open. Choose a different name or close it first.".into());
+                        } else {
+                            this.save_destination = Some((path, expected));
+                            this.save(cx);
+                        }
+                    }
+                    Ok(None) => {},
+                    Err(error) => this.notice = Some(format!("Couldn't choose a save location: {error}").into()),
+                }
+                cx.notify();
+            }).ok();
+        }).detach();
         cx.notify();
     }
 }

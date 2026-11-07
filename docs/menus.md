@@ -5,8 +5,9 @@ keyboard shortcuts; editing commands apply to the focused control.
 
 - **File:** New File, New Window, Open File, Open Folder, Save, Close Tab and
   Close Window. Open File adds selected files to the current window. Open Folder
-  opens a project window, reusing one already showing that folder. New File uses
-  the current project's name dialog.
+  opens a project window, reusing one already showing that folder. New File starts
+  inline naming when the navigation pane has focus; otherwise it opens an untitled
+  tab in the active pane. Save asks for a destination for untitled tabs.
 - **Edit:** Undo/Redo, Cut/Copy/Paste, Select All, Find, Find Next/Previous and
   Find in Files. Clipboard commands work on editor text, search fields, Markdown
   or CSV selections, and files selected in the navigation pane. Read-only views

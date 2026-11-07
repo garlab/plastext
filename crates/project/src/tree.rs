@@ -174,6 +174,10 @@ impl FileTree {
         self.expanded.insert(dir.to_owned());
         self.rebuild();
     }
+    pub fn collapse_all(&mut self) {
+        self.expanded.clear();
+        self.rebuild();
+    }
     pub fn forget(&mut self, path: &Path) {
         self.children.retain(|dir, _| !dir.starts_with(path));
         self.expanded.retain(|dir| !dir.starts_with(path));

@@ -174,6 +174,55 @@ pub struct SaveReceipt {
     pub in_place: bool,
 }
 
+/// Publish a new document atomically without replacing any existing entry.
+pub(crate) fn create_snapshot(
+    snapshot: &TextSnapshot,
+    path: &Path,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(SaveProgress),
+) -> Result<SaveReceipt, SaveFailure> {
+    check_cancel(cancel)?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".plastext-save-")
+        .tempfile_in(path.parent().unwrap_or(Path::new(".")))?;
+    snapshot.write_to(staged.as_file_mut(), cancel, |completed, total| {
+        progress(SaveProgress {
+            phase: SavePhase::Writing,
+            completed,
+            total,
+        });
+    })?;
+    staged.as_file().sync_all()?;
+    check_cancel(cancel)?;
+    progress(SaveProgress {
+        phase: SavePhase::Committing,
+        completed: 0,
+        total: staged.as_file().metadata()?.len(),
+    });
+    check_cancel(cancel)?;
+    let file = staged
+        .persist_noclobber(path)
+        .map_err(|error| error.error)?;
+    let committed = (|| -> Result<DiskVersion, SaveFailure> {
+        let written = platform::stamp(&file)?;
+        platform::sync_parent(path)?;
+        let version = DiskVersion::read(path)?;
+        if version.stamp != written {
+            return Err(SaveFailure::conflict());
+        }
+        Ok(version)
+    })();
+    committed
+        .map(|version| SaveReceipt {
+            version,
+            in_place: false,
+        })
+        .map_err(|mut failure| {
+            failure.target_may_have_changed = true;
+            failure
+        })
+}
+
 /// Save an immutable version on a worker. Checks for detectable outside changes
 /// before and after preparation; locks exclude cooperating writers only. No
 /// portable filesystem API makes compare-version-and-replace indivisible.

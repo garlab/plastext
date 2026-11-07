@@ -180,9 +180,10 @@ prepare no editing copy; text/code views prepare one when opened for editing.
   History rebases pane anchors rather than restoring historical selections.
   Native IME interaction, close dialogs and keystroke-to-pixel latency still need
   manual/performance validation.
-- External reloads and conflict choices are connected. Add Save As and recovery
+- External reloads and conflict choices are connected. Add Save As for existing files and recovery
   actions, and finish content anchoring for the first preview-only reload.
-  New File is implemented. Complete native Windows/
+  New File supports inline tree creation and untitled drafts with a first-save
+  path picker. Complete native Windows/
   Linux and crash/failure validation; see the [save limits](m3-saving.md).
 - Add continuous Markdown scroll synchronization, tail mode and `--wait`, then fuzz targets and
   native typing/performance tests.

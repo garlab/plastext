@@ -33,8 +33,99 @@ fn text(doc: &FileDocument) -> Vec<u8> {
 fn check(doc: &mut FileDocument) -> ExternalResult {
     let observation = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     apply_external(doc, observation)
+}
+
+#[test]
+fn untitled_first_save_keeps_history_and_newer_typing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("new.txt");
+    let mut doc = FileDocument::untitled();
+    assert!(doc.disk_version().is_none());
+    assert!(doc.external_check(OpenOptions::default()).is_none());
+    assert!(doc.begin_save(SaveOptions::default()).is_none());
+    append(&mut doc, "first");
+    let job = doc
+        .begin_save_as(path.clone(), None, SaveOptions::default())
+        .unwrap()
+        .unwrap();
+    assert!(!path.exists());
+    append(&mut doc, " later");
+    let completion = job.run(&cancel(), |_| {});
+    doc.finish_save(&completion).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"first");
+    assert_eq!(doc.disk_version().unwrap().path(), path);
+    assert!(doc.session().is_dirty());
+    let pane = doc.session_mut().attach_pane(Selection::caret(0)).unwrap();
+    let base = doc.session().pane_snapshot(pane).unwrap();
+    doc.session_mut().undo(&base).unwrap();
+    assert_eq!(text(&doc), b"first");
+    assert!(!doc.session().is_dirty());
+    assert!(doc.session().can_undo());
+}
+
+#[test]
+fn first_save_never_clobbers_a_newly_created_or_changed_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("new.txt");
+    let mut doc = FileDocument::untitled();
+    append(&mut doc, "mine");
+    let job = doc
+        .begin_save_as(path.clone(), None, SaveOptions::default())
+        .unwrap()
+        .unwrap();
+    fs::write(&path, "theirs").unwrap();
+    assert!(doc.finish_save(&job.run(&cancel(), |_| {})).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"theirs");
+    assert!(doc.disk_version().is_none());
+    assert!(doc.session().is_dirty());
+    let reviewed = DiskVersion::read(&path).unwrap();
+    let job = doc
+        .begin_save_as(path.clone(), Some(reviewed), SaveOptions::default())
+        .unwrap()
+        .unwrap();
+    fs::write(&path, "a newer outside version").unwrap();
+    assert_eq!(
+        doc.finish_save(&job.run(&cancel(), |_| {}))
+            .unwrap_err()
+            .kind,
+        SaveFailureKind::Conflict
+    );
+    assert_eq!(fs::read(&path).unwrap(), b"a newer outside version");
+    let reviewed = DiskVersion::read(&path).unwrap();
+    let job = doc
+        .begin_save_as(path.clone(), Some(reviewed), SaveOptions::default())
+        .unwrap()
+        .unwrap();
+    doc.finish_save(&job.run(&cancel(), |_| {})).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"mine");
+}
+
+#[test]
+fn cancelled_or_failed_first_save_keeps_the_untitled_contents() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut doc = FileDocument::untitled();
+    append(&mut doc, "unsaved");
+    for (path, cancelled) in [
+        (dir.path().join("new.txt"), true),
+        (dir.path().join("absent/new.txt"), false),
+    ] {
+        let job = doc
+            .begin_save_as(path.clone(), None, SaveOptions::default())
+            .unwrap()
+            .unwrap();
+        assert!(
+            doc.finish_save(&job.run(&AtomicBool::new(cancelled), |_| {}))
+                .is_err()
+        );
+        assert!(!path.exists());
+        assert!(doc.disk_version().is_none());
+        assert_eq!(text(&doc), b"unsaved");
+        assert!(doc.session().is_dirty());
+    }
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -144,12 +235,12 @@ fn paired_rename_keeps_dirty_history_and_does_not_accept_unseen_disk_edits() {
     fs::write(&from, "base").unwrap();
     let mut doc = open(&from);
     append(&mut doc, " mine");
-    let expected = doc.disk_version().clone();
+    let expected = doc.disk_version().unwrap().clone();
     fs::rename(&from, &to).unwrap();
     fs::write(&to, "outside").unwrap();
     let current = DiskVersion::read(&to).unwrap();
     assert!(doc.follow_rename(&expected, &current));
-    assert_eq!(doc.disk_version().path(), to);
+    assert_eq!(doc.disk_version().unwrap().path(), to);
     assert_eq!(text(&doc), b"base mine");
     assert_eq!(check(&mut doc).state, ExternalState::Conflict);
     let result = doc
@@ -179,6 +270,7 @@ fn large_reload_maps_line_columns_and_retries_if_the_selection_moves() {
     fs::write(&path, &updated).unwrap();
     let observation = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     let base = doc.session().pane_snapshot(pane).unwrap();
     doc.session_mut()
@@ -210,6 +302,7 @@ fn dirty_conflicts_preserve_edits_and_stale_reload_cannot_replace_new_typing() {
     fs::write(&path, b"outside").unwrap();
     let observation = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     append(&mut doc, " user edit");
     let result = apply_external(&mut doc, observation);
@@ -239,6 +332,7 @@ fn save_invalidates_older_watcher_results_and_ignores_its_own_replacement() {
     append(&mut doc, " edited");
     let observation = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     let job = doc.begin_save(SaveOptions::default()).unwrap();
     assert_eq!(
@@ -247,6 +341,7 @@ fn save_invalidates_older_watcher_results_and_ignores_its_own_replacement() {
     );
     let stale = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     doc.finish_save(&job.run(&cancel(), |_| {})).unwrap();
     assert_eq!(apply_external(&mut doc, stale).state, ExternalState::Stale);
@@ -279,6 +374,7 @@ fn edit_undo_cycle_cannot_revive_a_prepared_reload() {
     fs::write(&path, b"outside").unwrap();
     let observation = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     append(&mut doc, " edit");
     let pane = doc.session_mut().attach_pane(Selection::caret(0)).unwrap();
@@ -330,13 +426,13 @@ fn explicit_discard_can_reload_unchanged_disk_but_never_discards_newer_input() {
     fs::write(&path, b"original").unwrap();
     let mut doc = open(&path);
     append(&mut doc, " edit");
-    let request = doc.reload_discarding_edits(OpenOptions::default());
+    let request = doc.reload_discarding_edits(OpenOptions::default()).unwrap();
     let result = apply_external(&mut doc, request.run(&cancel(), |_, _| {}));
     assert_eq!(result.state, ExternalState::Reloaded);
     assert!(result.retired.unwrap().is_dirty());
     assert_eq!(text(&doc), b"original");
     append(&mut doc, " edit");
-    let request = doc.reload_discarding_edits(OpenOptions::default());
+    let request = doc.reload_discarding_edits(OpenOptions::default()).unwrap();
     append(&mut doc, " later");
     let result = apply_external(&mut doc, request.run(&cancel(), |_, _| {}));
     assert_eq!(result.state, ExternalState::Conflict);
@@ -353,6 +449,7 @@ fn older_unchanged_observation_cannot_clear_a_newer_conflict() {
     append(&mut doc, " edit");
     let old = doc
         .external_check(OpenOptions::default())
+        .unwrap()
         .run(&cancel(), |_, _| {});
     fs::write(&path, b"outside").unwrap();
     assert_eq!(check(&mut doc).state, ExternalState::Conflict);

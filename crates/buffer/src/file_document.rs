@@ -2,7 +2,7 @@
 //! debounce watcher events and schedule jobs; this module starts no threads.
 use std::{
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, Weak, atomic::AtomicBool},
 };
 
@@ -13,7 +13,7 @@ use crate::{
 
 pub struct FileDocument {
     session: DocumentSession,
-    disk: DiskVersion,
+    disk: Option<DiskVersion>,
     epoch: u64,
     saving: Weak<()>,
     conflict: bool,
@@ -21,6 +21,17 @@ pub struct FileDocument {
 }
 
 impl FileDocument {
+    /// An empty editable document with no filesystem backing or side effects.
+    pub fn untitled() -> Self {
+        Self {
+            session: DocumentSession::new(EditBuffer::from_bytes(Vec::new())),
+            disk: None,
+            epoch: 0,
+            saving: Weak::new(),
+            conflict: false,
+            encoding_hint: EncodingHint::Auto,
+        }
+    }
     /// Blocking preparation, including consistency checks; run on a worker.
     pub fn open(
         path: &Path,
@@ -42,7 +53,7 @@ impl FileDocument {
         let buffer = open_version(&disk, options, hint, cancel, progress)?;
         Ok(Self {
             session: DocumentSession::new(buffer),
-            disk,
+            disk: Some(disk),
             epoch: 0,
             saving: Weak::new(),
             conflict: false,
@@ -56,8 +67,8 @@ impl FileDocument {
     pub fn session_mut(&mut self) -> &mut DocumentSession {
         &mut self.session
     }
-    pub fn disk_version(&self) -> &DiskVersion {
-        &self.disk
+    pub fn disk_version(&self) -> Option<&DiskVersion> {
+        self.disk.as_ref()
     }
     pub fn has_conflict(&self) -> bool {
         self.conflict
@@ -65,10 +76,11 @@ impl FileDocument {
     /// A watcher-paired rename, verified off-thread by identity. Retain the old
     /// content stamp so edits made during the move still cause a conflict.
     pub fn follow_rename(&mut self, expected: &DiskVersion, current: &DiskVersion) -> bool {
-        if self.is_saving() || &self.disk != expected || !expected.same_file(current) {
+        if self.is_saving() || self.disk.as_ref() != Some(expected) || !expected.same_file(current)
+        {
             return false;
         }
-        self.disk = expected.relocated(current);
+        self.disk = Some(expected.relocated(current));
         self.advance();
         true
     }
@@ -76,10 +88,30 @@ impl FileDocument {
         self.saving.strong_count() != 0
     }
 
-    /// None means a previous save job/completion is still held. Dropping an
-    /// unstarted job releases the slot. Editing remains available during saves.
+    /// None means the document is untitled or a save job/completion is still
+    /// held. Dropping an unstarted job releases the slot. Editing remains
+    /// available during saves.
     pub fn begin_save(&mut self, options: SaveOptions) -> Option<SaveJob> {
-        self.save_against(self.disk.clone(), options)
+        let expected = self.disk.clone()?;
+        self.save_against(expected.path().to_owned(), Some(expected), options)
+    }
+
+    /// First save of an untitled document. An existing destination must be a
+    /// version reviewed by the caller; a missing destination is never clobbered.
+    pub fn begin_save_as(
+        &mut self,
+        path: PathBuf,
+        expected: Option<DiskVersion>,
+        options: SaveOptions,
+    ) -> Result<Option<SaveJob>, SaveFailure> {
+        if self.disk.is_some()
+            || expected
+                .as_ref()
+                .is_some_and(|version| version.path() != path)
+        {
+            return Err(stale_save());
+        }
+        Ok(self.save_against(path, expected, options))
     }
 
     /// Explicit conflict resolution: the caller must obtain the user's choice
@@ -89,13 +121,22 @@ impl FileDocument {
         reviewed: DiskVersion,
         options: SaveOptions,
     ) -> Result<Option<SaveJob>, SaveFailure> {
-        if reviewed.path() != self.disk.path() {
+        if self
+            .disk
+            .as_ref()
+            .is_none_or(|disk| reviewed.path() != disk.path())
+        {
             return Err(stale_save());
         }
-        Ok(self.save_against(reviewed, options))
+        Ok(self.save_against(reviewed.path().to_owned(), Some(reviewed), options))
     }
 
-    fn save_against(&mut self, expected: DiskVersion, options: SaveOptions) -> Option<SaveJob> {
+    fn save_against(
+        &mut self,
+        path: PathBuf,
+        expected: Option<DiskVersion>,
+        options: SaveOptions,
+    ) -> Option<SaveJob> {
         if self.is_saving() {
             return None;
         }
@@ -106,6 +147,7 @@ impl FileDocument {
             lease,
             snapshot: self.session.snapshot(),
             expected,
+            path,
             options,
         })
     }
@@ -128,7 +170,7 @@ impl FileDocument {
                 if !self.session.mark_saved(&completion.snapshot) {
                     return Err(stale_save());
                 }
-                self.disk = receipt.version.clone();
+                self.disk = Some(receipt.version.clone());
                 self.encoding_hint =
                     EncodingHint::Explicit(completion.snapshot.text().format().encoding());
                 self.conflict = false;
@@ -144,10 +186,12 @@ impl FileDocument {
     }
 
     /// Schedule after coalescing watcher events, or for periodic polling.
-    pub fn external_check(&mut self, options: OpenOptions) -> ExternalCheck {
+    /// Untitled documents have no disk version to check and return None.
+    pub fn external_check(&mut self, options: OpenOptions) -> Option<ExternalCheck> {
+        let expected = self.disk.clone()?;
         self.advance();
-        ExternalCheck {
-            expected: self.disk.clone(),
+        Some(ExternalCheck {
+            expected,
             base: self.session.snapshot(),
             epoch: self.epoch,
             clean: !self.session.is_dirty(),
@@ -156,17 +200,17 @@ impl FileDocument {
             encoding_hint: self.encoding_hint,
             options,
             positions: self.session.reload_positions(),
-        }
+        })
     }
 
     /// Explicit discard/reload, for a user-selected conflict resolution. Edits
     /// made after this request still invalidate its result.
-    pub fn reload_discarding_edits(&mut self, options: OpenOptions) -> ExternalCheck {
-        ExternalCheck {
+    pub fn reload_discarding_edits(&mut self, options: OpenOptions) -> Option<ExternalCheck> {
+        Some(ExternalCheck {
             clean: true,
             discard_edits: true,
-            ..self.external_check(options)
-        }
+            ..self.external_check(options)?
+        })
     }
 
     /// Reinterpret a clean document on a worker. Never implicitly discard dirty
@@ -182,7 +226,7 @@ impl FileDocument {
         Some(ExternalCheck {
             force_reload: true,
             encoding_hint: hint,
-            ..self.external_check(options)
+            ..self.external_check(options)?
         })
     }
 
@@ -201,7 +245,7 @@ impl FileDocument {
         } = &*observation;
         let state = if self.is_saving() {
             ExternalState::Deferred
-        } else if *epoch != self.epoch || expected != &self.disk {
+        } else if *epoch != self.epoch || Some(expected) != self.disk.as_ref() {
             ExternalState::Stale
         } else {
             match observed {
@@ -211,7 +255,9 @@ impl FileDocument {
                 }
                 Err(error) => ExternalState::Failed(error.to_string()),
                 Ok(current)
-                    if current == &self.disk && !discard_edits && !observation.force_reload =>
+                    if Some(current) == self.disk.as_ref()
+                        && !discard_edits
+                        && !observation.force_reload =>
                 {
                     self.conflict = false;
                     ExternalState::Unchanged
@@ -229,7 +275,7 @@ impl FileDocument {
                             observation.mapping.as_ref().unwrap(),
                         ) {
                             Ok(retired) => {
-                                self.disk = current.clone();
+                                self.disk = Some(current.clone());
                                 self.encoding_hint = observation.encoding_hint;
                                 self.conflict = false;
                                 self.advance();
@@ -275,18 +321,23 @@ fn stale_save() -> SaveFailure {
 pub struct SaveJob {
     lease: Arc<()>,
     snapshot: DocumentSnapshot,
-    expected: DiskVersion,
+    expected: Option<DiskVersion>,
+    path: PathBuf,
     options: SaveOptions,
 }
 impl SaveJob {
     pub fn run(self, cancel: &AtomicBool, progress: impl FnMut(SaveProgress)) -> SaveCompletion {
-        let result = save_snapshot(
-            self.snapshot.text(),
-            &self.expected,
-            self.options,
-            cancel,
-            progress,
-        );
+        let result = if let Some(expected) = &self.expected {
+            save_snapshot(
+                self.snapshot.text(),
+                expected,
+                self.options,
+                cancel,
+                progress,
+            )
+        } else {
+            crate::save::create_snapshot(self.snapshot.text(), &self.path, cancel, progress)
+        };
         SaveCompletion {
             lease: self.lease,
             snapshot: self.snapshot,

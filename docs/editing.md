@@ -178,9 +178,10 @@ Remaining M3 work:
 
 - Automatic editing applies to plain text, code and Markdown Source. Other preview/source
   toggles remain read-only until their synchronization is connected.
-- Save As, column selection and restoring historical cursor selections on undo
-  remain to implement. New File is available from the File menu and navigation pane.
-- Save As and recovery-copy actions remain to integrate. Deleted files are not
+- Column selection and restoring historical cursor selections on undo remain to
+  implement. New File creates an untitled draft or starts inline naming in the
+  focused navigation pane. Untitled drafts choose a destination on first save.
+- Save As for existing files and recovery-copy actions remain to integrate. Deleted files are not
   recreated automatically; their open text remains available for copying.
 - Cut/copy are limited to 64 MiB. A cut whose selection is uncached first loads
   it and asks for Cut again; it never deletes before copying.

@@ -58,7 +58,7 @@ impl EditingDocument {
         }
     }
     pub fn disk_version(&self) -> Option<DiskVersion> {
-        self.file.as_ref().map(|f| f.disk_version().clone())
+        self.file.as_ref().and_then(|f| f.disk_version().cloned())
     }
     pub fn follow_rename(
         &mut self,
@@ -111,7 +111,7 @@ impl EditingDocument {
         let preferences = self.preferences.clone();
         let work = cx.background_executor().spawn(async move {
             let file = FileDocument::open(&path, options, &cancel, |_, _| {})?;
-            let writable = file.disk_version().is_writable()?;
+            let writable = file.disk_version().unwrap().is_writable()?;
             let version = file.session().snapshot();
             let mut sample = Vec::new();
             version
@@ -188,6 +188,9 @@ impl EditingDocument {
     /// A filesystem hint, including an event caused by our own atomic save.
     /// Coalesce bursts; never run overlapping snapshot copies for this document.
     pub fn external_changed(&mut self, cx: &mut Context<Self>) {
+        if self.is_untitled() {
+            return;
+        }
         if let Some(cancel) = &self.external.cancel {
             cancel.store(true, Ordering::Relaxed);
         }
@@ -234,6 +237,7 @@ impl EditingDocument {
         } else {
             file.external_check(self.options)
         };
+        let Some(job) = job else { return };
         self.external.running = true;
         let cancel = Arc::new(AtomicBool::new(false));
         self.external.cancel = Some(cancel.clone());

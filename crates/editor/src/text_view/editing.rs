@@ -365,8 +365,30 @@ impl TextView {
         }
     }
     pub(super) fn sync_editing(&mut self, cx: &mut Context<Self>) {
+        let mut language_changed = false;
         if let Some(document) = self.editing_document() {
-            self.set_file_path(document.read(cx).path());
+            let path = document.read(cx).path();
+            if self.file_name.as_deref() != path.file_name().and_then(|name| name.to_str()) {
+                let sample = self
+                    .source
+                    .bytes(0..self.source.len().min(256))
+                    .unwrap_or_default();
+                let language = plastext_syntax::detect(path, &sample);
+                language_changed = self.language.map(|l| l.name) != language.map(|l| l.name);
+                if language_changed {
+                    self.language = language;
+                    let retired = (self.syntax.take(), self.syntax_text.take());
+                    self.syntax_map = None;
+                    self.syntax_folds = None;
+                    self.symbols = None;
+                    cx.background_executor()
+                        .spawn(async move {
+                            drop(retired);
+                        })
+                        .detach();
+                }
+            }
+            self.set_file_path(path);
         }
         let Some(editing) = &mut self.editing else {
             return;
@@ -511,6 +533,9 @@ impl TextView {
         }
         if let Some(range) = missing {
             self.load(range, cx);
+        }
+        if language_changed {
+            syntax_refresh = Some(true);
         }
         if let Some(immediate) = syntax_refresh {
             if let Some(edits) = syntax_changes {

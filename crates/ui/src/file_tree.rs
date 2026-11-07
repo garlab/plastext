@@ -18,12 +18,22 @@ use plastext_settings::icons::Appearance;
 
 const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
+pub(crate) const TOOLBAR_HEIGHT: f32 = 30.;
+mod creation;
+use creation::Creation;
 
 #[cfg(test)]
 #[path = "file_tree_tests.rs"]
 mod tests;
 
 pub enum FileTreeEvent {
+    New {
+        folder: bool,
+    },
+    Create {
+        path: PathBuf,
+        folder: bool,
+    },
     Action(FileAction),
     Open {
         path: PathBuf,
@@ -57,6 +67,7 @@ pub struct FileTreeView {
     listings: HashMap<PathBuf, Task<()>>,
     relist: HashSet<PathBuf>,
     directory_versions: HashMap<PathBuf, DirectoryVersion>,
+    creation: Option<Creation>,
     icons: Entity<IconThemes>,
     _icons_changed: Subscription,
 }
@@ -100,6 +111,7 @@ impl FileTreeView {
             listings: HashMap::new(),
             relist: HashSet::new(),
             directory_versions: HashMap::new(),
+            creation: None,
             icons,
             _icons_changed: icons_changed,
         };
@@ -212,6 +224,20 @@ impl FileTreeView {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .creation
+            .as_ref()
+            .is_some_and(|creation| creation.input.focus_handle(cx).is_focused(window))
+        {
+            match event.keystroke.key.as_str() {
+                "enter" => self.submit_create(window, cx),
+                "escape" => self.cancel_create(window, cx),
+                _ => return,
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
         let key = event.keystroke.key.as_str();
         if event.keystroke.modifiers.platform {
             let action = match key {
@@ -346,9 +372,13 @@ impl FileTreeView {
 }
 
 impl Render for FileTreeView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::get(window, cx);
+        let extra = self.creation_rows();
         div()
             .size_full()
+            .flex()
+            .flex_col()
             .track_focus(&self.focus)
             .key_context("FileTree")
             .when(self.selected.is_some(), |view| {
@@ -384,10 +414,11 @@ impl Render for FileTreeView {
                     });
                 }),
             )
+            .child(self.render_toolbar(theme, cx))
             .child(
                 uniform_list(
                     "file-tree",
-                    self.tree.rows().len(),
+                    self.tree.rows().len() + extra,
                     cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
                         let theme = Theme::get(window, cx);
                         let light = matches!(
@@ -407,8 +438,23 @@ impl Render for FileTreeView {
                             .as_ref()
                             .is_some_and(|theme| theme.rules.hides_explorer_arrows);
                         let scale = window.scale_factor();
+                        let (insert, depth) = this.creation_position();
+                        let extra = this.creation_rows();
                         range
                             .filter_map(|index| {
+                                if extra != 0 && (insert..insert + extra).contains(&index) {
+                                    return Some(this.render_creation(
+                                        index != insert,
+                                        depth,
+                                        theme,
+                                        cx,
+                                    ));
+                                }
+                                let index = if extra != 0 && index >= insert + extra {
+                                    index - extra
+                                } else {
+                                    index
+                                };
                                 let row = this.tree.rows().get(index)?;
                                 let entry = &row.entry;
                                 let selected = this.selected.as_ref() == Some(&entry.path);
@@ -509,14 +555,17 @@ impl Render for FileTreeView {
                                                     });
                                                 },
                                             ),
-                                        ),
+                                        )
+                                        .into_any_element(),
                                 )
                             })
                             .collect()
                     }),
                 )
                 .track_scroll(self.scroll_handle.clone())
-                .size_full()
+                .flex_1()
+                .min_h_0()
+                .w_full()
                 .py_1(),
             )
     }

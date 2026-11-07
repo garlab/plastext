@@ -10,7 +10,10 @@ fn open(cx: &mut TestAppContext, root: &Path) -> WindowHandle<Workspace> {
 }
 fn click_row(cx: &mut TestAppContext, window: WindowHandle<Workspace>, row: usize) {
     VisualTestContext::from_window(window.into(), cx).simulate_click(
-        point(px(80.), px(TAB_BAR_HEIGHT + 4. + 24. * row as f32 + 12.)),
+        point(
+            px(80.),
+            px(TAB_BAR_HEIGHT + crate::file_tree::TOOLBAR_HEIGHT + 4. + 24. * row as f32 + 12.),
+        ),
         Default::default(),
     );
     cx.run_until_parked();
@@ -361,7 +364,7 @@ fn rename_validation_stays_in_dialog_and_blocks_keyboard_and_button_submission(
                     .as_ref()
                     .expect("invalid names must leave the dialog open");
                 assert_eq!(
-                    prompt.kind.error(prompt.input.read(cx).text()),
+                    name_error(prompt.input.read(cx).text(), prompt.directory),
                     Some(message)
                 );
                 assert!(prompt.input.focus_handle(cx).is_focused(window));
@@ -416,14 +419,11 @@ fn background_menu_creates_files_and_folders_and_reports_collisions_inline(
     right_click_at(cx, window, 300.);
     // No selected entry: Delete must not act on the project root.
     cx.simulate_keystrokes(window.into(), "cmd-backspace down enter");
-    window
-        .update(cx, |workspace, _, _| {
-            assert!(matches!(
-                workspace.file_prompt.as_ref().unwrap().kind,
-                PromptKind::NewFile
-            ))
-        })
-        .unwrap();
+    assert!(
+        VisualTestContext::from_window(window.into(), cx)
+            .debug_bounds("tree-create-input")
+            .is_some()
+    );
     enter_name(cx, window, "notes.md");
     assert_eq!(std::fs::read(dir.path().join("notes.md")).unwrap(), b"");
     window
@@ -440,14 +440,11 @@ fn background_menu_creates_files_and_folders_and_reports_collisions_inline(
     right_click_at(cx, window, 300.);
     // Paste is disabled for text-only clipboard contents, so Up selects New Folder.
     cx.simulate_keystrokes(window.into(), "up enter");
-    window
-        .update(cx, |workspace, _, _| {
-            assert!(matches!(
-                workspace.file_prompt.as_ref().unwrap().kind,
-                PromptKind::NewFolder
-            ))
-        })
-        .unwrap();
+    assert!(
+        VisualTestContext::from_window(window.into(), cx)
+            .debug_bounds("tree-create-input")
+            .is_some()
+    );
     enter_name(cx, window, "assets");
     assert!(dir.path().join("assets").is_dir());
     window
@@ -460,21 +457,11 @@ fn background_menu_creates_files_and_folders_and_reports_collisions_inline(
     right_click_at(cx, window, 300.);
     cx.simulate_keystrokes(window.into(), "down enter");
     enter_name(cx, window, "notes.md");
-    window
-        .update(cx, |workspace, _, _| {
-            assert_eq!(
-                workspace
-                    .file_prompt
-                    .as_ref()
-                    .unwrap()
-                    .error
-                    .as_ref()
-                    .map(|error| error.as_str()),
-                Some("An item with that name already exists.")
-            );
-            assert!(workspace.notice.is_none());
-        })
-        .unwrap();
+    assert!(
+        VisualTestContext::from_window(window.into(), cx)
+            .debug_bounds("tree-create-error")
+            .is_some()
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("notes.md")).unwrap(),
         "x"
@@ -517,7 +504,11 @@ fn background_paste_uses_root_and_row_context_menu_still_targets_the_entry(
         "copied content"
     );
     assert!(!folder.join("copied.txt").exists());
-    right_click_at(cx, window, TAB_BAR_HEIGHT + 4. + 12.); // Folder row.
+    right_click_at(
+        cx,
+        window,
+        TAB_BAR_HEIGHT + crate::file_tree::TOOLBAR_HEIGHT + 4. + 12.,
+    ); // Folder row.
     cx.simulate_keystrokes(window.into(), "down enter"); // Duplicate, not New File.
     assert!(dir.path().join("folder copy").is_dir());
     window
@@ -540,36 +531,24 @@ fn new_file_shortcut_works_from_editor_and_navigation_without_saving_existing_ed
     cx.simulate_keystrokes(window.into(), "enter x cmd-n");
     window
         .update(cx, |workspace, window, cx| {
-            let prompt = workspace.file_prompt.as_ref().unwrap();
-            assert!(matches!(prompt.kind, PromptKind::NewFile));
-            assert_eq!(prompt.path, dir.path());
-            assert!(prompt.input.focus_handle(cx).is_focused(window));
+            let tab = workspace.panes[&workspace.active_pane]
+                .active_tab()
+                .unwrap();
             assert!(
-                workspace.panes[&workspace.active_pane]
-                    .active_tab()
+                tab.view
+                    .editing_document(cx)
                     .unwrap()
-                    .view
-                    .is_dirty(cx)
-            );
-        })
-        .unwrap();
-    // Repeating the shortcut must not replace a name already being entered.
-    cx.simulate_keystrokes(window.into(), "n cmd-n");
-    window
-        .update(cx, |workspace, _, cx| {
-            assert_eq!(
-                workspace
-                    .file_prompt
-                    .as_ref()
-                    .unwrap()
-                    .input
                     .read(cx)
-                    .text(),
-                "n"
+                    .is_untitled()
             );
+            assert!(tab.view.focus_handle(cx).is_focused(window));
+            assert!(!tab.preview);
+            assert!(workspace.file_prompt.is_none());
         })
         .unwrap();
-    cx.simulate_keystrokes(window.into(), "escape");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    cx.simulate_keystrokes(window.into(), "cmd-w"); // Empty untitled closes without a prompt.
+    assert!(!cx.has_pending_prompt());
     select(cx, window, &source);
     cx.simulate_keystrokes(window.into(), "cmd-n");
     enter_name(cx, window, "new.txt");

@@ -55,35 +55,9 @@ struct FileClipboard {
 }
 impl Global for FileClipboard {}
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum PromptKind {
-    Rename,
-    NewFile,
-    NewFolder,
-}
-impl PromptKind {
-    fn title(self) -> &'static str {
-        match self {
-            Self::Rename => "Rename",
-            Self::NewFile => "New File",
-            Self::NewFolder => "New Folder",
-        }
-    }
-    fn confirm(self) -> &'static str {
-        if self == Self::Rename {
-            "Rename"
-        } else {
-            "Create"
-        }
-    }
-    fn error(self, name: &str) -> Option<&'static str> {
-        name_error(name, self == Self::NewFolder)
-    }
-}
-
 pub(super) struct FilePrompt {
     path: PathBuf,
-    kind: PromptKind,
+    directory: bool,
     error: Option<SharedString>,
     input: Entity<TextInput>,
     _input_changes: Subscription,
@@ -100,7 +74,7 @@ fn rename_selection(name: &str, directory: bool) -> std::ops::Range<usize> {
     0..end
 }
 
-fn name_error(name: &str, folder: bool) -> Option<&'static str> {
+pub(crate) fn name_error(name: &str, folder: bool) -> Option<&'static str> {
     if name.trim().is_empty() {
         Some(if folder {
             "Enter a folder name."
@@ -131,15 +105,62 @@ impl Workspace {
         if self.file_busy || self.close_prompt || self.file_prompt.is_some() {
             return;
         }
-        let Some(root) = self.root.clone() else {
-            self.show_notice("Open a folder to create a new file.", cx);
+        if self.sidebar == Sidebar::Files
+            && (self.file_menu.is_some()
+                || self
+                    .tree
+                    .as_ref()
+                    .is_some_and(|tree| tree.focus_handle(cx).contains_focused(window, cx)))
+        {
+            self.new_tree_item(None, false, window, cx);
             return;
-        };
+        }
         self.close_quick_open(window, cx);
         self.dismiss_tab_menu(window, cx);
         self.dismiss_file_menu(window, cx);
+        let directory = self.root.clone().unwrap_or_else(|| PathBuf::from("."));
+        let document = EditingDocument::untitled(directory, self.open_options, cx);
+        let path = document.read(cx).path().to_owned();
+        let snapshot = document.read(cx).version().unwrap().text().clone();
+        let view = cx.new(|cx| TextView::from_snapshot(snapshot, self.text_style.clone(), cx));
+        self.panes
+            .get_mut(&self.active_pane)
+            .unwrap()
+            .opening
+            .select();
+        self.add_tab(
+            path,
+            TabView::Text(view),
+            Destination {
+                pane: self.active_pane,
+                kind: OpenKind::Keep,
+                activate: true,
+                focus_editor: true,
+            },
+            window,
+            cx,
+        );
+    }
+    pub(super) fn new_tree_item(
+        &mut self,
+        directory: Option<PathBuf>,
+        folder: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.file_busy || self.close_prompt || self.file_prompt.is_some() {
+            return;
+        }
+        self.dismiss_file_menu(window, cx);
+        self.close_quick_open(window, cx);
         self.sidebar = Sidebar::Files;
-        self.show_file_prompt(root, PromptKind::NewFile, window, cx);
+        if let Some(tree) = &self.tree {
+            let directory = directory.unwrap_or_else(|| tree.read(cx).selected_directory());
+            tree.update(cx, |tree, cx| {
+                tree.begin_create(directory, folder, window, cx)
+            });
+        }
+        cx.notify();
     }
     pub(super) fn file_action(
         &mut self,
@@ -186,7 +207,7 @@ impl Workspace {
                 window,
                 cx,
             ),
-            FileAction::Rename => self.show_file_prompt(path, PromptKind::Rename, window, cx),
+            FileAction::Rename => self.show_file_prompt(path, window, cx),
             FileAction::Move => {
                 let selection = cx.prompt_for_paths(gpui::PathPromptOptions {
                     files: false,
@@ -226,32 +247,21 @@ impl Workspace {
     pub(super) fn show_file_prompt(
         &mut self,
         path: PathBuf,
-        kind: PromptKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let name = if kind == PromptKind::Rename {
-            path.file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            String::new()
-        };
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         let directory = self
             .tree
             .as_ref()
             .is_some_and(|tree| tree.read(cx).is_directory(&path));
         let selection = rename_selection(&name, directory);
         let input = cx.new(|cx| {
-            let mut input = TextInput::new(
-                if kind == PromptKind::NewFolder {
-                    "Folder name"
-                } else {
-                    "Filename"
-                },
-                cx,
-            );
+            let mut input = TextInput::new(if directory { "Folder name" } else { "Filename" }, cx);
             input.set_text(name, cx);
             input.select_range(selection, cx);
             input
@@ -265,7 +275,7 @@ impl Workspace {
         input.focus_handle(cx).focus(window);
         self.file_prompt = Some(FilePrompt {
             path,
-            kind,
+            directory,
             error: None,
             input,
             _input_changes: input_changes,
@@ -351,23 +361,7 @@ impl Workspace {
             return;
         };
         let name = prompt.input.read(cx).text();
-        if prompt.kind.error(name).is_some() || prompt.error.is_some() {
-            return;
-        }
-        if prompt.kind != PromptKind::Rename {
-            let kind = if prompt.kind == PromptKind::NewFolder {
-                OperationKind::CreateFolder
-            } else {
-                OperationKind::CreateFile
-            };
-            self.start_file_operation(
-                Operation {
-                    source: prompt.path.join(name),
-                    kind,
-                },
-                window,
-                cx,
-            );
+        if name_error(name, prompt.directory).is_some() || prompt.error.is_some() {
             return;
         }
         let source = prompt.path.clone();
@@ -388,9 +382,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let prompt = self.file_prompt.as_ref()?;
-        let error = prompt
-            .kind
-            .error(prompt.input.read(cx).text())
+        let error = name_error(prompt.input.read(cx).text(), prompt.directory)
             .map(SharedString::from)
             .or_else(|| prompt.error.clone());
         let enabled = error.is_none() && !self.file_busy;
@@ -432,7 +424,7 @@ impl Workspace {
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .child(prompt.kind.title())
+                        .child("Rename")
                         .child(
                             div()
                                 .flex()
@@ -471,7 +463,7 @@ impl Workspace {
                                         .py_1()
                                         .rounded_sm()
                                         .bg(theme.border)
-                                        .child(prompt.kind.confirm())
+                                        .child("Rename")
                                         .when(!enabled, |button| button.opacity(0.5))
                                         .when(enabled, |button| {
                                             button.cursor_pointer().on_click(cx.listener(
@@ -572,6 +564,11 @@ impl Workspace {
                                         if cx.entity().entity_id() == origin
                                             && operation.is_creation()
                                         {
+                                            if let Some(tree) = &workspace.tree {
+                                                tree.update(cx, |tree, cx| {
+                                                    tree.finish_create(&operation.source, None, cx)
+                                                });
+                                            }
                                             workspace.cancel_file_prompt(window, cx);
                                             if matches!(operation.kind, OperationKind::CreateFile) {
                                                 workspace.open(
@@ -600,14 +597,19 @@ impl Workspace {
                 Err(error) => {
                     this.update(cx, |this, cx| {
                         if operation.is_creation()
-                            && let Some(prompt) = &mut this.file_prompt
+                            && this
+                                .tree
+                                .as_ref()
+                                .is_some_and(|tree| tree.read(cx).is_creating(&operation.source))
                         {
-                            prompt.error =
-                                Some(if error.kind() == std::io::ErrorKind::AlreadyExists {
-                                    "An item with that name already exists.".into()
-                                } else {
-                                    format!("Couldn't create this item: {error}").into()
-                                });
+                            let message = if error.kind() == std::io::ErrorKind::AlreadyExists {
+                                "An item with that name already exists.".to_owned()
+                            } else {
+                                format!("Couldn't create this item: {error}")
+                            };
+                            this.tree.as_ref().unwrap().update(cx, |tree, cx| {
+                                tree.finish_create(&operation.source, Some(message.into()), cx)
+                            });
                             this.notice = None;
                             cx.notify();
                         } else {

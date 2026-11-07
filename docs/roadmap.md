@@ -56,7 +56,7 @@ Next, in order:
    are implemented: multi-cursor, word movement/deletion, find/replace, line and
    indentation commands, EditorConfig, encoding/newline menus and editing settings.
    See [controls and limits](editing.md#editing-commands-and-settings).
-2. Add Save As and recovery-copy actions, then validate native platform behavior
+2. Add Save As for existing files and recovery-copy actions, then validate native platform behavior
    and injected save failures. Debounced external reloads and conflict choices
    are implemented, as is New File. Finish content anchoring on the first reload
    of preview-only documents, which currently retains the reading byte offset.

@@ -1,4 +1,3 @@
-use super::file_actions::PromptKind;
 use super::*;
 use crate::file_tree::FileAction;
 use gpui::{ClipboardItem, KeyDownEvent, anchored};
@@ -125,8 +124,8 @@ impl Workspace {
                 action.text(&path, self.root.as_deref()),
             )),
             Command::File(action) => self.file_action_at(action, path, window, cx),
-            Command::CreateFile => self.show_file_prompt(path, PromptKind::NewFile, window, cx),
-            Command::CreateFolder => self.show_file_prompt(path, PromptKind::NewFolder, window, cx),
+            Command::CreateFile => self.new_tree_item(Some(path), false, window, cx),
+            Command::CreateFolder => self.new_tree_item(Some(path), true, window, cx),
             Command::PasteInto => self.paste_file_into(path, window, cx),
         }
     }

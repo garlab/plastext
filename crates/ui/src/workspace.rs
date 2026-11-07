@@ -36,13 +36,15 @@ use crate::{
 
 mod tab_menu;
 use tab_menu::TabMenu;
-mod file_actions;
+pub(crate) mod file_actions;
 mod file_menu;
 use file_menu::FileMenu;
 mod editing;
 mod external;
 #[cfg(test)]
 mod menu_tests;
+#[cfg(test)]
+mod new_file_tests;
 mod opening;
 pub(crate) mod welcome;
 pub use editing::request_quit;
@@ -336,6 +338,19 @@ impl Workspace {
                         );
                     }
                     FileTreeEvent::Action(action) => this.file_action(*action, window, cx),
+                    FileTreeEvent::New { folder } => this.new_tree_item(None, *folder, window, cx),
+                    FileTreeEvent::Create { path, folder } => this.start_file_operation(
+                        file_actions::Operation {
+                            source: path.clone(),
+                            kind: if *folder {
+                                file_actions::OperationKind::CreateFolder
+                            } else {
+                                file_actions::OperationKind::CreateFile
+                            },
+                        },
+                        window,
+                        cx,
+                    ),
                     FileTreeEvent::ContextMenu { path, position } => {
                         this.open_file_menu(path.clone(), *position, window, cx);
                     }
@@ -838,9 +853,15 @@ impl Workspace {
         if focus_editor {
             tab.view.focus_handle(cx).focus(window);
         }
-        let path = tab.path.clone();
-        self.recent.retain(|recent| *recent != path);
-        self.recent.push(path);
+        if !tab
+            .view
+            .editing_document(cx)
+            .is_some_and(|doc| doc.read(cx).is_untitled())
+        {
+            let path = tab.path.clone();
+            self.recent.retain(|recent| *recent != path);
+            self.recent.push(path);
+        }
         if self.recent.len() > HISTORY_LEN {
             self.recent.remove(0);
         }
@@ -863,6 +884,11 @@ impl Workspace {
     fn sync_tree_selection(&self, cx: &mut Context<Self>) {
         let path = self.panes[&self.active_pane]
             .active_tab()
+            .filter(|tab| {
+                !tab.view
+                    .editing_document(cx)
+                    .is_some_and(|doc| doc.read(cx).is_untitled())
+            })
             .map(|tab| tab.path.clone());
         if let Some(tree) = &self.tree {
             tree.update(cx, |tree, cx| tree.select(path, cx));
@@ -983,6 +1009,13 @@ impl Workspace {
     /// Where the active tab is, if there is one.
     fn place(&self, cx: &App) -> Option<Place> {
         let tab = self.panes[&self.active_pane].active_tab()?;
+        if tab
+            .view
+            .editing_document(cx)
+            .is_some_and(|doc| doc.read(cx).is_untitled())
+        {
+            return None;
+        }
         Some(Place {
             path: tab.path.clone(),
             offset: tab.view.position(cx),

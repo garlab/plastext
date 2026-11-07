@@ -3,7 +3,8 @@
 The M3 file model is implemented in `plastext-buffer`. Its jobs can run on a
 worker while input continues against the shared document session. [Text/code
 editing](editing.md) uses its save and reload jobs, with filesystem watches and
-interactive conflict resolution. Save As and recovery-copy actions remain.
+interactive conflict resolution. Untitled drafts choose a destination on first
+save. Save As for existing files and recovery-copy actions remain.
 
 ## Saving existing files
 
@@ -132,7 +133,11 @@ write still aborts it. Comparisons are read-only snapshots: unified diffs up to
 8 MiB, otherwise two paged views. Deletion keeps the document and pins a preview
 tab. Paired renames are followed only after checking the destination's identity
 and that the old path is gone; unpaired moves show the missing-file banner.
-Save As, recreation of deleted files and recovery-copy actions remain pending.
+Save As for existing files, recreation of deleted files and recovery-copy actions
+remain pending. Untitled buffers stay in memory until saved, then adopt the saved
+path while retaining undo history and split-pane state. First saves publish new
+files without replacing a concurrently created entry; replacing an existing file
+uses the usual version-checked save after the native Save dialog confirms it.
 
 ## Validation
 

@@ -123,6 +123,10 @@ impl Workspace {
             return;
         }
         self.close_prompt = true;
+        let original_paths: Vec<_> = dirty
+            .iter()
+            .map(|(doc, _)| (doc.read(cx).path().to_owned(), doc.clone()))
+            .collect();
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
             if matches!(target, CloseTarget::FileOperation(_)) {
@@ -139,21 +143,36 @@ impl Workspace {
             if answer == 0 {
                 for (document, _) in &dirty {
                     document.update(cx, |doc, cx| doc.save(cx)).ok();
-                }
-                loop {
-                    let saving = cx
-                        .update(|_, cx| dirty.iter().any(|(doc, _)| doc.read(cx).is_saving()))
-                        .unwrap_or(false);
-                    if !saving {
+                    // In particular, present one untitled Save dialog at a time.
+                    loop {
+                        let saving = cx
+                            .update(|_, cx| document.read(cx).is_saving())
+                            .unwrap_or(false);
+                        if !saving {
+                            break;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(20))
+                            .await;
+                    }
+                    if cx
+                        .update(|_, cx| document.read(cx).is_dirty())
+                        .unwrap_or(true)
+                    {
                         break;
                     }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(20))
-                        .await;
                 }
             }
             this.update_in(cx, |this, window, cx| {
                 this.close_prompt = false;
+                let mut target = target;
+                if let CloseTarget::Tabs { paths, active, .. } = &mut target {
+                    for path in paths.iter_mut().chain(active.iter_mut()) {
+                        if let Some((_, doc)) = original_paths.iter().find(|(old, _)| old == path) {
+                            *path = doc.read(cx).path().to_owned();
+                        }
+                    }
+                }
                 let safe = if answer == 0 {
                     this.close_documents(&target, cx)
                         .iter()
