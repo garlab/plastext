@@ -375,7 +375,7 @@ impl EditBuffer {
             before,
             after,
             size_of::<Change>() as u64,
-            None,
+            Vec::new(),
             UndoGroup::New,
         );
         self.break_undo_group();
@@ -453,41 +453,13 @@ impl EditBuffer {
         if range.start > range.end || range.end > self.current.len() {
             return Err(EditError::InvalidRange);
         }
-        self.current
-            .len()
-            .checked_sub(range.end - range.start)
-            .and_then(|len| len.checked_add(bytes.len() as u64))
-            .ok_or(EditError::LengthOverflow)?;
         if range.is_empty() && bytes.is_empty() {
             return Ok(());
         }
         let before = self.current.clone();
-        // Split the end first, keeping both error ranges in document coordinates.
-        let (prefix, suffix) =
-            piece_tree::split(before.root.clone(), range.end).map_err(EditError::Read)?;
-        let (prefix, removed) = piece_tree::split(prefix, range.start).map_err(EditError::Read)?;
-        let added = piece_tree::added(bytes);
-        let payload = piece_tree::cost(&removed).saturating_add(piece_tree::cost(&added));
-        let root = piece_tree::join(piece_tree::join(prefix, added), suffix);
-        // A split/join copies paths and can rotate on each level. Charge both
-        // directions, including Arc bookkeeping, rather than counting only text.
-        let heights = u64::from(before.root.as_ref().map_or(0, |n| n.height))
-            + u64::from(root.as_ref().map_or(0, |n| n.height))
-            + 1;
-        let charge = payload
-            .saturating_add(heights * 8 * (size_of::<piece_tree::Node>() as u64 + 32))
-            .saturating_add(2 * size_of::<EditDelta>() as u64);
-        let edit = EditDelta {
-            range,
-            inserted: bytes.len() as u64,
-        };
-        let after = TextSnapshot {
-            root,
-            owner: before.owner.clone(),
-            revision: self.next_revision,
-            format: before.format,
-        };
-        self.record(before, after, charge, Some(edit), group);
+        let (mut after, charge, edit) = replace_snapshot(&before, range, bytes)?;
+        after.revision = self.next_revision;
+        self.record(before, after, charge, vec![edit], group);
         Ok(())
     }
 
@@ -496,7 +468,7 @@ impl EditBuffer {
         before: TextSnapshot,
         after: TextSnapshot,
         charge: u64,
-        edit: Option<EditDelta>,
+        edits: Vec<EditDelta>,
         group: UndoGroup,
     ) {
         self.next_revision = self
@@ -514,15 +486,13 @@ impl EditBuffer {
         if let Some(previous) = self.undo.back_mut().filter(|_| coalesce) {
             previous.after = after.clone();
             previous.charge = previous.charge.saturating_add(charge);
-            if let Some(edit) = edit {
-                previous.edits.push(edit);
-            }
+            previous.edits.extend(edits);
         } else {
             self.undo.push_back(Change {
                 before,
                 after: after.clone(),
                 charge,
-                edits: edit.into_iter().collect(),
+                edits,
             });
         }
         self.current = after;
@@ -596,3 +566,47 @@ pub(super) fn check_cancel(cancel: &AtomicBool) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+fn replace_snapshot(
+    before: &TextSnapshot,
+    range: Range<u64>,
+    bytes: &[u8],
+) -> Result<(TextSnapshot, u64, EditDelta), EditError> {
+    if range.start > range.end || range.end > before.len() {
+        return Err(EditError::InvalidRange);
+    }
+    before
+        .len()
+        .checked_sub(range.end - range.start)
+        .and_then(|len| len.checked_add(bytes.len() as u64))
+        .ok_or(EditError::LengthOverflow)?;
+    // Split the end first, keeping both error ranges in document coordinates.
+    let (prefix, suffix) =
+        piece_tree::split(before.root.clone(), range.end).map_err(EditError::Read)?;
+    let (prefix, removed) = piece_tree::split(prefix, range.start).map_err(EditError::Read)?;
+    let added = piece_tree::added(bytes);
+    let payload = piece_tree::cost(&removed).saturating_add(piece_tree::cost(&added));
+    let root = piece_tree::join(piece_tree::join(prefix, added), suffix);
+    // A split/join copies paths and can rotate on each level. Charge both
+    // directions, including Arc bookkeeping, rather than counting only text.
+    let heights = u64::from(before.root.as_ref().map_or(0, |n| n.height))
+        + u64::from(root.as_ref().map_or(0, |n| n.height))
+        + 1;
+    let charge = payload
+        .saturating_add(heights * 8 * (size_of::<piece_tree::Node>() as u64 + 32))
+        .saturating_add(2 * size_of::<EditDelta>() as u64);
+    let edit = EditDelta {
+        range,
+        inserted: bytes.len() as u64,
+    };
+    let after = TextSnapshot {
+        root,
+        owner: before.owner.clone(),
+        revision: before.revision,
+        format: before.format,
+    };
+    Ok((after, charge, edit))
+}
+
+mod batch;
+pub use batch::{PreparedEdits, TextEdit};

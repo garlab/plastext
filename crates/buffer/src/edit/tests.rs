@@ -417,3 +417,50 @@ fn missing_and_uncached_reads_use_edited_coordinates() {
     assert_eq!(text.missing(requested.clone()), None);
     assert_eq!(text.bytes(requested).unwrap().as_ref(), b"aaaaaaaaaa");
 }
+
+#[test]
+fn prepared_batch_spans_more_storage_than_cache_and_cancels_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("batch.txt");
+    let bytes = vec![b'x'; 2 * 1024 * 1024];
+    fs::write(&path, &bytes).unwrap();
+    let mut buffer = EditBuffer::open(
+        &path,
+        OpenOptions {
+            large_file_threshold: 1,
+            block_cache: 256 * 1024,
+        },
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    let edits: Vec<_> = (1..32)
+        .map(|i| TextEdit {
+            range: i * 65536..i * 65536 + 1,
+            text: "😀".into(),
+        })
+        .collect();
+    let before = buffer.snapshot();
+    let cancelled = AtomicBool::new(true);
+    assert!(before.prepare_edits_loading(&edits, &cancelled).is_err());
+    assert_eq!(buffer.snapshot().revision(), before.revision());
+    let prepared = before
+        .prepare_edits_loading(&edits, &AtomicBool::new(false))
+        .unwrap();
+    assert!(buffer.apply_prepared(prepared, UndoGroup::New));
+    let mut actual = Vec::new();
+    buffer
+        .snapshot()
+        .read_uncached(0..buffer.snapshot().len(), &mut actual)
+        .unwrap();
+    let mut expected = bytes;
+    for edit in edits.iter().rev() {
+        expected.splice(
+            edit.range.start as usize..edit.range.end as usize,
+            edit.text.bytes(),
+        );
+    }
+    assert_eq!(actual, expected);
+    assert!(buffer.undo());
+    assert_eq!(buffer.snapshot().revision(), before.revision());
+}

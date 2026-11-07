@@ -21,10 +21,15 @@ mod session;
 mod source;
 mod text;
 mod unicode_summary;
+mod word;
+pub use word::WordSearch;
 
 use std::{io, path::Path, sync::Arc};
 
-pub use edit::{EditBuffer, EditDelta, EditError, RetiredHistory, TextSnapshot, UndoGroup};
+pub use edit::{
+    EditBuffer, EditDelta, EditError, PreparedEdits, RetiredHistory, TextEdit, TextSnapshot,
+    UndoGroup,
+};
 pub use encoding::{EncodingHint, TextEncoding, TextFormat};
 pub use file_document::{
     ExternalCheck, ExternalObservation, ExternalResult, ExternalState, FileDocument,

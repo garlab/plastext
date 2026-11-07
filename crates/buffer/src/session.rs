@@ -1,6 +1,7 @@
 //! One editing owner per document, with pane-local byte anchors. The UI can
 //! own this model in one entity; background tasks receive immutable snapshots.
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, VecDeque},
     ops::Range,
 };
@@ -67,7 +68,7 @@ impl Selection {
         self.anchor.offset.min(self.head.offset)..self.anchor.offset.max(self.head.offset)
     }
 
-    fn rebase(&mut self, edit: &EditDelta) {
+    pub fn rebase(&mut self, edit: &EditDelta) {
         for anchor in [&mut self.anchor, &mut self.head] {
             anchor.offset = if anchor.offset < edit.range.start {
                 anchor.offset
@@ -115,6 +116,7 @@ pub struct PaneSnapshot {
     id: PaneId,
     epoch: u64,
     selection: Selection,
+    additional: Vec<Selection>,
 }
 
 impl PaneSnapshot {
@@ -124,6 +126,11 @@ impl PaneSnapshot {
     pub fn selection(&self) -> Selection {
         self.selection
     }
+    pub fn selections(&self) -> Vec<Selection> {
+        std::iter::once(self.selection)
+            .chain(self.additional.iter().copied())
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +138,8 @@ pub enum SessionError {
     UnknownPane,
     Stale,
     Pending,
+    InvalidSelections,
+    Limit(&'static str),
     Text(TextError),
 }
 
@@ -141,7 +150,9 @@ impl From<TextError> for SessionError {
 }
 
 struct Pane {
+    resolved: RefCell<Vec<Selection>>,
     selection: Selection,
+    additional: Vec<Selection>,
     epoch: u64,
 }
 
@@ -221,7 +232,9 @@ impl DocumentSession {
         self.panes.insert(
             id,
             Pane {
+                resolved: RefCell::new(vec![selection]),
                 selection,
+                additional: Vec::new(),
                 epoch: 0,
             },
         );
@@ -238,12 +251,24 @@ impl DocumentSession {
     pub fn pane_snapshot(&self, id: PaneId) -> Result<PaneSnapshot, SessionError> {
         let pane = self.panes.get(&id).ok_or(SessionError::UnknownPane)?;
         let document = self.snapshot();
+        let mut resolved = pane.resolved.borrow_mut();
+        let selections: Vec<_> = std::iter::once(pane.selection)
+            .chain(pane.additional.iter().copied())
+            .collect();
+        for selection in &selections[resolved.len()..] {
+            resolved.push(selection.resolved(&document.text)?);
+        }
+        let mut resolved = normalize_selections(resolved.clone())?;
         Ok(PaneSnapshot {
-            selection: pane.selection.resolved(&document.text)?,
+            selection: resolved.remove(0),
+            additional: resolved,
             document,
             id,
             epoch: pane.epoch,
         })
+    }
+    pub fn pane_snapshot_for(&self, base: &PaneSnapshot) -> Result<PaneSnapshot, SessionError> {
+        self.pane_snapshot(base.id)
     }
 
     pub fn set_selection(
@@ -256,6 +281,97 @@ impl DocumentSession {
         self.update_selection(base.id, selection);
         self.last_actor = None;
         self.buffer.break_undo_group();
+        Ok(())
+    }
+
+    pub fn set_selections(
+        &mut self,
+        base: &PaneSnapshot,
+        selections: Vec<Selection>,
+    ) -> Result<(), SessionError> {
+        self.validate(base)?;
+        let selections = normalize_selections(selections)?;
+        for selection in &selections {
+            self.validate_selection(*selection)?;
+        }
+        self.update_selections(base.id, selections);
+        self.last_actor = None;
+        self.buffer.break_undo_group();
+        Ok(())
+    }
+
+    fn update_selections(&mut self, id: PaneId, mut selections: Vec<Selection>) {
+        let primary = selections.remove(0);
+        self.update_selection(id, primary);
+        let pane = self.panes.get_mut(&id).unwrap();
+        *pane.resolved.get_mut() = std::iter::once(primary)
+            .chain(selections.iter().copied())
+            .collect();
+        pane.additional = selections;
+    }
+
+    /// Apply a complete transaction prepared against this pane's immutable
+    /// version. All panes are rebased together, and one Undo restores it all.
+    pub fn apply_prepared(
+        &mut self,
+        base: &PaneSnapshot,
+        prepared: crate::PreparedEdits,
+        group: UndoGroup,
+    ) -> Result<(), SessionError> {
+        if let Err(error) = self.validate(base) {
+            self.buffer.retire_prepared(prepared);
+            return Err(error);
+        }
+        let desired = prepared.selections.clone();
+        let edits = prepared.edits.clone();
+        let group = if self.last_actor == Some(base.id) {
+            group
+        } else {
+            UndoGroup::New
+        };
+        if !self.buffer.apply_prepared(prepared, group) {
+            return Err(SessionError::Stale);
+        }
+        if edits.is_empty() {
+            if let Some(selections) = desired {
+                self.update_selections(base.id, selections);
+                self.last_actor = None;
+                self.buffer.break_undo_group();
+            }
+            return Ok(());
+        }
+        for edit in &edits {
+            rebase_panes(&mut self.panes, edit);
+        }
+        if let Some(selections) = desired {
+            self.update_selections(base.id, selections);
+        }
+        self.last_actor = Some(base.id);
+        self.changed(edits);
+        Ok(())
+    }
+
+    pub fn replace_selections(
+        &mut self,
+        base: &PaneSnapshot,
+        text: &str,
+        group: UndoGroup,
+    ) -> Result<(), SessionError> {
+        let edits: Vec<_> = base
+            .selections()
+            .iter()
+            .map(|s| crate::TextEdit {
+                range: s.range(),
+                text: text.into(),
+            })
+            .collect();
+        let prepared = base.document.text.prepare_edits(&edits)?;
+        self.apply_prepared(base, prepared, group)?;
+        let pane = self.panes.get_mut(&base.id).unwrap();
+        pane.selection = Selection::caret(pane.selection.range().end);
+        for selection in &mut pane.additional {
+            *selection = Selection::caret(selection.range().end);
+        }
         Ok(())
     }
 
@@ -394,6 +510,8 @@ impl DocumentSession {
         let len = crate::ByteSource::len(&buffer.snapshot());
         let retired = std::mem::replace(&mut self.buffer, buffer);
         for pane in self.panes.values_mut() {
+            pane.resolved.get_mut().clear();
+            pane.additional.clear();
             pane.selection.anchor.offset = pane.selection.anchor.offset.min(len);
             pane.selection.head.offset = pane.selection.head.offset.min(len);
             if pane.selection.anchor.offset == pane.selection.head.offset {
@@ -423,7 +541,9 @@ impl DocumentSession {
 
     fn update_selection(&mut self, id: PaneId, selection: Selection) {
         let pane = self.panes.get_mut(&id).unwrap();
+        pane.resolved.get_mut().clear();
         pane.selection = selection;
+        pane.additional.clear();
         pane.epoch = pane
             .epoch
             .checked_add(1)
@@ -451,7 +571,11 @@ impl DocumentSession {
 
 fn rebase_panes(panes: &mut BTreeMap<PaneId, Pane>, edit: &EditDelta) {
     for pane in panes.values_mut() {
+        pane.resolved.get_mut().clear();
         pane.selection.rebase(edit);
+        for selection in &mut pane.additional {
+            selection.rebase(edit);
+        }
     }
 }
 
@@ -459,23 +583,64 @@ fn rebase_panes(panes: &mut BTreeMap<PaneId, Pane>, edit: &EditDelta) {
 pub enum CursorCommand {
     Move { direction: Direction, extend: bool },
     Delete { direction: Direction },
+    MoveWord { direction: Direction, extend: bool },
+    DeleteWord { direction: Direction },
 }
 
-/// Holds at most one bounded grapheme search and the originating pane stamp.
-/// Dropping it cancels the operation; polling never changes document content.
+impl CursorCommand {
+    fn direction(self) -> Direction {
+        match self {
+            Self::Move { direction, .. }
+            | Self::Delete { direction }
+            | Self::MoveWord { direction, .. }
+            | Self::DeleteWord { direction } => direction,
+        }
+    }
+    fn extend(self) -> bool {
+        matches!(
+            self,
+            Self::Move { extend: true, .. } | Self::MoveWord { extend: true, .. }
+        )
+    }
+    fn deleting(self) -> bool {
+        matches!(self, Self::Delete { .. } | Self::DeleteWord { .. })
+    }
+}
+
+enum Navigation {
+    Grapheme(GraphemeSearch),
+    Word(crate::WordSearch),
+}
+impl Navigation {
+    fn poll(&mut self, chunks: usize) -> Result<Option<u64>, TextError> {
+        match self {
+            Self::Grapheme(search) => search.poll(chunks),
+            Self::Word(search) => search.poll(chunks * 128),
+        }
+    }
+}
+
 pub struct PendingCommand {
     base: PaneSnapshot,
     command: CursorCommand,
-    search: Option<GraphemeSearch>,
-    target: Option<u64>,
+    steps: Vec<(Selection, Option<Navigation>, Option<u64>)>,
+    next: usize,
 }
-
 impl PendingCommand {
     pub fn poll(&mut self, chunks: usize) -> Result<bool, SessionError> {
-        if self.target.is_none() {
-            self.target = self.search.as_mut().unwrap().poll(chunks)?;
+        for _ in 0..chunks {
+            if self.next == self.steps.len() {
+                return Ok(true);
+            }
+            let (_, search, target) = &mut self.steps[self.next];
+            if target.is_none() {
+                *target = search.as_mut().unwrap().poll(1)?;
+            }
+            if target.is_some() {
+                self.next += 1;
+            }
         }
-        Ok(self.target.is_some())
+        Ok(self.next == self.steps.len())
     }
     pub fn snapshot(&self) -> &TextSnapshot {
         &self.base.document.text
@@ -489,65 +654,137 @@ impl DocumentSession {
         command: CursorCommand,
     ) -> Result<PendingCommand, SessionError> {
         self.validate(base)?;
-        let direction = match command {
-            CursorCommand::Move { direction, .. } | CursorCommand::Delete { direction } => {
-                direction
-            }
-        };
-        let range = base.selection.range();
-        let collapse =
-            !range.is_empty() && !matches!(command, CursorCommand::Move { extend: true, .. });
-        let target = collapse.then_some(if direction == Direction::Backward {
-            range.start
-        } else {
-            range.end
-        });
-        let search = if collapse {
-            None
-        } else {
-            Some(
-                base.document
-                    .text
-                    .grapheme_search(base.selection.head.offset, direction)?,
-            )
-        };
+        let mut steps = Vec::new();
+        for selection in base.selections() {
+            let range = selection.range();
+            let collapse = !range.is_empty() && !command.extend();
+            let target = collapse.then_some(if command.direction() == Direction::Backward {
+                range.start
+            } else {
+                range.end
+            });
+            let search = if collapse {
+                None
+            } else if matches!(
+                command,
+                CursorCommand::MoveWord { .. } | CursorCommand::DeleteWord { .. }
+            ) {
+                Some(Navigation::Word(
+                    base.document
+                        .text
+                        .word_search(selection.head.offset, command.direction())?,
+                ))
+            } else {
+                Some(Navigation::Grapheme(base.document.text.grapheme_search(
+                    selection.head.offset,
+                    command.direction(),
+                )?))
+            };
+            steps.push((selection, search, target));
+        }
         Ok(PendingCommand {
             base: base.clone(),
             command,
-            target,
-            search,
+            steps,
+            next: 0,
         })
     }
-
-    /// May be retried after Missing. Selection/content changes, pane closure or
-    /// an edit/undo cycle invalidate the command rather than applying old offsets.
     pub fn finish_command(&mut self, command: &PendingCommand) -> Result<(), SessionError> {
         self.validate(&command.base)?;
-        let target = command.target.ok_or(SessionError::Pending)?;
-        match command.command {
-            CursorCommand::Move { extend, .. } => {
-                let anchor = if extend {
-                    command.base.selection.anchor.offset
-                } else {
-                    target
-                };
-                self.update_selection(command.base.id, Selection::new(anchor, target));
-                self.last_actor = None;
-                self.buffer.break_undo_group();
-                Ok(())
+        let targets: Vec<_> = command
+            .steps
+            .iter()
+            .map(|(selection, _, target)| {
+                target
+                    .map(|target| (*selection, target))
+                    .ok_or(SessionError::Pending)
+            })
+            .collect::<Result<_, _>>()?;
+        if !command.command.deleting() {
+            let selections = targets
+                .into_iter()
+                .map(|(s, target)| {
+                    Selection::new(
+                        if command.command.extend() {
+                            s.anchor.offset
+                        } else {
+                            target
+                        },
+                        target,
+                    )
+                })
+                .collect();
+            self.set_selections(&command.base, selections)
+        } else {
+            let ranges = normalize_selections(
+                targets
+                    .into_iter()
+                    .map(|(s, target)| {
+                        if s.range().is_empty() {
+                            Selection::new(s.head.offset, target)
+                        } else {
+                            s
+                        }
+                    })
+                    .collect(),
+            )?;
+            let edits: Vec<_> = ranges
+                .iter()
+                .map(|s| crate::TextEdit {
+                    range: s.range(),
+                    text: String::new(),
+                })
+                .collect();
+            let prepared = command.base.document.text.prepare_edits(&edits)?;
+            self.apply_prepared(&command.base, prepared, UndoGroup::New)?;
+            let pane = self.panes.get_mut(&command.base.id).unwrap();
+            pane.selection = Selection::caret(pane.selection.range().start);
+            for selection in &mut pane.additional {
+                *selection = Selection::caret(selection.range().start);
             }
-            CursorCommand::Delete { .. } => {
-                let range = command.base.selection.range();
-                let range = if range.is_empty() {
-                    range.start.min(target)..range.start.max(target)
-                } else {
-                    range
-                };
-                self.replace(&command.base, range, "", UndoGroup::New)
-            }
+            let selections = self.pane_snapshot(command.base.id)?.selections();
+            self.update_selections(command.base.id, normalize_selections(selections)?);
+            Ok(())
         }
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Keep the first (primary) selection while merging overlaps and duplicate
+/// carets. Adjacent nonempty selections remain separate edit targets.
+pub(crate) fn normalize_selections(
+    selections: Vec<Selection>,
+) -> Result<Vec<Selection>, SessionError> {
+    if selections.is_empty() || selections.len() > 4096 {
+        return Err(SessionError::InvalidSelections);
+    }
+    let primary = selections[0];
+    let mut sorted = selections;
+    sorted.sort_by_key(|s| (s.range().start, s.range().end));
+    let mut result: Vec<Selection> = Vec::new();
+    for selection in sorted {
+        if let Some(last) = result.last_mut() {
+            let a = last.range();
+            let b = selection.range();
+            if b.start < a.end || (b.start == a.end && (a.is_empty() || b.is_empty())) {
+                *last = Selection::new(a.start, a.end.max(b.end));
+                continue;
+            }
+        }
+        result.push(selection);
+    }
+    let at = result
+        .iter()
+        .position(|s| {
+            s.range().start <= primary.range().start && s.range().end >= primary.range().end
+        })
+        .unwrap();
+    let mut selected = result.remove(at);
+    if primary.anchor.offset > primary.head.offset {
+        selected = Selection::new(selected.range().end, selected.range().start);
+    }
+    result.insert(0, selected);
+    Ok(result)
+}

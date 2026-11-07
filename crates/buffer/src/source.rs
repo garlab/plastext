@@ -227,7 +227,7 @@ impl FileSource {
     }
 
     /// Bounded, uncached reads for immutable edit pieces during streaming save.
-    pub(super) fn read_uncached(&self, range: Range<u64>, buffer: &mut [u8]) -> io::Result<()> {
+    pub fn read_uncached(&self, range: Range<u64>, buffer: &mut [u8]) -> io::Result<()> {
         assert_eq!(range.end - range.start, buffer.len() as u64);
         assert!(range.end <= self.len);
         match &self.storage {

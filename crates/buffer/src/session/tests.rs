@@ -335,3 +335,143 @@ fn malformed_input_and_unready_commands_leave_the_session_unchanged() {
     assert!(!session.is_dirty());
     assert!(!session.can_undo());
 }
+
+#[test]
+fn multiple_selections_type_delete_and_undo_atomically() {
+    let mut session = DocumentSession::new(EditBuffer::from_bytes("one α two α three"));
+    let pane = session.attach_pane(Selection::caret(0)).unwrap();
+    session
+        .set_selections(
+            &session.pane_snapshot(pane).unwrap(),
+            vec![Selection::new(4, 6), Selection::new(11, 13)],
+        )
+        .unwrap();
+    let before = session.snapshot();
+    session
+        .replace_selections(&session.pane_snapshot(pane).unwrap(), "😀", UndoGroup::New)
+        .unwrap();
+    assert_eq!(text(&session), "one 😀 two 😀 three".as_bytes());
+    assert_eq!(
+        session.pane_snapshot(pane).unwrap().selections(),
+        vec![Selection::caret(8), Selection::caret(17)]
+    );
+    command(
+        &mut session,
+        pane,
+        CursorCommand::Delete {
+            direction: Direction::Backward,
+        },
+    );
+    assert_eq!(text(&session), b"one  two  three");
+    session.undo(&session.pane_snapshot(pane).unwrap()).unwrap();
+    assert_eq!(text(&session), "one 😀 two 😀 three".as_bytes());
+    session.undo(&session.pane_snapshot(pane).unwrap()).unwrap();
+    assert_eq!(text(&session), "one α two α three".as_bytes());
+    assert_eq!(
+        before
+            .text()
+            .bytes(0..before.text().len())
+            .unwrap()
+            .as_ref(),
+        text(&session)
+    );
+    session.redo(&session.pane_snapshot(pane).unwrap()).unwrap();
+    assert_eq!(text(&session), "one 😀 two 😀 three".as_bytes());
+}
+
+#[test]
+fn overlapping_selections_merge_and_stale_preparations_never_apply() {
+    let mut session = DocumentSession::new(EditBuffer::from_bytes("abcdef"));
+    session.defer_history_drop();
+    let pane = session.attach_pane(Selection::caret(0)).unwrap();
+    session
+        .set_selections(
+            &session.pane_snapshot(pane).unwrap(),
+            vec![
+                Selection::new(4, 1),
+                Selection::new(3, 5),
+                Selection::caret(3),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        session.pane_snapshot(pane).unwrap().selections(),
+        vec![Selection::new(5, 1)]
+    );
+    let base = session.pane_snapshot(pane).unwrap();
+    let prepared = base
+        .document()
+        .text()
+        .prepare_edits(&[crate::TextEdit {
+            range: 1..5,
+            text: "x".into(),
+        }])
+        .unwrap();
+    session.set_selection(&base, Selection::caret(0)).unwrap();
+    assert_eq!(
+        session.apply_prepared(&base, prepared, UndoGroup::New),
+        Err(SessionError::Stale)
+    );
+    let retired = session
+        .take_retired_history()
+        .expect("rejected batch is retired off-thread");
+    std::thread::spawn(move || drop(retired)).join().unwrap();
+    assert_eq!(text(&session), b"abcdef");
+    let before = session.snapshot();
+    assert!(
+        before
+            .text()
+            .prepare_edits(&[
+                crate::TextEdit {
+                    range: 0..3,
+                    text: "x".into()
+                },
+                crate::TextEdit {
+                    range: 2..4,
+                    text: "y".into()
+                }
+            ])
+            .is_err()
+    );
+    assert!(session.is_current(&before));
+}
+
+#[test]
+fn word_movement_selection_and_deletion_keep_unicode_graphemes_whole() {
+    let mut session = DocumentSession::new(EditBuffer::from_bytes("e\u{301}lan  hello_world! 😀"));
+    let pane = session.attach_pane(Selection::caret(0)).unwrap();
+    command(
+        &mut session,
+        pane,
+        CursorCommand::MoveWord {
+            direction: Direction::Forward,
+            extend: false,
+        },
+    );
+    assert_eq!(
+        session.pane_snapshot(pane).unwrap().selection(),
+        Selection::caret(6)
+    );
+    command(
+        &mut session,
+        pane,
+        CursorCommand::MoveWord {
+            direction: Direction::Forward,
+            extend: true,
+        },
+    );
+    assert_eq!(
+        session.pane_snapshot(pane).unwrap().selection(),
+        Selection::new(6, 19)
+    );
+    command(
+        &mut session,
+        pane,
+        CursorCommand::DeleteWord {
+            direction: Direction::Backward,
+        },
+    );
+    assert_eq!(text(&session), "e\u{301}lan! 😀".as_bytes());
+    session.undo(&session.pane_snapshot(pane).unwrap()).unwrap();
+    assert_eq!(text(&session), "e\u{301}lan  hello_world! 😀".as_bytes());
+}
