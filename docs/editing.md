@@ -25,10 +25,23 @@ typing, waiting, switching tabs and switching to Preview leave the disk file alo
 | Document start / end | Cmd-Up / Cmd-Down |
 | Extend to line or document boundary | Add Shift to the Cmd shortcut |
 | Scroll a page | Page Up / Page Down |
+| Move / select a word | Option-Left/Right / Option-Shift-Left/Right |
+| Delete a word | Option-Backspace / Option-Delete |
+| Add/remove a cursor | Option-click |
+| Add next occurrence / select all occurrences | Cmd-Option-G / Cmd-Shift-L |
+| Add cursor above / below | Cmd-Option-Up / Cmd-Option-Down |
+| Replace | Cmd-Option-F |
+| Indent / outdent | Cmd-] / Cmd-[; Tab / Shift-Tab for selected lines |
+| Toggle comment | Cmd-/ |
+| Move line up / down | Option-Up / Option-Down |
+| Duplicate line up / down | Option-Shift-Up / Option-Shift-Down |
+| Go to matching bracket | Cmd-Shift-\ |
+| Settings | Cmd-, |
 
 Mouse selection, Shift-click, double-click words and triple-click lines work in
 edit mode. Backspace/Delete move through complete grapheme clusters. Return
-uses the document's preferred line ending; Tab inserts a tab. Native input uses
+uses the document's preferred line ending and inherits indentation; Tab uses
+the resolved tabs/spaces setting. Native input uses
 UTF-16 coordinates and supports marked text for IME composition.
 
 Keyboard movement and typing scroll just enough to keep three lines of context
@@ -74,7 +87,7 @@ until the parse completes. The coordinate cache is bounded and shared-session
 edits update each pane independently. Syntax-tree folding, outline and sticky definitions are not
 yet connected to edited snapshots.
 
-Saves run on a worker, preserve the existing encoding and line endings, and keep
+Saves run on a worker, preserve encoding and line endings unless explicitly configured, and keep
 undo history. Typing during a save remains dirty until that newer version is
 saved. Atomic saves preserve metadata and write through symlinks; hard-linked
 files use the backend's in-place save with a recovery copy. If the disk file has
@@ -86,19 +99,73 @@ Save, Cancel and Discard. A newer edit invalidates a pending discard decision.
 Closing one split copy keeps the document open in the remaining pane. Pending
 input or saves must finish before the document can close.
 
+## Editing commands and settings
+
+**Edit** contains selection, line, replacement, encoding and newline commands;
+**View → Show Whitespace** shows spaces and tabs without changing copied text.
+Bracket matching uses the current syntax tree and respects strings/comments.
+It is available for parsed languages within the syntax-size limit. Auto-closing
+brackets and quotes are off by default; enable `editor.auto_close_pairs` to insert
+pairs, wrap selections and step over an existing closing delimiter.
+
+`Cmd-D` and `Cmd-Shift-D` remain Split Right and Split Down. To add occurrences,
+select text and use `Cmd-Option-G`; without a selection, it first selects the word
+at the caret. Escape keeps only the primary cursor. Overlapping selections merge.
+Copy/cut joins nonempty selections with newlines in document order. Paste distributes
+lines when their count matches the number of cursors; otherwise it inserts the
+same text at every cursor. Multi-cursor changes are atomic and undo together.
+IME composition uses the primary selection and clears additional cursors.
+
+Find exposes **Aa**, **ab** and **.*** for case, whole-word and regex matching.
+**Selection** uses the selection captured when Find opened and follows it through
+edits. Replace All uses one immutable document version and one undo transaction;
+changing the document, selection or query invalidates pending work. Regex
+replacements support `$1`, `${name}` and `$$`; literal replacements are verbatim.
+Regex matching is per logical line (LF, CRLF or CR), including zero-width anchors;
+literal search also supports line breaks. Multiline regex matching is not implemented.
+
+Bulk line commands, paste, multi-cursor typing and replacement prepare their
+changes on workers. Commands are queued in order; a stale operation cannot overwrite
+another pane's changes. Limits are 4,096 cursors, 100,000 lines/matches per bulk
+operation and 64 MiB of inserted/copied command text. Regex searches reject lines
+over 8 MiB; literal search streams longer lines. A limit error applies no partial
+replacement. Ordinary typing, movement and viewport drawing keep their bounded
+paths; these limits do not certify native keystroke-to-pixel latency.
+
+**Settings** opens the public user configuration with commented editing defaults.
+Restart to apply changed defaults. `editor.open_mode` accepts `edit` (default) or
+`read`; `editor.atomic_save` defaults to true. Indentation uses detected tabs/spaces,
+then `.editorconfig` overrides. Set `detect_indentation = false` for fixed
+`indent_size`, `tab_size` and `insert_spaces`. `auto_indent`, `auto_close_pairs`,
+`show_whitespace` and `editorconfig` can also be configured.
+
+EditorConfig discovery respects `root`, section globs, ancestor precedence and
+`unset`. Files are read on a worker, limited to 64 KiB each and 128 ancestors;
+indent widths are clamped to 1–16 columns. `trim_trailing_whitespace` and
+`insert_final_newline` run only on explicit Save and are undoable. False disables
+final-newline insertion and preserves existing endings. `charset` and `end_of_line`
+set the save format. UTF-8 (with/without BOM) and UTF-16 LE/BE are supported;
+EditorConfig's ISO-8859-1 output is rejected explicitly rather than substituted
+with Windows-1252.
+
+**Edit → Save with Encoding / Line Endings** sets an undoable output policy for
+the current document; the status bar shows it. These menus do not write to disk.
+An explicit choice overrides that file's EditorConfig output setting for the
+session. **Reopen with Encoding** reinterprets a clean file and is disabled with
+unsaved edits. Encoding failures leave the destination unchanged. If typing
+changes a document during save cleanup, it stays dirty and requests another Save.
+
 ## Current scope
 
-This is the first GUI editing increment in M3:
+Remaining M3 work:
 
 - Automatic editing applies to plain text, code and Markdown Source. Other preview/source
   toggles remain read-only until their synchronization is connected.
-- Multicursor, word movement, replace, indentation commands, EditorConfig,
-  new files, Save As and encoding/newline controls remain to implement.
+- Save As, column selection and restoring historical cursor selections on undo
+  remain to implement. New File is available from the File menu and navigation pane.
 - Filesystem reload notifications and interactive conflict resolution are not
   connected yet. A save refuses changed disk contents; it does not overwrite
   them automatically.
-- `editor.open_mode`, `editor.atomic_save` and other editing preferences from the
-  specification are not exposed yet.
 - Cut/copy are limited to 64 MiB. A cut whose selection is uncached first loads
   it and asks for Cut again; it never deletes before copying.
 

@@ -14,6 +14,39 @@ gpui::actions!(
         FindNext,
         FindPrevious,
         ShowCharacterPalette,
+        Replace,
+        Indent,
+        Outdent,
+        ToggleComment,
+        MoveLineUp,
+        MoveLineDown,
+        DuplicateLineUp,
+        DuplicateLineDown,
+        AddNextOccurrence,
+        SelectAllOccurrences,
+        AddCursorAbove,
+        AddCursorBelow,
+        JumpToBracket,
+        ToggleWhitespace,
+        OpenSettings,
         ToggleWordWrap
     ]
 );
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = edit, no_json)]
+pub struct SetEncoding {
+    pub label: String,
+    pub bom: bool,
+}
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = edit, no_json)]
+pub struct SetLineEnding {
+    pub ending: String,
+}
+
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = edit, no_json)]
+pub struct ReopenEncoding {
+    pub label: String,
+}

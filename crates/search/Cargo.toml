@@ -13,6 +13,7 @@ grep-matcher = "0.1"
 grep-regex = "0.1"
 grep-searcher = "0.1"
 globset.workspace = true
+regex = "1"
 plastext-buffer.workspace = true
 plastext-project.workspace = true
 nucleo.workspace = true

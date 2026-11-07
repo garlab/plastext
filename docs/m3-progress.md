@@ -174,12 +174,14 @@ prepare no editing copy; text/code views prepare one when opened for editing.
 
 ## Next work and limits
 
-- Extend the initial text/code editing UI with multi-cursor, find/replace,
-  word movement, indentation, EditorConfig and editing settings. History currently
-  rebases pane anchors rather than restoring historical selections. Native IME
-  interaction, close dialogs and keystroke-to-pixel latency still need validation.
+- Editing commands now include multi-cursor, word movement, find/replace,
+  line operations, auto-indent, EditorConfig, encoding/newline menus and settings;
+  see [editing controls and bounds](editing.md#editing-commands-and-settings).
+  History rebases pane anchors rather than restoring historical selections.
+  Native IME interaction, close dialogs and keystroke-to-pixel latency still need
+  manual/performance validation.
 - Wire save/reload jobs to debounced filesystem events, conflict/recovery UI and
-  new-file/Save As handling. Saves already reject disk conflicts and preserve
+  Save As handling. New File is implemented. Saves already reject disk conflicts and preserve
   the dirty buffer. Complete native Windows/
   Linux and crash/failure validation; see the [save limits](m3-saving.md).
 - Add continuous Markdown scroll synchronization, tail mode and `--wait`, then fuzz targets and
@@ -190,3 +192,22 @@ proportional to its size; no filesystem-clone optimization is implemented yet.
 Snapshot creation after preparation is constant-time. Large history reclamation
 can free many nodes; GUI sessions now retire evicted versions off the UI thread.
 Rendered Markdown does not prepare an editing copy until Source is opened.
+
+## Editing-command validation
+
+Regression tests cover atomic multi-range edits, Unicode word navigation,
+overlapping cursors, stale transactions, cache-spanning batch preparation,
+CRLF/unterminated line moves, duplicate-line selection tracking, distributed paste,
+optional pairs, queued typing/save, capture replacement in a selection and cancellation.
+Find tests compare streaming literal results with whole-buffer results at chunk
+boundaries, including Unicode, long lines, CRLF and zero-width regex matches.
+EditorConfig inheritance/globs/unset and undoable save cleanup are also covered.
+These automated checks supplement the existing IME and native-input simulations;
+manual native-input validation remains open.
+
+The [100 MB, 10,000-cycle follow-up](benchmarks/m3-2026-11-07-edit-commands.summary.json)
+measured cached replacement at **0.02567 ms p99**, UTF-16 roundtrips at
+**0.12442 ms p99**, and sampled RSS at **36.33 MiB peak**. The earlier Unicode-core
+run measured 0.02367 ms, 0.12354 ms and 42.39 MiB respectively. This is another
+single local core diagnostic, not a controlled comparison or a measurement of
+multi-cursor/UI latency; accepted M1/M2 baselines are unchanged.

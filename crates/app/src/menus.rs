@@ -29,6 +29,7 @@ actions!(
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-,", edit::OpenSettings, None),
         KeyBinding::new("cmd-shift-n", NewWindow, None),
         KeyBinding::new("cmd-o", ui::OpenFile, None),
         KeyBinding::new("cmd-alt-o", ui::OpenFolder, None),
@@ -125,6 +126,7 @@ fn menus() -> Vec<Menu> {
             name: "plastext".into(),
             items: vec![
                 MenuItem::action("About Plastext", About),
+                MenuItem::action("Settings…", edit::OpenSettings),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),
@@ -162,9 +164,94 @@ fn menus() -> Vec<Menu> {
                 MenuItem::os_action("Select All", edit::SelectAll, OsAction::SelectAll),
                 MenuItem::separator(),
                 MenuItem::action("Find…", edit::Find),
+                MenuItem::action("Replace…", edit::Replace),
                 MenuItem::action("Find Next", edit::FindNext),
                 MenuItem::action("Find Previous", edit::FindPrevious),
                 MenuItem::action("Find in Files…", ui::SearchProject),
+                MenuItem::separator(),
+                MenuItem::submenu(Menu {
+                    name: "Selection".into(),
+                    items: vec![
+                        MenuItem::action("Add Next Occurrence", edit::AddNextOccurrence),
+                        MenuItem::action("Select All Occurrences", edit::SelectAllOccurrences),
+                        MenuItem::action("Add Cursor Above", edit::AddCursorAbove),
+                        MenuItem::action("Add Cursor Below", edit::AddCursorBelow),
+                    ],
+                }),
+                MenuItem::submenu(Menu {
+                    name: "Lines".into(),
+                    items: vec![
+                        MenuItem::action("Indent", edit::Indent),
+                        MenuItem::action("Outdent", edit::Outdent),
+                        MenuItem::action("Toggle Comment", edit::ToggleComment),
+                        MenuItem::action("Move Line Up", edit::MoveLineUp),
+                        MenuItem::action("Move Line Down", edit::MoveLineDown),
+                        MenuItem::action("Duplicate Line Up", edit::DuplicateLineUp),
+                        MenuItem::action("Duplicate Line Down", edit::DuplicateLineDown),
+                    ],
+                }),
+                MenuItem::submenu(Menu {
+                    name: "Save with Encoding".into(),
+                    items: [
+                        ("UTF-8", "utf-8", false),
+                        ("UTF-8 with BOM", "utf-8", true),
+                        ("UTF-16 LE", "utf-16le", true),
+                        ("UTF-16 BE", "utf-16be", true),
+                        ("Windows-1252", "windows-1252", false),
+                        ("Shift JIS", "shift_jis", false),
+                    ]
+                    .into_iter()
+                    .map(|(title, label, bom)| {
+                        MenuItem::action(
+                            title,
+                            edit::SetEncoding {
+                                label: label.into(),
+                                bom,
+                            },
+                        )
+                    })
+                    .collect(),
+                }),
+                MenuItem::submenu(Menu {
+                    name: "Reopen with Encoding".into(),
+                    items: [
+                        ("Auto Detect", "auto"),
+                        ("UTF-8", "utf-8"),
+                        ("UTF-16 LE", "utf-16le"),
+                        ("UTF-16 BE", "utf-16be"),
+                        ("Windows-1252", "windows-1252"),
+                        ("Shift JIS", "shift_jis"),
+                    ]
+                    .into_iter()
+                    .map(|(title, label)| {
+                        MenuItem::action(
+                            title,
+                            edit::ReopenEncoding {
+                                label: label.into(),
+                            },
+                        )
+                    })
+                    .collect(),
+                }),
+                MenuItem::submenu(Menu {
+                    name: "Line Endings".into(),
+                    items: [
+                        ("Preserve Existing", "preserve"),
+                        ("LF", "lf"),
+                        ("CRLF", "crlf"),
+                        ("CR", "cr"),
+                    ]
+                    .into_iter()
+                    .map(|(title, ending)| {
+                        MenuItem::action(
+                            title,
+                            edit::SetLineEnding {
+                                ending: ending.into(),
+                            },
+                        )
+                    })
+                    .collect(),
+                }),
                 MenuItem::separator(),
                 MenuItem::action("Emoji & Symbols", edit::ShowCharacterPalette),
             ],
@@ -177,6 +264,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Toggle Outline", ui::ToggleOutline),
                 MenuItem::action("Switch Source / Preview", ui::TogglePreview),
                 MenuItem::action("Word Wrap", edit::ToggleWordWrap),
+                MenuItem::action("Show Whitespace", edit::ToggleWhitespace),
                 MenuItem::separator(),
                 MenuItem::action("Zoom In", ui::ZoomIn),
                 MenuItem::action("Zoom Out", ui::ZoomOut),
@@ -197,6 +285,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Go to File…", ui::OpenQuickOpen),
                 MenuItem::action("Go to Line…", ui::GoToLine),
+                MenuItem::action("Go to Matching Bracket", edit::JumpToBracket),
                 MenuItem::action("Go to Symbol…", ui::GoToSymbol),
             ],
         },

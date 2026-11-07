@@ -11,8 +11,8 @@ pub(super) enum Format {
 }
 
 pub(super) struct CopyTask {
-    cancel: Arc<AtomicBool>,
-    _task: Task<()>,
+    pub(super) cancel: Arc<AtomicBool>,
+    pub(super) _task: Task<()>,
 }
 impl Drop for CopyTask {
     fn drop(&mut self) {

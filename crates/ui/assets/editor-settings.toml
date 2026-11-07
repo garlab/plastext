@@ -1,0 +1,17 @@
+# Plastext settings. Save explicitly; restart to apply editing defaults.
+# Per-file .editorconfig properties take precedence over indentation detection.
+[editor]
+# open_mode = "edit"             # "edit" or "read"
+# atomic_save = true
+# auto_indent = true
+# auto_close_pairs = false
+# detect_indentation = true
+# insert_spaces = true
+# indent_size = 4
+# tab_size = 4
+# editorconfig = true
+# show_whitespace = false
+# trim_trailing_whitespace = false
+# insert_final_newline = true     # omitted: preserve; false: do not insert
+# charset = "utf-8"               # omitted: preserve existing encoding
+# end_of_line = "lf"              # omitted: preserve; lf, crlf or cr

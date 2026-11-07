@@ -289,6 +289,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        plastext_editor::configure_editing(settings.editor.clone(), cx);
         let mut subscriptions = vec![
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             cx.observe_global::<welcome::RecentFolders>(|_, cx| cx.notify()),
@@ -1393,6 +1394,43 @@ impl Workspace {
         .detach();
     }
 
+    fn open_settings(
+        &mut self,
+        _: &plastext_editor::actions::OpenSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = plastext_settings::Settings::path() else {
+            self.show_notice("Could not locate the settings folder", cx);
+            return;
+        };
+        let work = cx.background_executor().spawn(async move {
+            use std::io::Write;
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => file.write_all(include_bytes!("../assets/editor-settings.toml"))?,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e),
+            }
+            Ok::<_, std::io::Error>(path)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(path) => this.open_file(path, None, window, cx),
+                Err(error) => this.show_notice(format!("Couldn't open settings: {error}"), cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Lists the commands available where the focus is, with their shortcuts.
     fn open_command_palette(
         &mut self,
@@ -1893,6 +1931,7 @@ impl Render for Workspace {
                 },
             )
             .on_action(cx.listener(Self::new_file))
+            .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::open_quick_open))

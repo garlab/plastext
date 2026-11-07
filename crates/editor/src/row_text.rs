@@ -25,6 +25,15 @@ pub(crate) fn visible_text(
     columns: Range<usize>,
     spans: &[(Range<usize>, Highlight)],
 ) -> VisibleText {
+    visible_text_with_whitespace(bytes, tab_size, columns, spans, false)
+}
+pub(crate) fn visible_text_with_whitespace(
+    bytes: &[u8],
+    tab_size: usize,
+    columns: Range<usize>,
+    spans: &[(Range<usize>, Highlight)],
+    whitespace: bool,
+) -> VisibleText {
     let tab_size = tab_size.max(1);
     let mut visible = VisibleText {
         text: String::new(),
@@ -34,7 +43,11 @@ pub(crate) fn visible_text(
     let mut spans = spans.iter().peekable();
     let mut push = |ch: char, offset: usize, visible: &mut VisibleText| {
         let (shown, width) = match ch {
-            '\t' => (' ', tab_size - visible.width % tab_size),
+            '\t' => (
+                if whitespace { '→' } else { ' ' },
+                tab_size - visible.width % tab_size,
+            ),
+            ' ' if whitespace => ('·', 1),
             '\u{7f}' => ('\u{2421}', 1),
             ch if (ch as u32) < 0x20 => {
                 (char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'), 1)
@@ -54,10 +67,20 @@ pub(crate) fn visible_text(
             .peek()
             .filter(|(span, _)| span.contains(&offset))
             .map(|(_, highlight)| *highlight);
-        let len = shown.len_utf8() * shown_columns;
-        visible
-            .text
-            .extend(std::iter::repeat_n(shown, shown_columns));
+        let highlight = if whitespace && matches!(ch, ' ' | '\t') {
+            Some(Highlight::Comment)
+        } else {
+            highlight
+        };
+        let before = visible.text.len();
+        for i in 0..shown_columns {
+            visible.text.push(if whitespace && ch == '\t' && i > 0 {
+                ' '
+            } else {
+                shown
+            });
+        }
+        let len = visible.text.len() - before;
         match visible.runs.last_mut() {
             Some((run_len, run_highlight)) if *run_highlight == highlight => *run_len += len,
             _ => visible.runs.push((len, highlight)),
@@ -191,6 +214,19 @@ pub(crate) fn word_at(bytes: &[u8], offset: usize) -> std::ops::Range<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whitespace_markers_keep_utf8_run_boundaries_and_columns() {
+        let shown = visible_text_with_whitespace("α \tx".as_bytes(), 4, 0..20, &[], true);
+        assert_eq!(shown.text, "α·→ x");
+        assert_eq!(shown.width, 5);
+        let mut at = 0;
+        for (len, _) in shown.runs {
+            at += len;
+            assert!(shown.text.is_char_boundary(at));
+        }
+        assert_eq!(at, shown.text.len());
+    }
 
     #[test]
     fn maps_between_offsets_and_columns() {

@@ -4,6 +4,7 @@
 //! the file leaves out.
 
 mod byte_size;
+pub mod editing;
 mod icon_fonts;
 pub mod icons;
 mod markdown;
@@ -64,6 +65,19 @@ pub struct Editor {
     pub tab_size: usize,
     /// Pin the first lines of the definitions enclosing the view's top.
     pub sticky_scroll: bool,
+    pub open_mode: editing::OpenMode,
+    pub atomic_save: bool,
+    pub auto_indent: bool,
+    pub auto_close_pairs: bool,
+    pub detect_indentation: bool,
+    pub insert_spaces: bool,
+    pub indent_size: usize,
+    pub editorconfig: bool,
+    pub show_whitespace: bool,
+    pub trim_trailing_whitespace: bool,
+    pub insert_final_newline: Option<bool>,
+    pub charset: Option<String>,
+    pub end_of_line: Option<String>,
 }
 
 impl Default for Editor {
@@ -74,6 +88,19 @@ impl Default for Editor {
             line_height: 1.5,
             tab_size: 4,
             sticky_scroll: true,
+            open_mode: editing::OpenMode::Edit,
+            atomic_save: true,
+            auto_indent: true,
+            auto_close_pairs: false,
+            detect_indentation: true,
+            insert_spaces: true,
+            indent_size: 4,
+            editorconfig: true,
+            show_whitespace: false,
+            trim_trailing_whitespace: false,
+            insert_final_newline: None,
+            charset: None,
+            end_of_line: None,
         }
     }
 }

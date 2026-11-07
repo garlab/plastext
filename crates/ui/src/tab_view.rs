@@ -268,6 +268,9 @@ impl TabStatus {
                     None => parts.push(lines),
                 }
                 parts.push(format_size(status.len));
+                if let Some(format) = &status.format {
+                    parts.push(format.clone());
+                }
                 parts.push(status.language.unwrap_or("Plain text").to_owned());
             }
             Self::Hex(status) => {

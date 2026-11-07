@@ -17,7 +17,7 @@ use gpui::{
     size,
 };
 use plastext_buffer::{ByteSource, FileSource, LineIndex, ReadError, rows};
-use plastext_search::Query;
+use plastext_search::{DocumentQuery, SearchOptions};
 use plastext_syntax::{Fold, Highlight, Language, Symbol, SyntaxTree};
 
 use crate::{
@@ -54,6 +54,9 @@ actions!(
 mod context_menu;
 mod copy_text;
 mod editing;
+mod multicopy;
+mod pairs;
+mod replace;
 mod syntax;
 use editing::Editing;
 
@@ -146,6 +149,7 @@ pub struct TextViewStatus {
     pub indexing: Option<f32>,
     pub len: u64,
     pub language: Option<&'static str>,
+    pub format: Option<String>,
     /// The number of bytes selected.
     pub selected: Option<u64>,
     pub error: Option<SharedString>,
@@ -261,6 +265,13 @@ enum Jump {
 /// The find bar and its results (spec NAV-6).
 struct FindState {
     input: Entity<TextInput>,
+    replacement: Option<Entity<TextInput>>,
+    options: SearchOptions,
+    scope: Option<Range<u64>>,
+    original_selection: Option<Range<u64>>,
+    next_from: Option<u64>,
+    replace_cancel: Arc<AtomicBool>,
+    replacing: bool,
     /// Matches found so far, in order.
     matches: Vec<Range<u64>>,
     current: Option<usize>,
@@ -303,6 +314,10 @@ impl TextView {
     ) -> Self {
         cx.on_release(|this: &mut Self, cx| {
             this.cancel_parse.store(true, Ordering::Relaxed);
+            if let Some(find) = &this.find {
+                find.cancel.store(true, Ordering::Relaxed);
+                find.replace_cancel.store(true, Ordering::Relaxed);
+            }
             if let Some(task) = this._edit_parse.take() {
                 task.detach();
             }
@@ -667,6 +682,22 @@ impl TextView {
                 .then(|| progress.indexed as f32 / progress.len.max(1) as f32),
             len: self.source.len(),
             language: self.language.map(|language| language.name),
+            format: self.source.snapshot.as_ref().map(|text| {
+                format!(
+                    "{}{} · {}",
+                    text.format().encoding().name(),
+                    if text.format().has_bom() { " BOM" } else { "" },
+                    match text
+                        .format()
+                        .line_ending()
+                        .unwrap_or(text.preferred_line_ending())
+                    {
+                        plastext_buffer::LineEnding::Lf => "LF",
+                        plastext_buffer::LineEnding::CrLf => "CRLF",
+                        plastext_buffer::LineEnding::Cr => "CR",
+                    }
+                )
+            }),
             selected: self
                 .selection
                 .map(|selection| selection.range())
@@ -772,6 +803,9 @@ impl TextView {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        if self.copy_selections(false, cx) {
+            return;
+        }
         // Keep the ordinary copy/paste sequence synchronous for small cached
         // selections; larger or uncached copies run on a worker.
         if !self.has_pending_input()
@@ -817,10 +851,20 @@ impl TextView {
             None => {
                 let input = cx.new(|cx| TextInput::new("Find", cx));
                 let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
+                    if let Some(find) = &mut this.find {
+                        find.next_from = None;
+                    }
                     this.search(cx)
                 });
                 self.find = Some(FindState {
                     input: input.clone(),
+                    replacement: None,
+                    options: SearchOptions::default(),
+                    scope: None,
+                    next_from: None,
+                    original_selection: self.selection.map(|s| s.range()).filter(|r| !r.is_empty()),
+                    replace_cancel: Arc::new(AtomicBool::new(false)),
+                    replacing: false,
                     matches: Vec::new(),
                     current: None,
                     searching: false,
@@ -844,6 +888,7 @@ impl TextView {
     fn close_find(&mut self, _: &CloseFind, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(find) = self.find.take() {
             find.cancel.store(true, Ordering::Relaxed);
+            find.replace_cancel.store(true, Ordering::Relaxed);
         }
         self.focus_handle.focus(window);
         cx.notify();
@@ -855,23 +900,59 @@ impl TextView {
             return;
         };
         find.cancel.store(true, Ordering::Relaxed);
+        find.replace_cancel.store(true, Ordering::Relaxed);
         find.matches.clear();
         find.current = None;
         find.searching = false;
         find._search = None;
-        let Some(query) = Query::new(find.input.read(cx).text()) else {
+        let pattern = find.input.read(cx).text();
+        if pattern.is_empty() {
             cx.notify();
             return;
+        }
+        let query = match DocumentQuery::new(pattern, find.options) {
+            Ok(query) => query,
+            Err(error) => {
+                self.notice = Some(error.into());
+                cx.notify();
+                return;
+            }
         };
+        let scope = find.scope.clone().unwrap_or(0..self.source.len());
         let cancel = Arc::new(AtomicBool::new(false));
         find.cancel = cancel.clone();
         find.searching = true;
         let (batches, mut received) = mpsc::unbounded();
         let source = self.source.clone();
         let searching = cx.background_executor().spawn(async move {
-            source.find(&query, &cancel, |matches| {
-                batches.unbounded_send(matches).ok();
-            })
+            let mut batch = Vec::new();
+            let mut count = 0;
+            let result = query.scan(
+                source.len(),
+                |range, out| match &source.snapshot {
+                    Some(snapshot) => snapshot.read_uncached(range, out),
+                    None => {
+                        let old = out.len();
+                        out.resize(old + (range.end - range.start) as usize, 0);
+                        source.original.read_uncached(range, &mut out[old..])
+                    }
+                },
+                scope,
+                None,
+                &cancel,
+                |range, _| {
+                    batch.push(range);
+                    count += 1;
+                    if batch.len() >= 256 {
+                        let _ = batches.unbounded_send(std::mem::take(&mut batch));
+                    }
+                    count < MAX_MATCHES
+                },
+            );
+            if !batch.is_empty() {
+                let _ = batches.unbounded_send(batch);
+            }
+            result
         });
         find._search = Some(cx.spawn(async move |this, cx| {
             while let Some(matches) = received.next().await {
@@ -884,6 +965,16 @@ impl TextView {
             this.update(cx, |this, cx| {
                 if let Some(find) = &mut this.find {
                     find.searching = false;
+                }
+                if this
+                    .find
+                    .as_ref()
+                    .is_some_and(|f| f.current.is_none() && !f.matches.is_empty())
+                {
+                    if let Some(find) = &mut this.find {
+                        find.next_from = None;
+                    }
+                    this.select_match(0, cx);
                 }
                 if let Err(err) = result {
                     this.notice = Some(format!("Search failed: {err}").into());
@@ -906,9 +997,10 @@ impl TextView {
         }
         // Show the first match from the current position as soon as there is one.
         if find.current.is_none() {
-            let top = self.top;
+            let top = find.next_from.unwrap_or(self.top);
             let next = find.matches.partition_point(|found| found.start < top);
             if next < find.matches.len() {
+                find.next_from = None;
                 self.select_match(next, cx);
             }
         }
@@ -996,7 +1088,7 @@ impl TextView {
                 .hover(|button| button.bg(theme.border))
                 .child(label)
         };
-        div()
+        let row = div()
             .key_context(FIND_KEY_CONTEXT)
             .on_action(cx.listener(Self::find))
             .on_action(cx.listener(Self::find_next))
@@ -1013,6 +1105,46 @@ impl TextView {
             .border_color(theme.border)
             .text_sm()
             .child(div().flex_1().child(find.input.clone()))
+            .children(
+                [
+                    ("case", "Aa", find.options.case_sensitive),
+                    ("word", "ab", find.options.whole_word),
+                    ("regex", ".*", find.options.regex),
+                ]
+                .into_iter()
+                .map(|(id, label, active)| {
+                    button(id, label)
+                        .when(active, |b| b.bg(theme.border).text_color(theme.text))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(find) = &mut this.find {
+                                match id {
+                                    "case" => {
+                                        find.options.case_sensitive = !find.options.case_sensitive
+                                    }
+                                    "word" => find.options.whole_word = !find.options.whole_word,
+                                    _ => find.options.regex = !find.options.regex,
+                                }
+                            }
+                            this.search(cx);
+                        }))
+                }),
+            )
+            .child(
+                button("find-selection", "Selection")
+                    .when(find.scope.is_some(), |b| {
+                        b.bg(theme.border).text_color(theme.text)
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let selected = this
+                            .find
+                            .as_ref()
+                            .and_then(|f| f.original_selection.clone());
+                        if let Some(find) = &mut this.find {
+                            find.scope = if find.scope.is_some() { None } else { selected };
+                        }
+                        this.search(cx);
+                    })),
+            )
             .child(div().text_xs().text_color(theme.text_muted).child(status))
             .child(
                 button("find-previous", "↑")
@@ -1024,8 +1156,41 @@ impl TextView {
             )
             .child(button("close-find", "×").on_click(
                 cx.listener(|this, _, window, cx| this.close_find(&CloseFind, window, cx)),
-            ))
-            .into_any_element()
+            ));
+        let mut column = div()
+            .when(self.is_editing(), |element| {
+                element.on_action(cx.listener(Self::open_replace))
+            })
+            .key_context(FIND_KEY_CONTEXT)
+            .on_action(cx.listener(Self::close_find))
+            .on_action(cx.listener(Self::find_next))
+            .on_action(cx.listener(Self::find_previous))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(row);
+        if self.is_editing()
+            && let Some(replacement) = &find.replacement
+        {
+            column =
+                column.child(
+                    div()
+                        .h(px(34.))
+                        .px_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .bg(theme.surface)
+                        .child(div().flex_1().child(replacement.clone()))
+                        .child(button("replace-one", "Replace").on_click(
+                            cx.listener(|this, _, _, cx| this.replace_matches(false, cx)),
+                        ))
+                        .child(button("replace-all", "Replace All").on_click(
+                            cx.listener(|this, _, _, cx| this.replace_matches(true, cx)),
+                        )),
+                );
+        }
+        column.into_any_element()
     }
 
     /// Folds or unfolds the line ending at `line_end`, which starts at `line_start`.
@@ -1495,10 +1660,12 @@ impl TextView {
         };
         let spans = self.highlights(highlight_rows);
 
-        let selection = self
-            .selection
-            .map(|selection| selection.range())
-            .filter(|range| !range.is_empty());
+        let selections: Vec<_> = self
+            .all_selections()
+            .into_iter()
+            .map(|s| s.range())
+            .filter(|r| !r.is_empty())
+            .collect();
         let fold_marks = folding::fold_marks(
             highlight_rows,
             &self.folds,
@@ -1508,6 +1675,7 @@ impl TextView {
         let mut line = self.source.line_at(&self.index, self.top).ok().flatten();
         let mut rows = Vec::with_capacity(visible_rows.len());
         let mut hit_rows = Vec::with_capacity(visible_rows.len());
+        let bracket_pair = self.matching_brackets();
         let mut max_columns = 0;
         let mut previous_end = self.top;
         for (i, (start, bytes, starts_line)) in visible_rows.iter().enumerate() {
@@ -1524,17 +1692,20 @@ impl TextView {
             let content = bytes.strip_suffix(b"\n").unwrap_or(bytes);
             let content = content.strip_suffix(b"\r").unwrap_or(content);
             let row_spans = spans_within(&spans, *start..start + content.len() as u64);
-            let visible = visible_text(
+            let visible = crate::row_text::visible_text_with_whitespace(
                 content,
                 self.style.tab_size,
                 first_column..first_column + columns,
                 &row_spans,
+                self.editing
+                    .as_ref()
+                    .is_some_and(|editing| editing.document.read(cx).preferences.show_whitespace),
             );
             let width = visible.width;
             max_columns = max_columns.max(width);
             let end = start + bytes.len() as u64;
-            let selected = selection
-                .clone()
+            let selected = selections
+                .iter()
                 .filter(|selection| selection.start < end && selection.end > *start)
                 .map(|selection| {
                     let tab_size = self.style.tab_size;
@@ -1550,8 +1721,9 @@ impl TextView {
                     let x =
                         |column: usize| char_width * (column as f32 - first_column as f32) + shift;
                     x(column(selection.start.max(*start)))..x(column(selection.end.min(end)))
-                });
-            let matches = self
+                })
+                .collect();
+            let mut matches: Vec<Range<Pixels>> = self
                 .find
                 .as_ref()
                 .map(|find| {
@@ -1576,6 +1748,18 @@ impl TextView {
                         .collect()
                 })
                 .unwrap_or_default();
+            if let Some((a, b)) = bracket_pair {
+                for offset in [a, b] {
+                    if offset >= *start && offset < start + content.len() as u64 {
+                        let x = char_width
+                            * (column_at(content, self.style.tab_size, (offset - start) as usize)
+                                as f32
+                                - first_column as f32)
+                            + shift;
+                        matches.push(x..x + char_width);
+                    }
+                }
+            }
             let fold = if self.word_wrap {
                 logical_rows
                     .iter()
@@ -1968,7 +2152,7 @@ struct RowLayout {
     number: Option<ShapedLine>,
     text: Option<ShapedLine>,
     /// The selected part, as x offsets from the text's left edge.
-    selected: Option<Range<Pixels>>,
+    selected: Vec<Range<Pixels>>,
     /// Find matches, likewise.
     matches: Vec<Range<Pixels>>,
     fold: Option<FoldMark>,
@@ -2219,7 +2403,11 @@ impl TextLayout {
             if let Some(hit) = hits.hit(event.position) {
                 let extend = event.modifiers.shift;
                 pressed.update(cx, |view, cx| {
-                    view.mouse_down(hit, event.click_count, extend, cx)
+                    if event.modifiers.alt && view.is_editing() && !hit.in_gutter {
+                        view.add_cursor(hit.offset, cx);
+                    } else {
+                        view.mouse_down(hit, event.click_count, extend, cx)
+                    }
                 });
             }
         });

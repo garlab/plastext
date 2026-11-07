@@ -106,6 +106,44 @@ impl SyntaxTree {
         Self::parse(language, &text[..end], cancelled)
     }
 
+    /// Matching punctuation siblings around a caret. Strings/comments have named
+    /// leaf nodes and are excluded; work is bounded independently of file size.
+    pub fn matching_brackets(&self, offset: usize) -> Option<(usize, usize)> {
+        for at in [Some(offset), offset.checked_sub(1)].into_iter().flatten() {
+            let Some(node) = self.tree.root_node().descendant_for_byte_range(at, at + 1) else {
+                continue;
+            };
+            let (open, close, forward) = match node.kind() {
+                "(" => ("(", ")", true),
+                "[" => ("[", "]", true),
+                "{" => ("{", "}", true),
+                ")" => ("(", ")", false),
+                "]" => ("[", "]", false),
+                "}" => ("{", "}", false),
+                _ => continue,
+            };
+            let mut sibling = Some(node);
+            let mut depth = 0;
+            for _ in 0..4096 {
+                let Some(current) = sibling else { break };
+                if current.kind() == if forward { open } else { close } {
+                    depth += 1;
+                } else if current.kind() == if forward { close } else { open } {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((node.start_byte(), current.start_byte()));
+                    }
+                }
+                sibling = if forward {
+                    current.next_sibling()
+                } else {
+                    current.prev_sibling()
+                };
+            }
+        }
+        None
+    }
+
     pub fn parsed_len(&self) -> usize {
         self.parsed_len
     }
@@ -345,6 +383,20 @@ mod tests {
             .into_iter()
             .map(|(range, highlight)| (&text[range], highlight))
             .collect()
+    }
+
+    #[test]
+    fn bracket_pairs_ignore_quoted_punctuation_and_comments() {
+        let input = b"fn f() { let x = [foo(1), 2]; let s = \"[)\"; /* } */ }";
+        let language = detect(Path::new("a.rs"), b"").unwrap();
+        let tree = SyntaxTree::parse(language, input, || false).unwrap();
+        let open = input.iter().position(|b| *b == b'[').unwrap();
+        let close = input.iter().position(|b| *b == b']').unwrap();
+        assert_eq!(tree.matching_brackets(open), Some((open, close)));
+        assert_eq!(tree.matching_brackets(close), Some((close, open)));
+        let quoted = input.windows(2).position(|b| b == b"[)").unwrap();
+        assert_eq!(tree.matching_brackets(quoted), None);
+        assert_eq!(tree.matching_brackets(input.len() + 1), None);
     }
 
     #[test]

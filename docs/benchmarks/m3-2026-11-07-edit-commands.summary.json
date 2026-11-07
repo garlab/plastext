@@ -1,0 +1,88 @@
+{
+  "artifact": "summary",
+  "bytes": 100000000,
+  "chunked_original": true,
+  "complete": true,
+  "edits": 10000,
+  "file": "large.md",
+  "grapheme_polls_pending": 0,
+  "max_history_charge_bytes": 35331,
+  "metrics": [
+    {
+      "max": 0.100958,
+      "name": "prefetch",
+      "p50": 0.000167,
+      "p99": 0.033833,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.055708,
+      "name": "cached replace",
+      "p50": 0.012041,
+      "p99": 0.025667,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.0022919999999999998,
+      "name": "snapshot",
+      "p50": 0.000041,
+      "p99": 0.000125,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.000292,
+      "name": "undo",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.0029170000000000003,
+      "name": "redo",
+      "p50": 0.000041,
+      "p99": 0.000042,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.354958,
+      "name": "UTF-16 roundtrip",
+      "p50": 0.057667,
+      "p99": 0.124416,
+      "sample_count": 10000,
+      "unit": "ms"
+    },
+    {
+      "max": 0.315959,
+      "name": "one grapheme poll",
+      "p50": 0.002125,
+      "p99": 0.004333,
+      "sample_count": 10000,
+      "unit": "ms"
+    }
+  ],
+  "passed": true,
+  "private_original_preparation_ms": 204.499583,
+  "retained_snapshots": 64,
+  "sampled_rss": {
+    "final_sample": true,
+    "helpers_mib": {
+      "last": 0.0,
+      "max": 0.0,
+      "sample_count": 11
+    },
+    "interval_ms": 100,
+    "parent_mib": {
+      "last": 36.328125,
+      "max": 36.328125,
+      "sample_count": 11
+    }
+  },
+  "schema": 2,
+  "scope": "headless byte edits, UTF-16 roundtrips and one bounded grapheme poll; separately timed prefetch; excludes UI, save and reference-machine certification",
+  "source_cache_budget_bytes": 8388608
+}

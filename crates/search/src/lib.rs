@@ -3,9 +3,11 @@
 //! So far: [`find_all`], which finds every occurrence of a query in a file
 //! of any size, and [`search_project`], which searches a whole project.
 
+mod document;
 mod files;
 mod filters;
 mod project;
+pub use document::DocumentQuery;
 
 use std::{
     io,

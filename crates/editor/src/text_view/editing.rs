@@ -10,6 +10,8 @@ use std::collections::VecDeque;
 
 #[path = "caret.rs"]
 mod caret;
+#[path = "commands.rs"]
+mod commands;
 
 actions!(
     editing,
@@ -35,13 +37,20 @@ actions!(
         DocumentStart,
         DocumentEnd,
         SelectDocumentStart,
-        SelectDocumentEnd
+        SelectDocumentEnd,
+        WordLeft,
+        WordRight,
+        SelectWordLeft,
+        SelectWordRight,
+        DeleteWordLeft,
+        DeleteWordRight
     ]
 );
 const CONTEXT: &str = "EditingText";
 const CARET_SCROLL_MARGIN: usize = 3;
 
 pub(super) fn init(cx: &mut App) {
+    commands::init(cx);
     cx.bind_keys([
         KeyBinding::new("e", EnterEdit, Some(KEY_CONTEXT)),
         KeyBinding::new("enter", EnterEdit, Some(KEY_CONTEXT)),
@@ -81,6 +90,12 @@ pub(super) fn init(cx: &mut App) {
         KeyBinding::new("cmd-down", DocumentEnd, context),
         KeyBinding::new("cmd-shift-up", SelectDocumentStart, context),
         KeyBinding::new("cmd-shift-down", SelectDocumentEnd, context),
+        KeyBinding::new("alt-left", WordLeft, context),
+        KeyBinding::new("alt-right", WordRight, context),
+        KeyBinding::new("alt-shift-left", SelectWordLeft, context),
+        KeyBinding::new("alt-shift-right", SelectWordRight, context),
+        KeyBinding::new("alt-backspace", DeleteWordLeft, context),
+        KeyBinding::new("alt-delete", DeleteWordRight, context),
         KeyBinding::new("pageup", PageUp, context),
         KeyBinding::new("pagedown", PageDown, context),
     ]);
@@ -97,9 +112,14 @@ enum Input {
     },
     Cursor(CursorCommand),
     Vertical(i32, bool),
+    AddVertical(i32),
+    Paste(String),
+    Format(plastext_buffer::TextFormat, bool),
     Edge(bool, bool),
     DocumentEdge(bool, bool),
     Selection(BufferSelection),
+    Selections(Vec<BufferSelection>),
+    Command(commands::Command),
     Newline,
     Tab,
     Undo,
@@ -114,8 +134,8 @@ struct QueuedInput {
 }
 
 pub(super) struct Editing {
-    document: Entity<EditingDocument>,
-    pane: Option<PaneId>,
+    pub(super) document: Entity<EditingDocument>,
+    pub(super) pane: Option<PaneId>,
     pub(super) owns_view: bool,
     pub(super) edit_by_default: bool,
     active: bool,
@@ -128,7 +148,13 @@ pub(super) struct Editing {
     document_notice: Option<SharedString>,
     cursor: Option<PendingCommand>,
     retry: Option<Task<()>>,
-    goal_column: Option<usize>,
+    bulk: Option<Task<()>>,
+    bulk_result: Option<(
+        plastext_buffer::PaneSnapshot,
+        Result<commands::Plan, SessionError>,
+    )>,
+    goal_columns: Vec<usize>,
+    selections: Vec<BufferSelection>,
     caret: caret::Caret,
     _observer: Subscription,
 }
@@ -195,7 +221,10 @@ impl TextView {
             document_notice: None,
             cursor: None,
             retry: None,
-            goal_column: None,
+            bulk: None,
+            bulk_result: None,
+            goal_columns: Vec::new(),
+            selections: Vec::new(),
             caret: caret::Caret::default(),
             _observer: observer,
         });
@@ -218,6 +247,11 @@ impl TextView {
         let Some(editing) = &mut self.editing else {
             return;
         };
+        if editing.document.read(cx).preferences.open_mode
+            == plastext_settings::editing::OpenMode::Read
+        {
+            return;
+        }
         editing.edit_by_default = true;
         self.apply_pending_line(cx);
         let target = match self.pending_jump {
@@ -303,6 +337,19 @@ impl TextView {
         }
     }
     fn leave_edit(&mut self, _: &LeaveEdit, _: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .editing
+            .as_ref()
+            .is_some_and(|e| e.selections.len() > 1)
+        {
+            if let Some(selection) = self.selection {
+                self.queue_input(
+                    Input::Selection(BufferSelection::new(selection.anchor, selection.head)),
+                    cx,
+                );
+            }
+            return;
+        }
         if let Some(editing) = &mut self.editing {
             if !editing.queue.is_empty() {
                 return;
@@ -359,6 +406,7 @@ impl TextView {
         if state.is_none() {
             editing.active = editing.document.read(cx).preparing;
         }
+        self.style.tab_size = editing.document.read(cx).preferences.tab_size.clamp(1, 16);
         let notice = editing.document.read(cx).notice.clone();
         editing.dirty = editing.document.read(cx).is_dirty();
         let mut missing = None;
@@ -368,6 +416,20 @@ impl TextView {
             let changed = editing.generation != Some(snapshot.generation());
             editing.active = active;
             if changed {
+                if let Some(Some(edits)) = &edits
+                    && let Some(find) = &mut self.find
+                {
+                    for range in [&mut find.scope, &mut find.original_selection]
+                        .into_iter()
+                        .flatten()
+                    {
+                        let mut selection = BufferSelection::new(range.start, range.end);
+                        for edit in edits {
+                            selection.rebase(edit);
+                        }
+                        *range = selection.range();
+                    }
+                }
                 syntax_changes = edits;
                 syntax_refresh = Some(editing.generation.is_none());
                 editing.generation = Some(snapshot.generation());
@@ -403,6 +465,7 @@ impl TextView {
             }
             match pane {
                 Ok(pane) => {
+                    editing.selections = pane.selections();
                     let selection = pane.selection();
                     self.selection = Some(Selection {
                         anchor: selection.anchor.offset,
@@ -455,6 +518,21 @@ impl TextView {
         {
             return;
         }
+        let multiple = self.all_selections().len() > 1
+            && self.editing.as_ref().is_some_and(|e| e.marked.is_none());
+        let input = match input {
+            Input::Newline => Input::Command(commands::Command::Newline),
+            Input::Tab => Input::Command(commands::Command::Tab),
+            Input::Paste(text) => Input::Command(commands::Command::Paste(text)),
+            Input::Text {
+                text,
+                range: None,
+                marked: false,
+                selected: None,
+                separate,
+            } if multiple => Input::Command(commands::Command::Insert(text, separate)),
+            other => other,
+        };
         self.reset_caret_blink(cx);
         self.editing
             .as_ref()
@@ -465,6 +543,7 @@ impl TextView {
         let positional = matches!(
             &input,
             Input::Selection(_)
+                | Input::Selections(_)
                 | Input::Text { range: Some(_), .. }
                 | Input::Text { marked: true, .. }
         ) || matches!(&input, Input::Text { .. }) && editing.marked.is_some();
@@ -478,7 +557,8 @@ impl TextView {
         let Some(editing) = &self.editing else {
             return;
         };
-        if editing.queue.is_empty() || editing.document.read(cx).preparing {
+        if editing.queue.is_empty() || editing.document.read(cx).preparing || editing.bulk.is_some()
+        {
             return;
         }
         if editing.document.read(cx).file.is_none() {
@@ -503,6 +583,12 @@ impl TextView {
                 cx.notify();
                 continue;
             }
+            if let Input::Command(command) = input.input.as_ref()
+                && self.editing.as_ref().unwrap().bulk_result.is_none()
+            {
+                self.start_line_command(command.clone(), cx);
+                return;
+            }
             match self.apply_input(&input.input, cx) {
                 Ok(()) => {
                     self.editing.as_mut().unwrap().queue.pop_front();
@@ -518,7 +604,7 @@ impl TextView {
                     self.load(range, cx);
                     return;
                 }
-                Err(SessionError::Pending | SessionError::Stale) => {
+                Err(SessionError::Pending) => {
                     self.retry_input(cx);
                     return;
                 }
@@ -527,7 +613,13 @@ impl TextView {
                     editing.queue.pop_front();
                     editing.cursor = None;
                     self.input_finished(cx);
-                    self.notice = Some(format!("Couldn't edit: {error:?}").into());
+                    self.notice = Some(
+                        match error {
+                            SessionError::Limit(message) => message.to_owned(),
+                            other => format!("Couldn't edit: {other:?}"),
+                        }
+                        .into(),
+                    );
                     cx.notify();
                 }
             }
@@ -541,6 +633,7 @@ impl TextView {
             .document
             .update(cx, |document, cx| {
                 document.pending_inputs = document.pending_inputs.saturating_sub(1);
+                document.retire_versions(cx);
                 cx.notify();
             });
     }
@@ -572,6 +665,8 @@ impl TextView {
         let source = self.source.clone();
         let tab_size = self.style.tab_size;
         let wrapping = &self.wrapping;
+        let auto_pairs = document.read(cx).preferences.auto_close_pairs;
+
         let result = document.update(cx, |document, cx| {
             let session = document
                 .file
@@ -581,6 +676,19 @@ impl TextView {
             let base = session.pane_snapshot(pane_id)?;
             let snapshot = base.document().text();
             match input {
+                Input::Selections(selections) => {
+                    session.set_selections(&base, selections.clone())?;
+                    editing.marked = None;
+                    editing.typing = None;
+                }
+                Input::Command(command) => {
+                    let (original, result) =
+                        editing.bulk_result.take().ok_or(SessionError::Pending)?;
+                    result?.install(session, &original)?;
+                    editing.marked = None;
+                    editing.typing =
+                        matches!(command, commands::Command::Insert(_, false)).then(Instant::now);
+                }
                 Input::Selection(selection) => {
                     let selection = BufferSelection::new(
                         snapshot.clip_to_scalar(
@@ -620,64 +728,65 @@ impl TextView {
                     editing.marked = None;
                     editing.typing = None;
                 }
-                Input::Newline => {
-                    session.insert_newline(&base)?;
-                    editing.marked = None;
-                    editing.typing = None;
-                }
-                Input::Tab => {
-                    session.replace(&base, base.selection().range(), "\t", UndoGroup::New)?;
-                    editing.marked = None;
-                    editing.typing = None;
-                }
-                Input::Vertical(delta, extend) => {
-                    let head = base.selection().head.offset;
-                    let row = wrapping
-                        .start(&source, head, tab_size)
-                        .map_err(TextError::Read)?;
-                    let end = wrapping
-                        .end(&source, row, tab_size)
-                        .map_err(TextError::Read)?;
-                    let bytes = snapshot.bytes(row..end).map_err(TextError::Read)?;
-                    let goal = *editing
-                        .goal_column
-                        .get_or_insert_with(|| column_at(&bytes, tab_size, (head - row) as usize));
-                    let target = if *delta < 0 {
-                        wrapping.previous(&source, &Folds::default(), row, tab_size)
-                    } else {
-                        wrapping.next(&source, &Folds::default(), row, tab_size)
-                    }
-                    .map_err(TextError::Read)?
-                    .unwrap_or(row);
-                    let end = wrapping
-                        .end(&source, target, tab_size)
-                        .map_err(TextError::Read)?;
-                    let bytes = snapshot.bytes(target..end).map_err(TextError::Read)?;
-                    let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
-                    let content = content.strip_suffix(b"\r").unwrap_or(content);
-                    // The byte at a soft row's end belongs to the next row.
-                    // Keep vertical movement on the requested row when it is
-                    // shorter than the remembered column (otherwise Up sticks).
-                    let column = if wrapping.enabled()
-                        && content.len() == bytes.len()
-                        && end < snapshot.len()
-                    {
-                        goal.min(column_at(content, tab_size, content.len()).saturating_sub(1))
-                    } else {
-                        goal
-                    };
-                    let target = target + offset_at(content, tab_size, column) as u64;
-                    session.set_selection(
-                        &base,
-                        BufferSelection::new(
-                            if *extend {
-                                base.selection().anchor.offset
+                Input::Newline | Input::Tab => unreachable!(),
+                Input::Vertical(delta, _) | Input::AddVertical(delta) => {
+                    let extend = matches!(input, Input::Vertical(_, true));
+                    let selections = base.selections();
+                    let mut targets = Vec::new();
+                    for (i, selection) in selections.iter().enumerate() {
+                        let head = selection.head.offset;
+                        let row = wrapping
+                            .start(&source, head, tab_size)
+                            .map_err(TextError::Read)?;
+                        let end = wrapping
+                            .end(&source, row, tab_size)
+                            .map_err(TextError::Read)?;
+                        let bytes = snapshot.bytes(row..end).map_err(TextError::Read)?;
+                        let goal =
+                            editing.goal_columns.get(i).copied().unwrap_or_else(|| {
+                                column_at(&bytes, tab_size, (head - row) as usize)
+                            });
+                        if editing.goal_columns.len() <= i {
+                            editing.goal_columns.push(goal);
+                        }
+                        let target = if *delta < 0 {
+                            wrapping.previous(&source, &Folds::default(), row, tab_size)
+                        } else {
+                            wrapping.next(&source, &Folds::default(), row, tab_size)
+                        }
+                        .map_err(TextError::Read)?
+                        .unwrap_or(row);
+                        let end = wrapping
+                            .end(&source, target, tab_size)
+                            .map_err(TextError::Read)?;
+                        let bytes = snapshot.bytes(target..end).map_err(TextError::Read)?;
+                        let content = bytes.strip_suffix(b"\n").unwrap_or(&bytes);
+                        let content = content.strip_suffix(b"\r").unwrap_or(content);
+                        // The byte at a soft row's end belongs to the next row.
+                        // Keep vertical movement on the requested row when it is
+                        // shorter than the remembered column (otherwise Up sticks).
+                        let column = if wrapping.enabled()
+                            && content.len() == bytes.len()
+                            && end < snapshot.len()
+                        {
+                            goal.min(column_at(content, tab_size, content.len()).saturating_sub(1))
+                        } else {
+                            goal
+                        };
+                        let target = target + offset_at(content, tab_size, column) as u64;
+                        targets.push(BufferSelection::new(
+                            if extend {
+                                selection.anchor.offset
                             } else {
                                 target
                             },
                             target,
-                        ),
-                    )?;
+                        ));
+                    }
+                    if matches!(input, Input::AddVertical(_)) {
+                        targets.extend(selections);
+                    }
+                    session.set_selections(&base, targets)?;
                     editing.marked = None;
                     editing.typing = None;
                 }
@@ -698,34 +807,35 @@ impl TextView {
                     editing.typing = None;
                 }
                 Input::Edge(end, extend) => {
-                    let line = snapshot
-                        .line_at(base.selection().head.offset)
-                        .map_err(TextError::Read)?;
-                    let mut target = snapshot
-                        .line_start(line + u64::from(*end))
-                        .map_err(TextError::Read)?
-                        .unwrap_or(snapshot.len());
-                    if *end && target > 0 {
-                        let bytes = snapshot
-                            .bytes(target.saturating_sub(2)..target)
+                    let mut targets = Vec::new();
+                    for selection in base.selections() {
+                        let line = snapshot
+                            .line_at(selection.head.offset)
                             .map_err(TextError::Read)?;
-                        if bytes.ends_with(b"\r\n") {
-                            target -= 2;
-                        } else if bytes.ends_with(b"\r") || bytes.ends_with(b"\n") {
-                            target -= 1;
+                        let mut target = snapshot
+                            .line_start(line + u64::from(*end))
+                            .map_err(TextError::Read)?
+                            .unwrap_or(snapshot.len());
+                        if *end && target > 0 {
+                            let bytes = snapshot
+                                .bytes(target.saturating_sub(2)..target)
+                                .map_err(TextError::Read)?;
+                            if bytes.ends_with(b"\r\n") {
+                                target -= 2;
+                            } else if bytes.ends_with(b"\r") || bytes.ends_with(b"\n") {
+                                target -= 1;
+                            }
                         }
-                    }
-                    session.set_selection(
-                        &base,
-                        BufferSelection::new(
+                        targets.push(BufferSelection::new(
                             if *extend {
-                                base.selection().anchor.offset
+                                selection.anchor.offset
                             } else {
                                 target
                             },
                             target,
-                        ),
-                    )?;
+                        ));
+                    }
+                    session.set_selections(&base, targets)?;
                     editing.marked = None;
                     editing.typing = None;
                 }
@@ -736,6 +846,9 @@ impl TextView {
                     selected,
                     separate,
                 } => {
+                    if text.len() > MAX_COPY as usize {
+                        return Err(SessionError::Limit("Insertion exceeds 64 MB"));
+                    }
                     let range = if let Some(range) = range {
                         snapshot.utf16_to_byte(
                             (range.start as u64).min(snapshot.utf16_len()),
@@ -761,7 +874,16 @@ impl TextView {
                     } else {
                         UndoGroup::New
                     };
-                    session.replace(&base, range.clone(), text, group)?;
+                    if !marked && editing.marked.is_none() && input_range_is_selection(input) {
+                        if !auto_pairs
+                            || *separate
+                            || !super::pairs::insert(session, &base, text, group)?
+                        {
+                            session.replace_selections(&base, text, group)?;
+                        }
+                    } else {
+                        session.replace(&base, range.clone(), text, group)?;
+                    }
                     editing.marked = marked.then_some(range.start..range.start + text.len() as u64);
                     editing.typing = if *separate {
                         None
@@ -789,10 +911,20 @@ impl TextView {
                         )?;
                     }
                 }
+                Input::Format(format, encoding) => {
+                    session.set_format(base.document(), *format)?;
+                    if *encoding {
+                        document.preferences.charset = None;
+                    } else {
+                        document.preferences.end_of_line = None;
+                    }
+                    editing.typing = None;
+                }
+                Input::Paste(_) => unreachable!(),
                 Input::Save => unreachable!(),
             }
             if !matches!(input, Input::Vertical(..)) {
-                editing.goal_column = None;
+                editing.goal_columns.clear();
             }
             document.changed(cx);
             Ok(())
@@ -804,7 +936,7 @@ impl TextView {
             self.editing.as_mut().unwrap().marked = marked;
             // Clicking or dragging within the viewport must not move the text
             // away from the pointer. Keyboard movement uses a small scroll margin.
-            if !matches!(input, Input::Selection(_)) {
+            if !matches!(input, Input::Selection(_) | Input::Selections(_)) {
                 self.editing.as_mut().unwrap().reveal_caret = true;
                 if let Some(selection) = self.selection {
                     self.jump(Jump::Caret(selection.head), cx);
@@ -915,19 +1047,13 @@ impl TextView {
     }
     pub(super) fn edit_paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.queue_input(
-                Input::Text {
-                    text,
-                    range: None,
-                    marked: false,
-                    selected: None,
-                    separate: true,
-                },
-                cx,
-            );
+            self.queue_input(Input::Paste(text), cx);
         }
     }
     pub(super) fn edit_cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
+        if self.copy_selections(true, cx) {
+            return;
+        }
         if self.has_pending_input() {
             self.notice = Some("Wait for the pending selection before cutting.".into());
             cx.notify();
@@ -970,7 +1096,7 @@ impl TextView {
                 && editing.pane.is_some()
                 && !editing.document.read(cx).file_operation_pending()
         });
-        element
+        let element = element
             .key_context(if self.is_editing() {
                 CONTEXT
             } else {
@@ -987,6 +1113,58 @@ impl TextView {
             }))
             .on_action(cx.listener(|this, _: &SelectDocumentEnd, _, cx| {
                 this.queue_input(Input::DocumentEdge(true, true), cx)
+            }))
+            .on_action(cx.listener(|this, _: &WordLeft, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::MoveWord {
+                        direction: Direction::Backward,
+                        extend: false,
+                    }),
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &WordRight, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::MoveWord {
+                        direction: Direction::Forward,
+                        extend: false,
+                    }),
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &SelectWordLeft, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::MoveWord {
+                        direction: Direction::Backward,
+                        extend: true,
+                    }),
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &SelectWordRight, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::MoveWord {
+                        direction: Direction::Forward,
+                        extend: true,
+                    }),
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &DeleteWordLeft, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::DeleteWord {
+                        direction: Direction::Backward,
+                    }),
+                    cx,
+                )
+            }))
+            .on_action(cx.listener(|this, _: &DeleteWordRight, _, cx| {
+                this.queue_input(
+                    Input::Cursor(CursorCommand::DeleteWord {
+                        direction: Direction::Forward,
+                    }),
+                    cx,
+                )
             }))
             .on_action(cx.listener(Self::enter_edit))
             .on_action(cx.listener(Self::leave_edit))
@@ -1092,7 +1270,8 @@ impl TextView {
             }))
             .on_action(cx.listener(|this, _: &SelectLineEnd, _, cx| {
                 this.queue_input(Input::Edge(true, true), cx)
-            }))
+            }));
+        self.command_actions(element, cx)
     }
     pub(super) fn paint_input(
         &mut self,
@@ -1142,22 +1321,29 @@ impl TextView {
                 .editing
                 .as_ref()
                 .is_some_and(|editing| editing.caret.visible)
-            && let Some(selection) = self.selection
-            && let Some(bounds) = hits.caret(selection.head)
         {
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: Bounds::from_corners(
-                        point(hits.bounds.left() + hits.gutter_width, hits.bounds.top()),
-                        hits.bounds.bottom_right(),
-                    ),
-                }),
-                |window| {
-                    window.paint_quad(fill(bounds, Theme::get(window, cx).text));
-                },
-            );
+            for selection in self.all_selections() {
+                let Some(bounds) = hits.caret(selection.head) else {
+                    continue;
+                };
+                window.with_content_mask(
+                    Some(ContentMask {
+                        bounds: Bounds::from_corners(
+                            point(hits.bounds.left() + hits.gutter_width, hits.bounds.top()),
+                            hits.bounds.bottom_right(),
+                        ),
+                    }),
+                    |window| {
+                        window.paint_quad(fill(bounds, Theme::get(window, cx).text));
+                    },
+                );
+            }
         }
     }
+}
+
+fn input_range_is_selection(input: &Input) -> bool {
+    matches!(input, Input::Text { range: None, .. })
 }
 
 impl HitMap {

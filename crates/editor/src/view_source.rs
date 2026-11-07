@@ -2,11 +2,7 @@
 use crate::folding::{self, Folds};
 use bytes::Bytes;
 use plastext_buffer::{Bias, ByteSource, FileSource, LineIndex, ReadError, TextSnapshot, rows};
-use std::{
-    io,
-    ops::Range,
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::{io, ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub(crate) struct ViewSource {
@@ -160,17 +156,6 @@ impl ViewSource {
             }
         }
         (result, None)
-    }
-    pub fn find(
-        &self,
-        query: &plastext_search::Query,
-        cancel: &AtomicBool,
-        found: impl FnMut(Vec<Range<u64>>),
-    ) -> io::Result<()> {
-        match &self.snapshot {
-            Some(text) => plastext_search::find_in_snapshot(text, query, cancel, found),
-            None => plastext_search::find_all(&self.original, query, cancel, found),
-        }
     }
 }
 

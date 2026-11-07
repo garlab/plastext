@@ -1,4 +1,6 @@
 //! One UI owner per path; disk work and bulk version retirement run on workers.
+mod preferences;
+
 use gpui::{App, AppContext, Context, Entity, Global, SharedString, Task, WeakEntity};
 use plastext_buffer::{ByteSource, DiskVersion, FileDocument, OpenOptions, SaveOptions};
 use std::{
@@ -14,6 +16,14 @@ use std::{
 struct Documents(HashMap<PathBuf, WeakEntity<EditingDocument>>);
 impl Global for Documents {}
 
+#[derive(Default)]
+pub(crate) struct Preferences(pub plastext_settings::Editor);
+impl Global for Preferences {}
+
+pub fn configure_editing(editor: plastext_settings::Editor, cx: &mut App) {
+    cx.set_global(Preferences(editor));
+}
+
 pub struct EditingDocument {
     pub(crate) views: usize,
     pub(crate) pending_inputs: usize,
@@ -21,11 +31,13 @@ pub struct EditingDocument {
     pub(crate) active: bool,
     pub(crate) preparing: bool,
     pub(crate) notice: Option<SharedString>,
+    pub(crate) preferences: plastext_settings::Editor,
     path: PathBuf,
     options: OpenOptions,
     cancel: Arc<AtomicBool>,
     task: Option<Task<()>>,
     file_operation: bool,
+    save_preparing: bool,
     edit_after_operation: Option<u64>,
 }
 impl EditingDocument {
@@ -62,11 +74,16 @@ impl EditingDocument {
                 active: false,
                 preparing: false,
                 notice: None,
+                preferences: cx
+                    .try_global::<Preferences>()
+                    .map(|p| p.0.clone())
+                    .unwrap_or_default(),
                 path,
                 options,
                 cancel: Arc::new(AtomicBool::new(false)),
                 task: None,
                 file_operation: false,
+                save_preparing: false,
                 edit_after_operation: None,
             }
         });
@@ -131,7 +148,7 @@ impl EditingDocument {
             .is_some_and(|file| file.session().is_current(version))
     }
     pub fn is_saving(&self) -> bool {
-        self.file.as_ref().is_some_and(FileDocument::is_saving)
+        self.save_preparing || self.file.as_ref().is_some_and(FileDocument::is_saving)
     }
     pub fn is_editing(&self) -> bool {
         self.active
@@ -154,6 +171,7 @@ impl EditingDocument {
         self.preparing = true;
         self.notice = Some("Preparing edit mode…".into());
         let (path, options, cancel) = (self.path.clone(), self.options, self.cancel.clone());
+        let preferences = self.preferences.clone();
         let load = cx.background_executor().spawn(async move {
             if !DiskVersion::read(&path)?.is_writable()? {
                 return Ok(None);
@@ -166,7 +184,16 @@ impl EditingDocument {
                 offset.saturating_sub(1024 * 1024).min(end)
                     ..offset.saturating_add(1024 * 1024).min(end),
             )?;
-            Ok::<_, std::io::Error>(Some(file))
+            let mut sample = Vec::new();
+            snapshot
+                .text()
+                .read_uncached(0..end.min(65536), &mut sample)?;
+            let preferences = plastext_settings::editing::for_file(
+                &path,
+                &String::from_utf8_lossy(&sample),
+                &preferences,
+            );
+            Ok::<_, std::io::Error>(Some((file, preferences)))
         });
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = load.await;
@@ -174,10 +201,18 @@ impl EditingDocument {
             this.update(cx, |this, cx| {
                 this.preparing = false;
                 match result.take().unwrap() {
-                    Ok(Some(file)) => {
+                    Ok(Some((file, preferences))) => {
                         this.file = Some(file);
                         this.active = true;
-                        this.notice = None;
+                        this.notice = match preferences {
+                            Ok(preferences) => {
+                                this.preferences = preferences;
+                                None
+                            }
+                            Err(error) => {
+                                Some(format!("Couldn't load EditorConfig: {error}").into())
+                            }
+                        };
                     }
                     Ok(None) => {
                         this.active = false;
@@ -208,7 +243,7 @@ impl EditingDocument {
         }
         cx.notify();
     }
-    pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn retire_versions(&mut self, cx: &mut Context<Self>) {
         if let Some(retired) = self
             .file
             .as_mut()
@@ -220,18 +255,126 @@ impl EditingDocument {
                 })
                 .detach();
         }
+    }
+    pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
+        self.retire_versions(cx);
         self.notice = None;
         cx.notify();
     }
-    pub fn save(&mut self, cx: &mut Context<Self>) {
-        if self.file_operation {
+    pub fn reopen_encoding(&mut self, label: &str, cx: &mut Context<Self>) {
+        if self.is_dirty() || self.is_saving() || self.file_operation {
             return;
         }
+        let hint = if label == "auto" {
+            plastext_buffer::EncodingHint::Auto
+        } else if let Some(encoding) = plastext_buffer::TextEncoding::for_label(label) {
+            plastext_buffer::EncodingHint::Explicit(encoding)
+        } else {
+            return;
+        };
         let Some(job) = self
             .file
             .as_mut()
-            .and_then(|file| file.begin_save(SaveOptions::default()))
+            .and_then(|file| file.reopen_with_encoding(hint, self.options))
         else {
+            return;
+        };
+        self.preparing = true;
+        let cancel = self.cancel.clone();
+        let work = cx
+            .background_executor()
+            .spawn(async move { job.run(&cancel, |_, _| {}) });
+        cx.spawn(async move |this, cx| {
+            let mut observation = work.await;
+            let retired = this.update(cx, |this, cx| {
+                this.preparing = false;
+                let result = this
+                    .file
+                    .as_mut()
+                    .map(|file| file.finish_external(&mut observation));
+                this.notice = result.as_ref().and_then(|result| match &result.state {
+                    plastext_buffer::ExternalState::Reloaded => None,
+                    other => Some(format!("Couldn't reopen with encoding: {other:?}").into()),
+                });
+                cx.notify();
+                result
+            });
+            cx.background_executor()
+                .spawn(async move { drop((observation, retired)) })
+                .detach();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn save(&mut self, cx: &mut Context<Self>) {
+        if self.file_operation || self.is_saving() {
+            return;
+        }
+        let options = self.preferences.clone();
+        if !options.trim_trailing_whitespace
+            && options.insert_final_newline.is_none()
+            && options.charset.is_none()
+            && options.end_of_line.is_none()
+        {
+            self.save_now(cx);
+            return;
+        }
+        let Some(file) = &mut self.file else { return };
+        let session = file.session_mut();
+        let Ok(pane) = session.attach_pane(plastext_buffer::Selection::caret(0)) else {
+            return;
+        };
+        let base = session.pane_snapshot(pane).unwrap();
+        self.save_preparing = true;
+        self.notice = Some("Preparing save…".into());
+        let cancel = self.cancel.clone();
+        let work = cx.background_executor().spawn(async move {
+            let result = preferences::prepare(base.document().text(), &options, &cancel);
+            (base, result)
+        });
+        cx.spawn(async move |this, cx| {
+            let (base, result) = work.await;
+            this.update(cx, |this, cx| {
+                this.save_preparing = false;
+                let result = result.and_then(|(prepared, format)| {
+                    let session = this
+                        .file
+                        .as_mut()
+                        .ok_or("Document is closed")?
+                        .session_mut();
+                    session
+                        .apply_prepared(&base, prepared, plastext_buffer::UndoGroup::New)
+                        .map_err(|_| "Document changed while preparing save; press Save again")?;
+                    session
+                        .set_format(&session.snapshot(), format)
+                        .map_err(|e| format!("{e:?}"))?;
+                    Ok(())
+                });
+                if let Some(file) = &mut this.file {
+                    file.session_mut().detach_pane(pane);
+                }
+                this.changed(cx);
+                match result {
+                    Ok(()) => this.save_now(cx),
+                    Err(error) => this.notice = Some(error.into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+    fn save_now(&mut self, cx: &mut Context<Self>) {
+        if self.file_operation {
+            return;
+        }
+        let Some(job) = self.file.as_mut().and_then(|file| {
+            file.begin_save(SaveOptions {
+                atomic: self.preferences.atomic_save,
+            })
+        }) else {
             return;
         };
         self.notice = Some("Saving…".into());

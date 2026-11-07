@@ -48,11 +48,12 @@ for unsaved edits.
 
 Next, in order:
 
-1. Complete editing commands: multi-cursor, word movement, find/replace,
-   indentation and EditorConfig; expose encoding/newline and editing settings.
-   Validate native IME, close/quit dialogs and typing latency.
+1. Validate native IME, close/quit dialogs and typing latency. Editing commands
+   are implemented: multi-cursor, word movement/deletion, find/replace, line and
+   indentation commands, EditorConfig, encoding/newline menus and editing settings.
+   See [controls and limits](editing.md#editing-commands-and-settings).
 2. Integrate save/reload jobs with debounced filesystem events, explicit
-   conflict/recovery choices and new-file/Save As handling. Current saves refuse
+   conflict/recovery choices and Save As. New File is implemented. Current saves refuse
    conflicts while retaining edits. Validate native platform behavior and injected
    save failures.
 3. Add continuous Markdown source/preview scroll sync, double-click-to-source, tail mode

@@ -148,6 +148,7 @@ fn newline_eof_and_grapheme_deletion(cx: &mut TestAppContext) {
     );
     assert_eq!(content(cx, &a), "a\r\nb");
     send(cx, &a, Input::Newline);
+    cx.executor().run_until_parked();
     assert_eq!(content(cx, &a), "a\r\nb\r\n");
     send(cx, &a, insert("c"));
     send(cx, &a, Input::Vertical(-1, false));
@@ -263,6 +264,7 @@ fn caret_scrolls_one_row_at_a_time_with_space_at_both_edges(cx: &mut TestAppCont
     send(cx, &view, Input::DocumentEdge(true, false));
     assert_eq!(top_line(cx), 92);
     send(cx, &view, Input::Newline);
+    cx.executor().run_until_parked();
     assert_eq!(top_line(cx), 93);
     send(cx, &view, Input::DocumentEdge(false, false));
     assert_eq!(top_line(cx), 0);
@@ -810,4 +812,121 @@ fn deleting_and_undoing_keep_shifted_toml_colors_before_reparse(cx: &mut TestApp
     cx.executor().advance_clock(Duration::from_millis(60));
     cx.run_until_parked();
     assert_eq!(highlighted_rows(cx, &view), before);
+}
+
+#[gpui::test]
+fn multicursor_paste_distributes_lines_and_pairing_is_opt_in(cx: &mut TestAppContext) {
+    let (_dir, a, _b) = setup(cx, b"cat\ndog", false);
+    send(
+        cx,
+        &a,
+        Input::Selections(vec![BufferSelection::new(0, 3), BufferSelection::new(4, 7)]),
+    );
+    send(cx, &a, Input::Paste("one\r\ntwo".into()));
+    cx.executor().run_until_parked();
+    assert_eq!(content(cx, &a), "one\ntwo");
+    send(cx, &a, Input::Undo);
+    assert_eq!(content(cx, &a), "cat\ndog");
+    send(cx, &a, Input::Selection(BufferSelection::caret(0)));
+    send(cx, &a, insert("("));
+    assert_eq!(content(cx, &a), "(cat\ndog");
+    send(cx, &a, Input::Undo);
+    cx.update(|cx| {
+        a.read(cx)
+            .editing_document()
+            .unwrap()
+            .update(cx, |doc, _| doc.preferences.auto_close_pairs = true)
+    });
+    send(cx, &a, Input::Selection(BufferSelection::caret(0)));
+    send(cx, &a, insert("("));
+    assert_eq!(content(cx, &a), "(cat\ndog"); // no pairing in front of an identifier
+    send(cx, &a, Input::Undo);
+    send(cx, &a, Input::Selection(BufferSelection::new(0, 3)));
+    send(cx, &a, insert("("));
+    assert_eq!(content(cx, &a), "(cat)\ndog");
+    send(cx, &a, Input::Undo);
+    assert_eq!(content(cx, &a), "cat\ndog");
+}
+
+#[gpui::test]
+fn bulk_line_command_finishes_before_queued_typing_and_saves(cx: &mut TestAppContext) {
+    let (dir, a, _b) = setup(cx, b"a\nb\n", false);
+    send(cx, &a, Input::Command(commands::Command::Duplicate(true)));
+    send(cx, &a, insert("x"));
+    send(cx, &a, Input::Save);
+    cx.executor().run_until_parked();
+    assert_eq!(content(cx, &a), "a\nxa\nb\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("edit.txt")).unwrap(),
+        "a\nxa\nb\n"
+    );
+}
+
+#[gpui::test]
+fn replace_all_uses_captures_scope_and_a_single_undo(cx: &mut TestAppContext) {
+    let (_dir, a, b) = setup(cx, b"item1\nitem2\nitem3", false);
+    send(cx, &a, Input::Selection(BufferSelection::new(0, 11)));
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            a.update(cx, |view, cx| {
+                view.open_replace(&crate::actions::Replace, window, cx)
+            });
+            a.clone()
+        })
+        .unwrap()
+    });
+    cx.update(|cx| {
+        a.update(cx, |view, cx| {
+            let find = view.find.as_mut().unwrap();
+            find.options.regex = true;
+            find.scope = find.original_selection.clone();
+            find.input
+                .update(cx, |input, cx| input.set_text("item(\\d)", cx));
+            find.replacement
+                .as_ref()
+                .unwrap()
+                .update(cx, |input, cx| input.set_text("row$1", cx));
+            view.search(cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| a.update(cx, |view, cx| view.replace_matches(true, cx)));
+    cx.run_until_parked();
+    assert_eq!(content(cx, &b), "row1\nrow2\nitem3");
+    send(cx, &a, Input::Undo);
+    cx.run_until_parked();
+    assert_eq!(content(cx, &a), "item1\nitem2\nitem3");
+    // Changing the search cancels the pending replacement, including one
+    // already prepared on a worker but not yet installed.
+    cx.update(|cx| {
+        a.update(cx, |view, cx| {
+            view.replace_matches(true, cx);
+            view.search(cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(content(cx, &a), "item1\nitem2\nitem3");
+    // Replace advances even when the replacement still contains the query.
+    cx.update(|cx| {
+        a.update(cx, |view, cx| {
+            let find = view.find.as_mut().unwrap();
+            find.scope = None;
+            find.options.regex = false;
+            find.input
+                .update(cx, |input, cx| input.set_text("item", cx));
+            find.replacement
+                .as_ref()
+                .unwrap()
+                .update(cx, |input, cx| input.set_text("itemX", cx));
+            view.search(cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| a.update(cx, |view, cx| view.replace_matches(false, cx)));
+    cx.run_until_parked();
+    assert_eq!(content(cx, &a), "itemX1\nitem2\nitem3");
+    cx.update(|cx| assert_eq!(a.read(cx).selection.unwrap().range(), 7..11));
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
 }
