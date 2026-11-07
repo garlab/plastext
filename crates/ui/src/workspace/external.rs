@@ -341,6 +341,18 @@ impl Workspace {
         let change = document.read(cx).disk_change()?;
         let confirming = document.read(cx).confirming_overwrite();
         let reviewed = document.read(cx).reviewed_disk();
+        let (background, foreground, border, hover) = if gpui::Hsla::from(theme.background).l < 0.5
+        {
+            (0x3e3018, 0xffe2a8, 0xd9a441, 0x594321)
+        } else {
+            (0xfff1cf, 0x5c3b05, 0xa66b00, 0xffe2a3)
+        };
+        let (background, foreground, border, hover) = (
+            gpui::rgb(background),
+            gpui::rgb(foreground),
+            gpui::rgb(border),
+            gpui::rgb(hover),
+        );
         let text = match (change, confirming) {
             (DiskChange::Missing, _) => {
                 "File deleted or moved on disk. Your open document is kept."
@@ -356,9 +368,9 @@ impl Workspace {
                 .py_1()
                 .rounded_sm()
                 .border_1()
-                .border_color(theme.border)
+                .border_color(border)
                 .cursor_pointer()
-                .hover(|d| d.bg(theme.border))
+                .hover(move |d| d.bg(hover))
                 .child(label)
         };
         let reload = document.clone();
@@ -366,17 +378,28 @@ impl Workspace {
         let compare = document.clone();
         Some(
             div()
+                .id("disk-warning")
+                .debug_selector(|| "disk-warning".into())
                 .flex_none()
                 .flex()
                 .flex_wrap()
                 .items_center()
                 .gap_2()
                 .p_2()
-                .bg(theme.surface)
+                .bg(background)
+                .text_color(foreground)
+                .border_l_4()
                 .border_b_1()
-                .border_color(theme.border)
+                .border_color(border)
                 .text_sm()
-                .child(div().flex_1().child(text))
+                .child(warning_icon(foreground))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(160.))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(text),
+                )
                 .when(change == DiskChange::Changed, |row| {
                     row.child(button("disk-diff", "Show Diff").on_click(cx.listener(
                         move |this, _, window, cx| this.show_disk_diff(compare.clone(), window, cx),
@@ -403,6 +426,30 @@ impl Workspace {
                 .into_any_element(),
         )
     }
+}
+
+fn warning_icon(color: gpui::Rgba) -> impl IntoElement {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let mut path = gpui::PathBuilder::stroke(px(1.5));
+            for points in [
+                &[(9., 2.), (17., 16.), (1., 16.), (9., 2.)][..],
+                &[(9., 7.), (9., 11.)],
+                &[(9., 13.), (9., 14.)],
+            ] {
+                path.move_to(bounds.origin + gpui::point(px(points[0].0), px(points[0].1)));
+                for &(x, y) in &points[1..] {
+                    path.line_to(bounds.origin + gpui::point(px(x), px(y)));
+                }
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .size(px(18.))
+    .flex_none()
 }
 
 struct Comparison {

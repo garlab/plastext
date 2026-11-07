@@ -141,6 +141,16 @@ impl EditingDocument {
                 }
             })
     }
+    /// Bulk closing saved tabs must not discard a draft or the retained copy
+    /// of a deleted/changed file, even after its warning was dismissed.
+    pub fn can_close_as_saved(&self) -> bool {
+        !self.is_untitled()
+            && !self.is_dirty()
+            && !self.is_saving()
+            && !self.is_preparing()
+            && !self.file_operation_pending()
+            && self.external.change.is_none()
+    }
     /// Register a tab that owns an embedded source editor or a preview.
     pub fn retain_view(&mut self) {
         self.views += 1;

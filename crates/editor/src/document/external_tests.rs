@@ -67,17 +67,27 @@ fn check(doc: &Entity<EditingDocument>, cx: &mut TestAppContext) {
 fn clean_changes_reload_and_deletion_keeps_the_snapshot(cx: &mut TestAppContext) {
     let (dir, doc) = setup(cx);
     let path = dir.path().join("document.txt");
+    cx.update(|cx| assert!(doc.read(cx).can_close_as_saved()));
     std::fs::write(&path, "updated\n").unwrap();
     check(&doc, cx);
     assert_eq!(text(&doc, cx), "updated\n");
     std::fs::remove_file(&path).unwrap();
     check(&doc, cx);
     assert_eq!(text(&doc, cx), "updated\n");
-    cx.update(|cx| assert_eq!(doc.read(cx).disk_change(), Some(DiskChange::Missing)));
+    cx.update(|cx| {
+        assert_eq!(doc.read(cx).disk_change(), Some(DiskChange::Missing));
+        assert!(!doc.read(cx).can_close_as_saved());
+        doc.update(cx, |doc, cx| doc.keep_mine(cx));
+        assert_eq!(doc.read(cx).disk_change(), None);
+        assert!(!doc.read(cx).can_close_as_saved());
+    });
     std::fs::write(&path, "returned\n").unwrap();
     check(&doc, cx);
     assert_eq!(text(&doc, cx), "returned\n");
-    cx.update(|cx| assert_eq!(doc.read(cx).disk_change(), None));
+    cx.update(|cx| {
+        assert_eq!(doc.read(cx).disk_change(), None);
+        assert!(doc.read(cx).can_close_as_saved());
+    });
 }
 
 #[gpui::test]

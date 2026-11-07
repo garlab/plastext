@@ -75,7 +75,10 @@ Module scripts and JSON script data are recognized by their `type` attribute.
 Embedded parsing runs in the background under the existing syntax file-size
 limit; highlighting visits only the requested viewport.
 
-Right-click a tab for **Close Others**, **Close Right**, or **Close Left**. These actions apply only to that pane and keep the clicked tab open.
+Right-click a tab for **Close Others**, **Close Right**, **Close Left**, or
+**Close Saved Files**. These actions apply only to that pane. The first three
+keep the clicked tab open; Close Saved Files closes clean saved tabs, keeping
+untitled drafts, modified files and files with unresolved disk changes open.
 
 Single-click a file in the navigation pane to open a temporary preview tab,
 shown with an italic title. Clicking another file reuses that tab. Double-click
