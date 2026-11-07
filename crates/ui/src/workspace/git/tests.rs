@@ -153,15 +153,12 @@ fn folderless_window_discovers_the_open_files_repository(cx: &mut TestAppContext
     expect(window, &other_path, Some(Decoration::Staged), cx);
     window
         .update(cx, |workspace, _, _| {
-            assert_eq!(workspace.git.snapshot.as_ref().unwrap().root, other_root);
-            assert!(
-                workspace
-                    .git
-                    .snapshot
-                    .as_ref()
-                    .unwrap()
-                    .status(&path)
-                    .is_none()
+            let snapshot = workspace.git.snapshot.as_ref().unwrap();
+            assert_eq!(snapshot.roots().count(), 2);
+            assert!(snapshot.repository(&other_root).is_some());
+            assert_eq!(
+                snapshot.status(&path).unwrap().decoration(),
+                Some(Decoration::Staged)
             );
         })
         .unwrap();
@@ -170,8 +167,119 @@ fn folderless_window_discovers_the_open_files_repository(cx: &mut TestAppContext
     cx.run_until_parked();
     window
         .update(cx, |workspace, window, _| {
-            assert!(workspace.git.scope.is_none());
+            assert!(workspace.git.scopes.is_empty());
             assert!(workspace.git.snapshot.is_none());
+            window.remove_window();
+        })
+        .unwrap();
+}
+
+fn toggle_folder(window: WindowHandle<Workspace>, path: &Path, cx: &mut TestAppContext) {
+    window
+        .update(cx, |workspace, window, cx| {
+            let tree = workspace.tree.as_ref().unwrap();
+            tree.focus_handle(cx).focus(window);
+            tree.update(cx, |tree, cx| tree.select(Some(path.to_owned()), cx));
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "enter");
+    cx.run_until_parked();
+    refresh(window, cx);
+}
+
+#[gpui::test]
+fn parent_folder_discovers_expanded_repositories_and_keeps_failures_separate(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let repos = [root.join("alpha"), root.join("beta")];
+    for repo in &repos {
+        std::fs::create_dir(repo).unwrap();
+        git(repo, &["init", "-qb", "main"]);
+        std::fs::create_dir(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/file.txt"), "initial\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-qm", "initial"]);
+        std::fs::write(repo.join("src/file.txt"), "modified\n").unwrap();
+    }
+    let paths = repos.each_ref().map(|repo| repo.join("src/file.txt"));
+    cx.update(crate::init);
+    let window =
+        cx.add_window(|window, cx| Workspace::new(Some(root.clone()), Arc::default(), window, cx));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.snapshot.as_ref().unwrap().roots().count(), 0);
+        })
+        .unwrap();
+    toggle_folder(window, &repos[0], cx);
+    expect(window, &paths[0], Some(Decoration::Modified), cx);
+    toggle_folder(window, &repos[1], cx);
+    toggle_folder(window, &repos[0].join("src"), cx);
+    expect(window, &paths[0], Some(Decoration::Modified), cx);
+    expect(window, &paths[1], Some(Decoration::Modified), cx);
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.snapshot.as_ref().unwrap().roots().count(), 2);
+        })
+        .unwrap();
+
+    // A broken first repository must not prevent the second one refreshing.
+    let index = std::fs::read(repos[0].join(".git/index")).unwrap();
+    std::fs::write(repos[0].join(".git/index"), "invalid").unwrap();
+    git(&repos[1], &["add", "."]);
+    refresh(window, cx);
+    window
+        .update(cx, |workspace, _, cx| {
+            assert!(workspace.git.failed);
+            let snapshot = workspace.git.snapshot.as_ref().unwrap();
+            assert_eq!(
+                snapshot.status(&paths[0]).unwrap().decoration(),
+                Some(Decoration::Modified)
+            );
+            assert_eq!(
+                snapshot.status(&paths[1]).unwrap().decoration(),
+                Some(Decoration::Staged)
+            );
+            assert_eq!(
+                workspace
+                    .tree
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .git_status(&paths[1]),
+                snapshot.status(&paths[1])
+            );
+        })
+        .unwrap();
+    std::fs::write(repos[0].join(".git/index"), index).unwrap();
+    window
+        .update(cx, |workspace, window, cx| {
+            workspace.open_file(paths[0].clone(), None, window, cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    toggle_folder(window, &repos[0], cx);
+    expect(window, &paths[0], Some(Decoration::Modified), cx);
+    window
+        .update(cx, |workspace, window, cx| {
+            workspace.panes[&workspace.active_pane]
+                .active_tab()
+                .unwrap()
+                .view
+                .focus_handle(cx)
+                .focus(window);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "cmd-w");
+    cx.run_until_parked();
+    refresh(window, cx);
+    window
+        .update(cx, |workspace, window, _| {
+            let snapshot = workspace.git.snapshot.as_ref().unwrap();
+            assert_eq!(snapshot.roots().count(), 1);
+            assert!(snapshot.status(&paths[0]).is_none());
             window.remove_window();
         })
         .unwrap();

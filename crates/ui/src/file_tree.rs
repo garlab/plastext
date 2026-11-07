@@ -68,7 +68,7 @@ pub struct FileTreeView {
     relist: HashSet<PathBuf>,
     directory_versions: HashMap<PathBuf, DirectoryVersion>,
     creation: Option<Creation>,
-    git_status: Option<Arc<plastext_git::Snapshot>>,
+    git_status: Option<Arc<plastext_git::RepositorySet>>,
     icons: Entity<IconThemes>,
     _icons_changed: Subscription,
 }
@@ -130,7 +130,7 @@ impl FileTreeView {
     }
     pub(crate) fn set_git_status(
         &mut self,
-        snapshot: Option<Arc<plastext_git::Snapshot>>,
+        snapshot: Option<Arc<plastext_git::RepositorySet>>,
         cx: &mut Context<Self>,
     ) {
         self.git_status = snapshot;

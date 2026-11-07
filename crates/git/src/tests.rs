@@ -206,6 +206,73 @@ fn no_repository_and_executable_filters_are_safe() {
 }
 
 #[test]
+fn discovery_is_lazy_deduplicated_and_nested_status_masks_the_parent() {
+    let dir = repo();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let nested = root.join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::write(nested.join("file"), "outer\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-qm", "outer"]);
+    git(&nested, &["init", "-qb", "main"]);
+    fs::write(nested.join("file"), "inner\n").unwrap();
+    git(&nested, &["add", "."]);
+    git(&nested, &["commit", "-qm", "inner"]);
+    fs::create_dir(nested.join("src")).unwrap();
+    let cancel = AtomicBool::new(false);
+    assert_eq!(
+        discover(std::slice::from_ref(&root), &cancel).unwrap(),
+        std::slice::from_ref(&root)
+    );
+    let roots = discover(&[root.clone(), nested.clone(), nested.join("src")], &cancel).unwrap();
+    assert_eq!(roots, [root.clone(), nested.clone()]);
+    let mut set = RepositorySet::for_roots(&roots, &RepositorySet::default());
+    set.update(&root, Some(scan(&root)), Limits::default())
+        .unwrap();
+    assert!(
+        set.repository(&root)
+            .unwrap()
+            .status(&nested.join("file"))
+            .is_some()
+    );
+    assert_eq!(
+        set.status(&nested.join("file")),
+        None,
+        "pending nested status masks its parent"
+    );
+    set.update(&nested, Some(scan(&nested)), Limits::default())
+        .unwrap();
+    assert_eq!(
+        set.status(&nested.join("file")),
+        None,
+        "clean nested status masks its parent"
+    );
+    fs::write(nested.join("file"), "changed inner\n").unwrap();
+    assert!(
+        set.update(
+            &nested,
+            Some(scan(&nested)),
+            Limits {
+                changed_paths: 1,
+                path_bytes: usize::MAX
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        set.status(&nested.join("file")),
+        None,
+        "aggregate limit retains the prior result"
+    );
+    set.update(&nested, Some(scan(&nested)), Limits::default())
+        .unwrap();
+    assert_eq!(
+        set.status(&nested.join("file")).unwrap().decoration(),
+        Some(Decoration::Modified)
+    );
+}
+
+#[test]
 #[ignore = "creates a disposable 100k-file repository for performance measurement"]
 fn warm_status_100k_files() {
     let dir = repo();

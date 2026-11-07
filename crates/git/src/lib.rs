@@ -1,6 +1,6 @@
 //! Read-only, UI-independent Git status. Call on a background worker.
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -42,6 +42,112 @@ pub struct Snapshot {
     pub root: PathBuf,
     pub watch_directories: Vec<PathBuf>,
     files: HashMap<PathBuf, FileStatus>,
+}
+
+/// Complete per-repository snapshots. A discovered repository without a result
+/// masks its parent repository, rather than borrowing unrelated parent status.
+#[derive(Clone, Debug, Default)]
+pub struct RepositorySet {
+    repositories: HashMap<PathBuf, Option<Arc<Snapshot>>>,
+}
+
+impl RepositorySet {
+    pub fn for_roots(roots: &[PathBuf], previous: &Self) -> Self {
+        Self {
+            repositories: roots
+                .iter()
+                .map(|root| {
+                    (
+                        root.clone(),
+                        previous.repositories.get(root).cloned().flatten(),
+                    )
+                })
+                .collect(),
+        }
+    }
+    pub fn status(&self, path: &Path) -> Option<FileStatus> {
+        for ancestor in path.ancestors() {
+            if let Some(snapshot) = self.repositories.get(ancestor) {
+                return snapshot.as_ref()?.status(path);
+            }
+        }
+        None
+    }
+    pub fn repository(&self, root: &Path) -> Option<&Arc<Snapshot>> {
+        self.repositories.get(root)?.as_ref()
+    }
+    pub fn roots(&self) -> impl Iterator<Item = &PathBuf> {
+        self.repositories.keys()
+    }
+    pub fn watch_directories(&self) -> impl Iterator<Item = &PathBuf> {
+        self.repositories
+            .values()
+            .flatten()
+            .flat_map(|snapshot| &snapshot.watch_directories)
+    }
+    /// Called on a worker: equality and aggregate limits may visit many paths.
+    /// Returns false for an unchanged snapshot, and retains old data on error.
+    pub fn update(
+        &mut self,
+        root: &Path,
+        snapshot: Option<Snapshot>,
+        limits: Limits,
+    ) -> Result<bool, String> {
+        if self
+            .repositories
+            .get(root)
+            .and_then(|value| value.as_deref())
+            == snapshot.as_ref()
+        {
+            return Ok(false);
+        }
+        let mut paths = 0;
+        let mut bytes = 0;
+        for value in self
+            .repositories
+            .iter()
+            .filter(|(key, _)| key.as_path() != root)
+            .filter_map(|(_, value)| value.as_deref())
+            .chain(snapshot.as_ref())
+        {
+            paths += value.files.len();
+            bytes += value
+                .files
+                .keys()
+                .map(|path| path.as_os_str().len())
+                .sum::<usize>();
+        }
+        if paths > limits.changed_paths || bytes > limits.path_bytes {
+            return Err("Git status exceeds the window's changed-file limit".into());
+        }
+        self.repositories
+            .insert(root.to_owned(), snapshot.map(Arc::new));
+        Ok(true)
+    }
+}
+
+/// Discover only requested directories (expanded folders and open-file parents).
+/// No descendant walk or status computation. Roots are deduplicated and ordered.
+pub fn discover(directories: &[PathBuf], cancel: &AtomicBool) -> Result<Vec<PathBuf>, String> {
+    let mut roots = BTreeSet::new();
+    for directory in directories {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("Git discovery cancelled".into());
+        }
+        match gix::discover(directory) {
+            Ok(repo) => {
+                if let Some(root) = repo.workdir() {
+                    roots.insert(root.to_owned());
+                }
+            }
+            Err(error) if error.is_not_found() => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        if roots.len() > 64 {
+            return Err("Git discovery exceeds the 64-repository limit".into());
+        }
+    }
+    Ok(roots.into_iter().collect())
 }
 
 impl Snapshot {
