@@ -20,6 +20,7 @@ const ROW_HEIGHT: f32 = 24.;
 const INDENT: f32 = 14.;
 pub(crate) const TOOLBAR_HEIGHT: f32 = 30.;
 mod creation;
+mod git;
 use creation::Creation;
 
 #[cfg(test)]
@@ -538,6 +539,23 @@ impl Render for FileTreeView {
                                         .when(!selected, |row| {
                                             row.hover(|row| row.bg(theme.background))
                                         })
+                                        .when_some(
+                                            (entry.kind == EntryKind::Dir)
+                                                .then(|| {
+                                                    this.git_status
+                                                        .as_ref()?
+                                                        .folder_summary(&entry.path)
+                                                        .cloned()
+                                                })
+                                                .flatten(),
+                                            |row, summary| {
+                                                let path = entry.path.clone();
+                                                row.tooltip(move |_, cx| {
+                                                    cx.new(|_| git::Tooltip::new(&path, &summary))
+                                                        .into()
+                                                })
+                                            },
+                                        )
                                         .text_color(
                                             crate::workspace::git::color(
                                                 if entry.kind == EntryKind::Dir {

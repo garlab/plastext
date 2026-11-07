@@ -16,6 +16,8 @@ pub struct FileStatus {
     pub staged: bool,
     pub modified: bool,
     pub conflict: bool,
+    /// Git reports a deletion in the index or working tree.
+    pub deleted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +33,7 @@ impl FileStatus {
         self.staged |= other.staged;
         self.modified |= other.modified;
         self.conflict |= other.conflict;
+        self.deleted |= other.deleted;
     }
     pub fn decoration(self) -> Option<Decoration> {
         match (self.staged, self.modified, self.conflict) {
@@ -57,7 +60,17 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Default)]
 pub struct RepositorySet {
     repositories: HashMap<PathBuf, Option<Arc<Snapshot>>>,
-    folders: Arc<HashMap<PathBuf, FileStatus>>,
+    folders: Arc<HashMap<PathBuf, FolderSummary>>,
+}
+
+/// Built once on the status worker. Hovering a folder never scans its files.
+#[derive(Clone, Debug)]
+pub struct FolderSummary {
+    pub status: FileStatus,
+    pub changed: usize,
+    pub deleted: usize,
+    /// A deterministic example, shared by all its ancestor folders.
+    pub example: Arc<PathBuf>,
 }
 
 impl RepositorySet {
@@ -96,7 +109,10 @@ impl RepositorySet {
         self.repositories.get(root)?.as_ref()
     }
     pub fn folder_status(&self, path: &Path) -> Option<FileStatus> {
-        self.folders.get(path).copied()
+        self.folder_summary(path).map(|summary| summary.status)
+    }
+    pub fn folder_summary(&self, path: &Path) -> Option<&FolderSummary> {
+        self.folders.get(path)
     }
     pub fn roots(&self) -> impl Iterator<Item = &PathBuf> {
         self.repositories.keys()
@@ -159,8 +175,8 @@ impl RepositorySet {
         Ok(true)
     }
 
-    fn aggregate_folders(&self) -> Result<HashMap<PathBuf, FileStatus>, String> {
-        let mut folders = HashMap::<PathBuf, FileStatus>::new();
+    fn aggregate_folders(&self) -> Result<HashMap<PathBuf, FolderSummary>, String> {
+        let mut folders = HashMap::<PathBuf, FolderSummary>::new();
         let mut bytes = 0;
         for (root, snapshot) in &self.repositories {
             let Some(snapshot) = snapshot else { continue };
@@ -180,15 +196,33 @@ impl RepositorySet {
                 } else {
                     path.parent()
                 };
+                let mut example = None;
                 for parent in first.into_iter().flat_map(Path::ancestors) {
                     if let Some(entry) = folders.get_mut(parent) {
-                        entry.merge(*status);
+                        entry.status.merge(*status);
+                        entry.changed += 1;
+                        entry.deleted += usize::from(status.deleted);
+                        if path < *entry.example {
+                            entry.example = example
+                                .get_or_insert_with(|| Arc::new(path.clone()))
+                                .clone();
+                        }
                     } else {
                         bytes += parent.as_os_str().len();
                         if folders.len() >= 100_000 || bytes > 16 * 1024 * 1024 {
                             return Err("Git folder status exceeds the summary limit".into());
                         }
-                        folders.insert(parent.to_owned(), *status);
+                        folders.insert(
+                            parent.to_owned(),
+                            FolderSummary {
+                                status: *status,
+                                changed: 1,
+                                deleted: usize::from(status.deleted),
+                                example: example
+                                    .get_or_insert_with(|| Arc::new(path.clone()))
+                                    .clone(),
+                            },
+                        );
                     }
                 }
             }
@@ -318,8 +352,13 @@ pub fn status(
     for item in iter {
         cancelled()?;
         let item = item.map_err(|e| e.to_string())?;
-        let (staged, modified, conflict) = match &item {
-            gix::status::Item::TreeIndex(_) => (true, false, false),
+        let (staged, modified, conflict, deleted) = match &item {
+            gix::status::Item::TreeIndex(change) => (
+                true,
+                false,
+                false,
+                matches!(change, gix::diff::index::Change::Deletion { .. }),
+            ),
             gix::status::Item::IndexWorktree(change) => {
                 let Some(summary) = change.summary() else {
                     continue;
@@ -329,6 +368,8 @@ pub fn status(
                     true,
                     summary
                         == gix::status::plumbing::index_as_worktree_with_renames::Summary::Conflict,
+                    summary
+                        == gix::status::plumbing::index_as_worktree_with_renames::Summary::Removed,
                 )
             }
         };
@@ -344,6 +385,7 @@ pub fn status(
         entry.staged |= staged;
         entry.modified |= modified;
         entry.conflict |= conflict;
+        entry.deleted |= deleted;
     }
     cancelled()?;
     Ok(Some(Snapshot {

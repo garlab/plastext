@@ -378,6 +378,41 @@ fn folder_summaries_combine_descendants_and_clear_without_visiting_the_filesyste
 }
 
 #[test]
+fn deleted_directory_keeps_an_explanation_in_its_surviving_parent() {
+    let dir = repo();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    fs::create_dir_all(root.join(".hidden/releases")).unwrap();
+    fs::write(root.join(".hidden/releases/tool.js"), "tracked\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-qm", "initial"]);
+    fs::remove_dir_all(root.join(".hidden")).unwrap();
+    let mut set =
+        RepositorySet::for_roots(std::slice::from_ref(&root), &RepositorySet::default()).unwrap();
+    for staged in [false, true] {
+        if staged {
+            git(&root, &["add", "-u"]);
+        }
+        let snapshot = scan(&root);
+        assert!(
+            snapshot
+                .status(&root.join(".hidden/releases/tool.js"))
+                .unwrap()
+                .deleted
+        );
+        set.update(&root, Some(snapshot), Limits::default())
+            .unwrap();
+        let summary = set.folder_summary(&root).unwrap();
+        assert_eq!((summary.changed, summary.deleted), (1, 1));
+        assert_eq!(*summary.example, root.join(".hidden/releases/tool.js"));
+        assert_eq!(summary.status.staged, staged);
+    }
+    git(&root, &["commit", "-qm", "remove"]);
+    set.update(&root, Some(scan(&root)), Limits::default())
+        .unwrap();
+    assert!(set.folder_summary(&root).is_none());
+}
+
+#[test]
 #[ignore = "creates a disposable 100k-file repository for performance measurement"]
 fn warm_status_100k_files() {
     let dir = repo();

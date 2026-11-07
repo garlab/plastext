@@ -29,6 +29,8 @@ pub(super) struct State {
     pub failed: bool,
     scopes: Vec<PathBuf>,
     tree_scopes: Vec<PathBuf>,
+    tree_priorities: Vec<PathBuf>,
+    priorities: Vec<PathBuf>,
     tree_revision: Option<u64>,
     tab_scopes: Vec<PathBuf>,
     generation: u64,
@@ -44,13 +46,13 @@ impl State {
     pub fn new(scope: Option<PathBuf>, cx: &mut Context<Workspace>) -> Self {
         let (wake, events) = async_channel::bounded(1);
         let task = cx.spawn(async move |this, cx| {
-            let mut first = true;
+            let mut immediate = true;
             let mut discovery = DiscoveryCache::default();
             let mut schedule = Schedule::default();
             let mut active_roots = Vec::new();
             let mut next_scan = None;
             loop {
-                if !first {
+                if !immediate {
                     let event = events.recv();
                     // This tick only checks deadlines in memory. Disk work is scheduled
                     // per repository, and discovery has a separate positive/negative cache.
@@ -66,24 +68,24 @@ impl State {
                         futures::future::Either::Right(_) => {}
                     }
                 }
-                first = false;
                 while events.try_recv().is_ok() {}
                 let job = this.update(cx, |this, _| {
                     (
                         this.git.scopes.clone(),
+                        this.git.priorities.clone(),
                         this.git.generation,
                         std::mem::take(&mut this.git.pending),
                         this.git.snapshot.clone(),
                     )
                 });
-                let Ok((scopes, generation, pending, previous)) = job else {
+                let Ok((scopes, priorities, generation, pending, previous)) = job else {
                     break;
                 };
                 if scopes.is_empty() {
                     if events.recv().await.is_err() {
                         break;
                     }
-                    first = true;
+                    immediate = true;
                     continue;
                 }
                 for path in &pending.paths {
@@ -120,6 +122,7 @@ impl State {
                     _ => discovery_failed = true,
                 }
                 let roots = schedule.reconcile(&active_roots, now);
+                schedule.prioritize(&priorities, now);
                 schedule.invalidate(&pending, previous.as_deref());
                 let mut old_roots: Vec<_> = previous
                     .iter()
@@ -147,11 +150,12 @@ impl State {
                     }
                 }
                 let now = cx.background_executor().now();
-                let due = if next_scan.is_none_or(|deadline| now >= deadline) {
-                    schedule.due(now)
-                } else {
-                    Vec::new()
-                };
+                let mut due = schedule.due(now);
+                if next_scan.is_some_and(|deadline| now < deadline) {
+                    // The repository being browsed shouldn't inherit a slow,
+                    // unrelated repository's cooldown. Its own cooldown holds.
+                    due.retain(|root| schedule.is_priority(root));
+                }
                 let mut scan_time = Duration::ZERO;
                 for root in due {
                     let cancel = Arc::new(AtomicBool::new(false));
@@ -214,20 +218,24 @@ impl State {
                 if !scan_time.is_zero() {
                     // A window containing many repositories must not keep the
                     // storage busy just because each individual repo is cheap.
-                    next_scan = Some(cx.background_executor().now() + cooldown(scan_time));
+                    let deadline = cx.background_executor().now() + cooldown(scan_time);
+                    // A quick priority scan must not shorten the breathing
+                    // room owed to earlier, more expensive background work.
+                    next_scan = Some(next_scan.map_or(deadline, |old| old.max(deadline)));
                 }
-                if this
-                    .update(cx, |this, cx| {
-                        let failed = discovery_failed || schedule.failed();
-                        if this.git.refreshing || this.git.failed != failed {
-                            this.git.refreshing = false;
-                            this.git.failed = failed;
-                            cx.notify();
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
+                match this.update(cx, |this, cx| {
+                    let failed = discovery_failed || schedule.failed();
+                    if this.git.refreshing || this.git.failed != failed {
+                        this.git.refreshing = false;
+                        this.git.failed = failed;
+                        cx.notify();
+                    }
+                    this.git.generation != generation
+                }) {
+                    // Re-evaluate changed browsing priorities before waiting
+                    // on the event debounce or the background polling tick.
+                    Ok(changed) => immediate = changed,
+                    Err(_) => break,
                 }
             }
         });
@@ -235,8 +243,10 @@ impl State {
             snapshot: None,
             refreshing: false,
             failed: false,
-            scopes: scope.into_iter().collect(),
+            scopes: scope.iter().cloned().collect(),
             tree_scopes: Vec::new(),
+            tree_priorities: Vec::new(),
+            priorities: scope.into_iter().collect(),
             tree_revision: None,
             tab_scopes: Vec::new(),
             generation: 0,
@@ -343,6 +353,11 @@ impl Workspace {
                 .map(|tree| tree.read(cx).git_discovery_directories())
                 .unwrap_or_default();
             self.git.tree_revision = revision;
+            self.git.tree_priorities = self
+                .tree
+                .as_ref()
+                .map(|tree| tree.read(cx).watched_directories().to_vec())
+                .unwrap_or_default();
         }
         let mut tab_scopes = Vec::new();
         for tab in self.panes.values().flat_map(|pane| &pane.tabs) {
@@ -357,7 +372,14 @@ impl Workspace {
         }
         tab_scopes.sort();
         tab_scopes.dedup();
-        if !tree_changed && tab_scopes == self.git.tab_scopes {
+        let mut priorities = self.git.tree_priorities.clone();
+        priorities.extend(tab_scopes.iter().cloned());
+        priorities.extend(self.tree.as_ref().and_then(|tree| tree.read(cx).selected()));
+        priorities.extend(self.root.iter().cloned());
+        priorities.sort();
+        priorities.dedup();
+        let priority_changed = priorities != self.git.priorities;
+        if !tree_changed && tab_scopes == self.git.tab_scopes && !priority_changed {
             return;
         }
         self.git.tab_scopes = tab_scopes;
@@ -366,8 +388,9 @@ impl Workspace {
         scopes.extend(self.git.tab_scopes.iter().cloned());
         scopes.sort();
         scopes.dedup();
-        if scopes != self.git.scopes {
+        if scopes != self.git.scopes || priority_changed {
             self.git.scopes = scopes;
+            self.git.priorities = priorities;
             self.git.generation = self.git.generation.wrapping_add(1);
             self.git.wake();
         }

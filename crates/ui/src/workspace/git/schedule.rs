@@ -10,6 +10,7 @@ pub(super) struct Schedule {
 struct Entry {
     used: u64,
     active: bool,
+    priority: bool,
     dirty: bool,
     next_event: Instant,
     next_poll: Instant,
@@ -20,12 +21,7 @@ impl Schedule {
     pub fn reconcile(&mut self, roots: &[PathBuf], now: Instant) -> Vec<PathBuf> {
         self.usage += 1;
         for (root, entry) in &mut self.entries {
-            let was_active = entry.active;
             entry.active = roots.contains(root);
-            if entry.active != was_active {
-                entry.next_poll =
-                    entry.checked + Duration::from_secs(if entry.active { 30 } else { 120 });
-            }
             if entry.active {
                 entry.used = self.usage;
             }
@@ -52,6 +48,7 @@ impl Schedule {
                 Entry {
                     used: self.usage,
                     active: true,
+                    priority: false,
                     dirty: true,
                     next_event: now,
                     next_poll: now,
@@ -61,6 +58,34 @@ impl Schedule {
             );
         }
         self.roots()
+    }
+    /// Expanded folders and open files come first. Re-entering a fresh cache
+    /// does no work; an older cache is revalidated without waiting behind others.
+    pub fn prioritize(&mut self, paths: &[PathBuf], now: Instant) {
+        let roots: std::collections::HashSet<_> = paths
+            .iter()
+            .filter_map(|path| {
+                path.ancestors()
+                    .find(|parent| self.entries.contains_key(*parent))
+                    .map(Path::to_owned)
+            })
+            .collect();
+        for (root, entry) in &mut self.entries {
+            let priority = roots.contains(root);
+            if priority != entry.priority {
+                entry.priority = priority;
+                entry.next_poll =
+                    entry.checked + Duration::from_secs(if priority { 30 } else { 120 });
+                if priority {
+                    entry.next_event = entry.next_event.min(entry.checked + Duration::from_secs(5));
+                    entry.dirty |=
+                        now.saturating_duration_since(entry.checked) >= Duration::from_secs(5);
+                }
+            }
+        }
+    }
+    pub fn is_priority(&self, root: &Path) -> bool {
+        self.entries.get(root).is_some_and(|entry| entry.priority)
     }
     pub fn roots(&self) -> Vec<PathBuf> {
         let mut roots: Vec<_> = self.entries.keys().cloned().collect();
@@ -96,7 +121,7 @@ impl Schedule {
             .iter()
             .filter(|(_, e)| now >= e.next_event && (e.dirty || now >= e.next_poll))
             .collect();
-        entries.sort_by_key(|(path, e)| (!e.active, e.next_poll, *path));
+        entries.sort_by_key(|(path, e)| (!e.priority, !e.dirty, !e.active, e.next_poll, *path));
         entries.into_iter().map(|(path, _)| path.clone()).collect()
     }
     pub fn started(&mut self, root: &Path) {
@@ -108,8 +133,13 @@ impl Schedule {
         if let Some(entry) = self.entries.get_mut(root) {
             entry.failed = failed;
             entry.checked = now;
-            entry.next_event = now + cooldown(elapsed);
-            entry.next_poll = now + Duration::from_secs(if entry.active { 30 } else { 120 });
+            let wait = if entry.priority {
+                cooldown(elapsed).min(Duration::from_secs(5))
+            } else {
+                cooldown(elapsed)
+            };
+            entry.next_event = now + wait;
+            entry.next_poll = now + Duration::from_secs(if entry.priority { 30 } else { 120 });
         }
     }
     pub fn failed(&self) -> bool {
@@ -127,6 +157,7 @@ mod tests {
         let roots = [PathBuf::from("projects/a"), PathBuf::from("projects/b")];
         let mut schedule = Schedule::default();
         schedule.reconcile(&roots, now);
+        schedule.prioritize(&roots, now);
         for root in &roots {
             schedule.started(root);
             schedule.completed(root, now, Duration::from_millis(20), false);
@@ -165,5 +196,37 @@ mod tests {
         assert!(retained.contains(&roots[0]));
         assert!(retained.contains(&new));
         assert!(!retained.contains(&roots[1]));
+    }
+
+    #[test]
+    fn browsing_prioritizes_missing_or_stale_status_without_rescanning_fresh_caches() {
+        let now = Instant::now();
+        let roots = [PathBuf::from("a-background"), PathBuf::from("z-browsing")];
+        let mut schedule = Schedule::default();
+        schedule.reconcile(&roots, now);
+        schedule.prioritize(&[roots[1].join("src")], now);
+        assert_eq!(schedule.due(now), [roots[1].clone(), roots[0].clone()]);
+        for root in &roots {
+            schedule.started(root);
+            schedule.completed(root, now, Duration::from_millis(10), false);
+        }
+        schedule.prioritize(&[], now);
+        schedule.prioritize(&[roots[1].clone()], now + Duration::from_secs(2));
+        assert!(schedule.due(now + Duration::from_secs(2)).is_empty());
+        // Merely listed repositories no longer all rescan every 30 seconds.
+        assert_eq!(
+            schedule.due(now + Duration::from_secs(30)),
+            [roots[1].clone()]
+        );
+        schedule.prioritize(&[], now + Duration::from_secs(30));
+        assert!(schedule.due(now + Duration::from_secs(30)).is_empty());
+        // Navigating back to an older cache queues it immediately.
+        schedule.prioritize(&[roots[1].clone()], now + Duration::from_secs(31));
+        assert_eq!(
+            schedule.due(now + Duration::from_secs(31)),
+            [roots[1].clone()]
+        );
+        assert!(schedule.is_priority(&roots[1]));
+        assert!(!schedule.is_priority(&roots[0]));
     }
 }

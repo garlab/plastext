@@ -6,6 +6,11 @@ repositories. A folder containing both staged and unstaged changes is purple;
 conflicts take precedence. These summaries are built in the background, so
 rendering a folder never scans its descendants.
 
+Hovering a colored folder shows its changed-file count, deletion count and an
+example path. A folder can correctly be colored while none of its listed
+children are: the changes may be hidden by tree settings or deleted from disk.
+Deleted files are included in Git summaries but are not inserted into the file tree.
+
 | Default color | Meaning |
 | --- | --- |
 | Green | Staged changes, with no further working-tree changes |
@@ -26,7 +31,9 @@ they are expanded. Repositories containing open tabs are also tracked when
 outside the opened folder.
 
 Collapsing a folder retains its cached status. Reopening it shows the same
-colors immediately, without requiring another status scan. Caches live for
+colors immediately. Fresh caches require no scan. Selecting or expanding a
+previously background repository queues revalidation if its last check is
+older than five seconds. Caches live for
 the window's lifetime; when the 64-repository limit is reached, the least
 recently used inactive repository is evicted first. Empty folderless windows
 keep their cache but stop watching and scanning until a file is opened again.
@@ -61,12 +68,15 @@ repository is published immediately. A batch stops after about 500 ms of
 status work, finishing its current repository first. Both per-repository and
 window-wide cooldowns are at least one second, rising to four times the work
 duration (up to 60 seconds). This prevents many individually cheap repositories
-from keeping storage continuously busy.
+from keeping storage continuously busy. Expanded or selected folders and open
+files prioritize their owning repository. These scans keep a per-repository
+cooldown capped at five seconds and bypass unrelated background cooldowns;
+they run after the current scan finishes, before queued background work.
 
 Watches cover expanded directories, open files, cached repository roots and
-Git metadata. Fallback status checks run every 30 seconds for repositories
-represented by listed folders or open tabs, and every two minutes for other
-retained caches, subject to the scan pacing above. Thus changes deep inside
+Git metadata. Fallback status checks run every 30 seconds for prioritized
+repositories, and every two minutes for merely listed or other retained caches,
+subject to the scan pacing above. Thus changes deep inside
 collapsed, unwatched folders can take longer to appear; their last known
 colors remain available immediately.
 
@@ -90,6 +100,17 @@ files that require a custom clean filter can appear modified when their raw
 contents differ from the index. Native line-ending conversions remain active.
 Repository configuration is not changed.
 
+This follows the usual editor model of cached decorations, filesystem events,
+debounced refreshes and bounded background work. VS Code's
+[Git refresh implementation](https://github.com/microsoft/vscode/blob/main/extensions/git/src/repository.ts)
+debounces filesystem events and throttles status; its
+[repository model](https://github.com/microsoft/vscode/blob/main/extensions/git/src/model.ts)
+also limits concurrent initial status requests. Zed's
+[repository activation](https://zed.dev/docs/git#repository-activation) activates
+repositories directly beneath a project container and defers deeper ones.
+Plastext retains nonrecursive watches and periodic fallback checks, so an
+unwatched descendant edit is not guaranteed to be noticed immediately.
+
 ## Theme colors
 
 `[theme.light]` and `[theme.dark]` accept `git_staged`, `git_modified`,
@@ -106,6 +127,9 @@ tree/tab snapshots, folderless windows, parent folders containing sibling
 repositories, immediate cached colors with zero scans during collapse/reopen,
 targeted event refreshes, folder summaries, LRU eviction, and independent
 recovery after a failed refresh.
+Priority tests cover browsing ahead of background work, reuse of fresh caches,
+and revalidation of older caches. Deletion tests cover a removed hidden directory
+with no surviving child row, both before and after staging.
 
 Run the disposable 100,000-file diagnostic separately from UI benchmarks:
 
@@ -130,6 +154,7 @@ The separate folder-summary diagnostic uses 100,000 changed files across
 cargo test --release --locked -p plastext-git folder_summary_100k_changes -- --ignored --nocapture
 ```
 
-On the same machine and date, these rebuilds took 97–99 ms (median 98 ms).
+On the same machine and date, these rebuilds, including the tooltip counts and
+example paths, took 115–117 ms (median 115 ms).
 This measures aggregation after status has completed, not total refresh time.
 Unchanged snapshots skip this work; folder rendering uses cached lookups.
