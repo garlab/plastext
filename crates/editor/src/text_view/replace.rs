@@ -150,12 +150,11 @@ impl TextView {
                 if let Some(find) = &mut this.find {
                     find.replacing = false;
                 }
+                let mut advance = None;
                 this.notice = Some(
                     match installed {
                         Ok(Ok((count, next))) => {
-                            if let Some(find) = &mut this.find {
-                                find.next_from = next;
-                            }
+                            advance = next;
                             format!("Replaced {count} matches")
                         }
                         Ok(Err(error)) => error,
@@ -164,6 +163,12 @@ impl TextView {
                     .into(),
                 );
                 this.sync_editing(cx);
+                if let Some(next) = advance
+                    && let Some(find) = &mut this.find
+                {
+                    find.next_from = Some(next);
+                    this.select_pending_match(cx);
+                }
                 cx.notify();
             })
             .ok();

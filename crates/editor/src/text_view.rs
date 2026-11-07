@@ -269,6 +269,7 @@ struct FindState {
     options: SearchOptions,
     scope: Option<Range<u64>>,
     original_selection: Option<Range<u64>>,
+    /// An explicit Find/Replace navigation request; passive refreshes leave this unset.
     next_from: Option<u64>,
     replace_cancel: Arc<AtomicBool>,
     replacing: bool,
@@ -834,6 +835,7 @@ impl TextView {
 
     fn clear_selection(&mut self, _: &ClearSelection, _: &mut Window, cx: &mut Context<Self>) {
         self.selection = None;
+        self.cancel_find_navigation();
         cx.notify();
     }
 
@@ -851,9 +853,6 @@ impl TextView {
             None => {
                 let input = cx.new(|cx| TextInput::new("Find", cx));
                 let input_changes = cx.subscribe(&input, |this, _, TextInputEvent::Changed, cx| {
-                    if let Some(find) = &mut this.find {
-                        find.next_from = None;
-                    }
                     this.search(cx)
                 });
                 self.find = Some(FindState {
@@ -894,8 +893,22 @@ impl TextView {
         cx.notify();
     }
 
-    /// Starts searching for the find bar's text, replacing any running search.
+    /// A query/filter change requests navigation; document edits only refresh results.
     fn search(&mut self, cx: &mut Context<Self>) {
+        if let Some(find) = &mut self.find {
+            find.next_from = Some(self.top);
+        }
+        self.refresh_search(cx);
+    }
+
+    fn cancel_find_navigation(&mut self) {
+        if let Some(find) = &mut self.find {
+            find.next_from = None;
+            find.current = None;
+        }
+    }
+
+    fn refresh_search(&mut self, cx: &mut Context<Self>) {
         let Some(find) = &mut self.find else {
             return;
         };
@@ -966,16 +979,7 @@ impl TextView {
                 if let Some(find) = &mut this.find {
                     find.searching = false;
                 }
-                if this
-                    .find
-                    .as_ref()
-                    .is_some_and(|f| f.current.is_none() && !f.matches.is_empty())
-                {
-                    if let Some(find) = &mut this.find {
-                        find.next_from = None;
-                    }
-                    this.select_match(0, cx);
-                }
+                this.select_pending_match(cx);
                 if let Err(err) = result {
                     this.notice = Some(format!("Search failed: {err}").into());
                 }
@@ -995,16 +999,33 @@ impl TextView {
             find.matches.truncate(MAX_MATCHES);
             find.cancel.store(true, Ordering::Relaxed);
         }
-        // Show the first match from the current position as soon as there is one.
-        if find.current.is_none() {
-            let top = find.next_from.unwrap_or(self.top);
-            let next = find.matches.partition_point(|found| found.start < top);
-            if next < find.matches.len() {
-                find.next_from = None;
-                self.select_match(next, cx);
-            }
+        if find.next_from.is_none() {
+            // Keep the match counter in sync without changing the user's selection.
+            find.current = self.selection.and_then(|selection| {
+                let range = selection.range();
+                let index = find
+                    .matches
+                    .partition_point(|found| found.start < range.start);
+                (find.matches.get(index) == Some(&range)).then_some(index)
+            });
         }
+        self.select_pending_match(cx);
         cx.notify();
+    }
+
+    fn select_pending_match(&mut self, cx: &mut Context<Self>) {
+        let Some(find) = &mut self.find else { return };
+        let Some(from) = find.next_from else { return };
+        let next = find.matches.partition_point(|found| found.start < from);
+        let index = if next < find.matches.len() {
+            next
+        } else if !find.searching && !find.matches.is_empty() {
+            0 // Wrap only when an explicit navigation request has reached EOF.
+        } else {
+            return;
+        };
+        find.next_from = None;
+        self.select_match(index, cx);
     }
 
     fn find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
@@ -1027,7 +1048,10 @@ impl TextView {
             Some(current) if forward => (current + 1) % count,
             Some(current) => (current + count - 1) % count,
             None => {
-                let next = find.matches.partition_point(|found| found.start < self.top);
+                let from = self
+                    .selection
+                    .map_or(self.top, |selection| selection.range().start);
+                let next = find.matches.partition_point(|found| found.start < from);
                 if forward {
                     next % count
                 } else {
@@ -1046,12 +1070,14 @@ impl TextView {
         let Some(found) = find.matches.get(index).cloned() else {
             return;
         };
-        find.current = Some(index);
         self.selection = Some(Selection {
             anchor: found.start,
             head: found.end,
         });
         self.selection_edited(cx);
+        if let Some(find) = &mut self.find {
+            find.current = Some(index);
+        }
         self.jump(Jump::Reveal(found.start), cx);
     }
 

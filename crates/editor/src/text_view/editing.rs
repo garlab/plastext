@@ -480,7 +480,8 @@ impl TextView {
                 }
             }
             if changed && self.find.is_some() {
-                self.search(cx);
+                self.cancel_find_navigation();
+                self.refresh_search(cx);
             }
         }
         let editing = self.editing.as_mut().unwrap();
@@ -517,6 +518,9 @@ impl TextView {
                 .is_some_and(|editing| editing.document.read(cx).file_operation_pending())
         {
             return;
+        }
+        if !matches!(input, Input::Save) {
+            self.cancel_find_navigation();
         }
         let multiple = self.all_selections().len() > 1
             && self.editing.as_ref().is_some_and(|e| e.marked.is_none());
@@ -946,6 +950,7 @@ impl TextView {
         result
     }
     pub(super) fn selection_edited(&mut self, cx: &mut Context<Self>) {
+        self.cancel_find_navigation();
         if self.is_editing()
             && let Some(selection) = self.selection
         {

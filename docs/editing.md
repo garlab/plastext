@@ -117,6 +117,9 @@ same text at every cursor. Multi-cursor changes are atomic and undo together.
 IME composition uses the primary selection and clears additional cursors.
 
 Find exposes **Aa**, **ab** and **.*** for case, whole-word and regex matching.
+Editing with Find open refreshes match highlights and counts without moving the
+caret or changing selections. Next/Previous navigate from the current selection;
+Replace advances to the next result.
 **Selection** uses the selection captured when Find opened and follows it through
 edits. Replace All uses one immutable document version and one undo transaction;
 changing the document, selection or query invalidates pending work. Regex

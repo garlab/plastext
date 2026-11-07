@@ -930,3 +930,111 @@ fn replace_all_uses_captures_scope_and_a_single_undo(cx: &mut TestAppContext) {
         .update(cx, |_, window, _| window.remove_window())
         .unwrap();
 }
+
+#[gpui::test]
+fn refreshing_find_after_edits_preserves_the_editing_caret(cx: &mut TestAppContext) {
+    let (_dir, view, _other) = setup(cx, b"needle\nkeep\nremove me\nneedle\n", false);
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            view.update(cx, |view, cx| view.find(&Find, window, cx));
+            view.clone()
+        })
+        .unwrap()
+    });
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.find
+                .as_ref()
+                .unwrap()
+                .input
+                .update(cx, |input, cx| input.set_text("needle", cx));
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 0..6));
+
+    send(cx, &view, Input::Selection(BufferSelection::new(12, 21)));
+    send(
+        cx,
+        &view,
+        Input::Cursor(CursorCommand::Delete {
+            direction: Direction::Backward,
+        }),
+    );
+    cx.run_until_parked();
+    assert_eq!(content(cx, &view), "needle\nkeep\n\nneedle\n");
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.selection.unwrap().range(), 12..12);
+        assert_eq!(view.find.as_ref().unwrap().matches, vec![0..6, 13..19]);
+    });
+
+    // Undo and subsequent typing also refresh highlights without navigating.
+    send(cx, &view, Input::Undo);
+    let restored = cx.update(|cx| view.read(cx).selection.unwrap().range());
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), restored));
+    send(cx, &view, insert("!"));
+    let inserted = cx.update(|cx| view.read(cx).selection.unwrap().range());
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), inserted));
+    assert_eq!(content(cx, &view), "needle\nkeep\nremove me!\nneedle\n");
+
+    // Explicit navigation still moves from the caret to the next result.
+    cx.update(|cx| view.update(cx, |view, cx| view.step_match(true, cx)));
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 23..29));
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+}
+
+#[gpui::test]
+fn manual_selection_cancels_navigation_from_late_find_batches(cx: &mut TestAppContext) {
+    let source = "needle\n".repeat(300) + &"tail\n".repeat(100);
+    let len = source.len() as u64;
+    let (_dir, view, _other) = setup(cx, source.as_bytes(), false);
+    let window = cx.update(|cx| {
+        cx.open_window(Default::default(), |window, cx| {
+            view.update(cx, |view, cx| view.find(&Find, window, cx));
+            view.clone()
+        })
+        .unwrap()
+    });
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.find
+                .as_ref()
+                .unwrap()
+                .input
+                .update(cx, |input, cx| input.set_text("needle", cx));
+        })
+    });
+    cx.run_until_parked();
+    let selections = vec![
+        BufferSelection::caret(len - 1),
+        BufferSelection::caret(len - 6),
+    ];
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.jump(Jump::End, cx);
+            view.search(cx);
+            // This occurs before the worker can deliver either result batch.
+            view.queue_input(Input::Selections(selections.clone()), cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let view = view.read(cx);
+        assert_eq!(view.editing.as_ref().unwrap().selections, selections);
+        assert_eq!(view.find.as_ref().unwrap().matches.len(), 300);
+        assert_eq!(view.find.as_ref().unwrap().current, None);
+        assert!(view.top > 2100);
+    });
+    // A new explicit search still wraps when every result precedes the viewport.
+    cx.update(|cx| view.update(cx, |view, cx| view.search(cx)));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(view.read(cx).selection.unwrap().range(), 0..6));
+    window
+        .update(cx, |_, window, _| window.remove_window())
+        .unwrap();
+}
