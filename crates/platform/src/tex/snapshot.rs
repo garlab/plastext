@@ -237,6 +237,7 @@ fn walk(
 mod tests {
     use super::*;
     use std::sync::{Arc, atomic::AtomicBool};
+    #[cfg(unix)]
     #[test]
     fn snapshots_are_private_and_new_or_changed_dependencies_reject_publication() {
         let source = tempfile::tempdir().unwrap();
@@ -262,6 +263,22 @@ mod tests {
         fs::write(&input, "first").unwrap();
         fs::write(source.path().join("new.sty"), "new").unwrap();
         assert!(snapshot.validate(&cancel).is_err());
+    }
+    #[cfg(not(unix))]
+    #[test]
+    fn unsupported_platform_rejects_snapshotting() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        let result = Snapshot::capture(
+            source.path(),
+            target.path(),
+            &Arc::new(AtomicBool::new(false)),
+            &mut Budget::default(),
+        );
+        assert_eq!(
+            result.err().unwrap(),
+            "TeX preview is currently available on macOS"
+        );
     }
     #[cfg(unix)]
     #[test]

@@ -283,14 +283,53 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    fn unresponsive_worker(cancel: &Cancel) -> Worker {
+        let source = tempfile::NamedTempFile::new().unwrap();
+        let document = Arc::new(Document::snapshot(source.path(), cancel).unwrap());
+        // Use shell builtins so the same process owns both pipes throughout the
+        // test. Unlike a sleep utility, this fixture explicitly keeps reading
+        // stdin without replying. Wait for its handshake before starting timers.
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf ready; while IFS= read -r request; do :; done"]);
+        let mut worker = Worker::start(command, document).unwrap();
+        let mut ready = [0; 5];
+        let result = Interruptible {
+            worker: &mut worker,
+            cancel,
+            deadline: Instant::now() + REQUEST_TIMEOUT,
+            memory_check: Instant::now(),
+            prefetch: false,
+            #[cfg(target_os = "macos")]
+            memory_limit: WORKER_RSS_LIMIT,
+        }
+        .read_exact(&mut ready);
+        assert!(
+            result.is_ok(),
+            "test worker did not become ready: {result:?}; status: {:?}",
+            worker.child.try_wait()
+        );
+        assert_eq!(&ready, b"ready");
+        worker
+    }
+
+    fn assert_reaped(pid: u32) {
+        let mut status = 0;
+        // SAFETY: query this specific child without blocking. ECHILD proves it
+        // was reaped, unlike kill(pid, 0), which can race with PID reuse.
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+
     #[test]
     fn cancelling_an_unresponsive_worker_kills_and_reaps_it() {
-        let source = tempfile::NamedTempFile::new().unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
-        let document = Arc::new(Document::snapshot(source.path(), &cancel).unwrap());
-        let mut command = Command::new("/bin/sleep");
-        command.arg("60");
-        let mut worker = Worker::start(command, document).unwrap();
+        let mut worker = unresponsive_worker(&cancel);
         let pid = worker.child.id();
         let flag = cancel.clone();
         let trigger = std::thread::spawn(move || {
@@ -302,22 +341,17 @@ mod tests {
             .run(Operation::Info { page: 1 }, &cancel, false)
             .err()
             .unwrap();
-        assert_eq!(error, super::super::CANCELLED);
         drop(worker);
         trigger.join().unwrap();
+        assert_eq!(error, super::super::CANCELLED);
         assert!(start.elapsed() < Duration::from_secs(1));
-        // SAFETY: signal zero only queries existence. The exact child was reaped.
-        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        assert_reaped(pid);
     }
 
     #[test]
     fn visible_work_interrupts_an_unresponsive_prefetch_and_reaps_it() {
-        let source = tempfile::NamedTempFile::new().unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
-        let document = Arc::new(Document::snapshot(source.path(), &cancel).unwrap());
-        let mut command = Command::new("/bin/sleep");
-        command.arg("60");
-        let mut worker = Worker::start(command, document).unwrap();
+        let mut worker = unresponsive_worker(&cancel);
         let pid = worker.child.id();
         let (done, receive) = std::sync::mpsc::channel();
         let trigger = std::thread::spawn(move || {
@@ -340,19 +374,14 @@ mod tests {
             !cancel.load(Ordering::Relaxed),
             "visible work, not cancellation, caused the yield"
         );
-        // SAFETY: signal zero only queries existence. The exact child was reaped.
-        assert_eq!(unsafe { libc::kill(pid as i32, 0) }, -1);
+        assert_reaped(pid);
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn resident_memory_and_deadline_guards_stop_unresponsive_work() {
-        let source = tempfile::NamedTempFile::new().unwrap();
         let cancel = Arc::new(AtomicBool::new(false));
-        let document = Arc::new(Document::snapshot(source.path(), &cancel).unwrap());
-        let mut command = Command::new("/bin/sleep");
-        command.arg("60");
-        let mut worker = Worker::start(command, document).unwrap();
+        let mut worker = unresponsive_worker(&cancel);
         let mut reader = Interruptible {
             worker: &mut worker,
             cancel: &cancel,

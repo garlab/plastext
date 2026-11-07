@@ -103,9 +103,11 @@ mod tests {
 
     #[test]
     fn blank_lines_preserve_tex_and_source_offsets_in_lf_and_crlf() {
+        // Git may check the fixture out with CRLF on Windows. Normalize before
+        // constructing each case so LF stays LF and CRLF never becomes CRCRLF.
+        let fixture = include_str!("../../../docs/fixtures/math-headings.md").replace("\r\n", "\n");
         for newline in ["\n", "\r\n"] {
-            let text =
-                include_str!("../../../docs/fixtures/math-headings.md").replace('\n', newline);
+            let text = fixture.replace('\n', newline);
             let document = parse(&text);
             let math: Vec<_> = document
                 .blocks
