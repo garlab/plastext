@@ -109,8 +109,10 @@ check and reactivation still reconcile these, and the existing open-document
 metadata checks can request a Git refresh when they detect a change.
 
 The previous snapshot remains visible while a refresh runs. The status bar
-shows refresh/unavailable state. Discovery and each repository scan have a
-ten-second deadline that requests cooperative cancellation; the next scan
+shows refresh state only after a batch has run for 250 ms, so short background
+checks do not flash an indicator. Unavailable status is shown immediately.
+Discovery and each repository scan have a ten-second deadline that requests
+cooperative cancellation; the next scan
 waits for the current one to finish. This is not
 a hard process timeout: an individual filesystem read can take longer.
 Discovery is capped at 4,096 directory probes and 64 active repositories.

@@ -357,6 +357,52 @@ fn watched_repository_is_idle_until_an_event_and_defers_work_while_inactive(
 }
 
 #[gpui::test]
+fn refresh_indicator_delays_batches_and_cancels_finished_timers(cx: &mut TestAppContext) {
+    cx.update(crate::init);
+    let window = cx.add_window(|window, cx| Workspace::new(None, Arc::default(), window, cx));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, cx| {
+            workspace.git.start_refresh(cx);
+            assert_eq!(workspace.git.label(), None);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(workspace.git.label(), None);
+            workspace.git.finish_refresh(false, cx);
+            workspace.git.start_refresh(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    // The previous batch's timer must not reveal this newer, short batch.
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, cx| {
+            assert_eq!(workspace.git.label(), None);
+            workspace.git.start_refresh(cx); // another repository in the same batch
+        })
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, window, cx| {
+            assert_eq!(workspace.git.label(), Some("Git: refreshing…"));
+            workspace.git.finish_refresh(false, cx);
+            assert_eq!(workspace.git.label(), None);
+            workspace.git.start_refresh(cx);
+            workspace.git.finish_refresh(true, cx);
+            assert_eq!(workspace.git.label(), Some("Git: some status unavailable"));
+            window.remove_window();
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn collapse_reopen_keeps_colors_without_scanning_and_disk_events_are_targeted(
     cx: &mut TestAppContext,
 ) {

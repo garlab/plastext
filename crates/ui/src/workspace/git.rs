@@ -26,7 +26,9 @@ struct Pending {
 
 pub(super) struct State {
     pub snapshot: Option<Arc<RepositorySet>>,
-    pub refreshing: bool,
+    refreshing: bool,
+    refresh_visible: bool,
+    refresh_indicator: Option<gpui::Task<()>>,
     pub failed: bool,
     scopes: Vec<PathBuf>,
     tree_scopes: Vec<PathBuf>,
@@ -222,12 +224,11 @@ impl State {
                                 return None;
                             }
                             this.git.cancel = cancel.clone();
-                            this.git.refreshing = true;
+                            this.git.start_refresh(cx);
                             #[cfg(test)]
                             {
                                 *this.git.scan_counts.entry(root.clone()).or_default() += 1;
                             }
-                            cx.notify();
                             this.git.snapshot.clone()
                         })
                         .ok()
@@ -298,11 +299,7 @@ impl State {
                 }
                 match this.update(cx, |this, cx| {
                     let failed = discovery_failed || schedule.failed();
-                    if this.git.refreshing || this.git.failed != failed {
-                        this.git.refreshing = false;
-                        this.git.failed = failed;
-                        cx.notify();
-                    }
+                    this.git.finish_refresh(failed, cx);
                     this.git.generation != generation
                 }) {
                     // Re-evaluate changed browsing priorities before waiting
@@ -315,6 +312,8 @@ impl State {
         Self {
             snapshot: None,
             refreshing: false,
+            refresh_visible: false,
+            refresh_indicator: None,
             failed: false,
             scopes: scope.iter().cloned().collect(),
             tree_scopes: Vec::new(),
@@ -337,6 +336,35 @@ impl State {
     }
     fn wake(&self) {
         let _ = self.wake.try_send(());
+    }
+    fn start_refresh(&mut self, cx: &mut Context<Workspace>) {
+        if self.refreshing {
+            return;
+        }
+        self.refreshing = true;
+        // One delay for the whole batch, including consecutive small scans.
+        // Finishing the batch drops this task, so quick checks never flash.
+        self.refresh_indicator = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(250))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.git.refreshing {
+                    this.git.refresh_visible = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+        }));
+    }
+    fn finish_refresh(&mut self, failed: bool, cx: &mut Context<Workspace>) {
+        self.refreshing = false;
+        self.refresh_indicator = None;
+        let visible = std::mem::take(&mut self.refresh_visible);
+        if visible || self.failed != failed {
+            self.failed = failed;
+            cx.notify();
+        }
     }
     pub fn set_active(&mut self, active: bool) {
         if self.enabled != active {
@@ -427,7 +455,7 @@ impl State {
     pub fn label(&self) -> Option<&'static str> {
         if self.failed {
             Some("Git: some status unavailable")
-        } else if self.refreshing {
+        } else if self.refresh_visible {
             Some("Git: refreshing…")
         } else {
             None
