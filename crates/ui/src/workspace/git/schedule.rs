@@ -16,6 +16,18 @@ struct Entry {
     next_poll: Instant,
     checked: Instant,
     failed: bool,
+    healthy: bool,
+}
+impl Entry {
+    fn poll_interval(&self) -> Duration {
+        Duration::from_secs(if self.healthy && !self.failed {
+            600
+        } else if self.priority {
+            30
+        } else {
+            120
+        })
+    }
 }
 impl Schedule {
     pub fn reconcile(&mut self, roots: &[PathBuf], now: Instant) -> Vec<PathBuf> {
@@ -54,10 +66,20 @@ impl Schedule {
                     next_poll: now,
                     checked: now,
                     failed: false,
+                    healthy: false,
                 },
             );
         }
         self.roots()
+    }
+    pub fn set_healthy(&mut self, healthy: &std::collections::HashSet<PathBuf>) {
+        for (root, entry) in &mut self.entries {
+            let covered = healthy.contains(root);
+            if entry.healthy != covered {
+                entry.healthy = covered;
+                entry.next_poll = entry.checked + entry.poll_interval();
+            }
+        }
     }
     /// Expanded folders and open files come first. Re-entering a fresh cache
     /// does no work; an older cache is revalidated without waiting behind others.
@@ -74,12 +96,11 @@ impl Schedule {
             let priority = roots.contains(root);
             if priority != entry.priority {
                 entry.priority = priority;
-                entry.next_poll =
-                    entry.checked + Duration::from_secs(if priority { 30 } else { 120 });
+                entry.next_poll = entry.checked + entry.poll_interval();
                 if priority {
                     entry.next_event = entry.next_event.min(entry.checked + Duration::from_secs(5));
-                    entry.dirty |=
-                        now.saturating_duration_since(entry.checked) >= Duration::from_secs(5);
+                    entry.dirty |= !entry.healthy
+                        && now.saturating_duration_since(entry.checked) >= Duration::from_secs(5);
                 }
             }
         }
@@ -98,6 +119,7 @@ impl Schedule {
     pub fn invalidate(&mut self, pending: &Pending, snapshot: Option<&RepositorySet>) {
         for (root, entry) in &mut self.entries {
             if pending.all
+                || pending.repositories.contains(root)
                 || pending.paths.iter().any(|path| {
                     path.starts_with(root)
                         || root.starts_with(path)
@@ -139,7 +161,7 @@ impl Schedule {
                 cooldown(elapsed)
             };
             entry.next_event = now + wait;
-            entry.next_poll = now + Duration::from_secs(if entry.priority { 30 } else { 120 });
+            entry.next_poll = now + entry.poll_interval();
         }
     }
     pub fn failed(&self) -> bool {
@@ -170,6 +192,7 @@ mod tests {
             &Pending {
                 all: false,
                 paths: [roots[0].join("src/file")].into(),
+                ..Default::default()
             },
             None,
         );
@@ -228,5 +251,47 @@ mod tests {
         );
         assert!(schedule.is_priority(&roots[1]));
         assert!(!schedule.is_priority(&roots[0]));
+    }
+
+    #[test]
+    fn healthy_watches_keep_idle_repositories_quiet_and_failures_restore_fallback() {
+        let now = Instant::now();
+        let root = PathBuf::from("repository");
+        let mut schedule = Schedule::default();
+        schedule.reconcile(std::slice::from_ref(&root), now);
+        schedule.set_healthy(&[root.clone()].into());
+        schedule.started(&root);
+        schedule.completed(&root, now, Duration::from_millis(10), false);
+        // Re-entering the repository and the former 30s/120s polling deadlines
+        // cause no scan while event coverage is healthy.
+        schedule.prioritize(std::slice::from_ref(&root), now + Duration::from_secs(10));
+        for seconds in [30, 120, 599] {
+            assert!(schedule.due(now + Duration::from_secs(seconds)).is_empty());
+        }
+        assert_eq!(
+            schedule.due(now + Duration::from_secs(600)),
+            std::slice::from_ref(&root)
+        );
+        schedule.invalidate(
+            &Pending {
+                all: false,
+                paths: [root.clone()].into(),
+                ..Default::default()
+            },
+            None,
+        );
+        assert_eq!(
+            schedule.due(now + Duration::from_secs(10)),
+            std::slice::from_ref(&root)
+        );
+        schedule.started(&root);
+        schedule.completed(
+            &root,
+            now + Duration::from_secs(10),
+            Duration::from_millis(10),
+            false,
+        );
+        schedule.set_healthy(&Default::default());
+        assert_eq!(schedule.due(now + Duration::from_secs(40)), [root]);
     }
 }

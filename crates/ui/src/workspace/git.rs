@@ -21,6 +21,7 @@ use schedule::Schedule;
 struct Pending {
     all: bool,
     paths: std::collections::HashSet<PathBuf>,
+    repositories: std::collections::HashSet<PathBuf>,
 }
 
 pub(super) struct State {
@@ -35,6 +36,10 @@ pub(super) struct State {
     tab_scopes: Vec<PathBuf>,
     generation: u64,
     pending: Pending,
+    healthy_watches: std::collections::HashSet<PathBuf>,
+    watches: Option<plastext_git::watch::Watches>,
+    enabled: bool,
+    _watch_events: gpui::Task<()>,
     wake: async_channel::Sender<()>,
     cancel: Arc<AtomicBool>,
     _task: gpui::Task<()>,
@@ -45,12 +50,35 @@ pub(super) struct State {
 impl State {
     pub fn new(scope: Option<PathBuf>, cx: &mut Context<Workspace>) -> Self {
         let (wake, events) = async_channel::bounded(1);
+        // Native watcher behavior has its own integration tests. GPUI's
+        // deterministic clock tests inject the same Changes messages directly.
+        #[cfg(not(test))]
+        let (watches, watch_events) = {
+            let (watches, events) = plastext_git::watch::Watches::new();
+            (Some(watches), events)
+        };
+        #[cfg(test)]
+        let (watches, watch_events) = (None, async_channel::bounded::<()>(1).1);
+        let watch_task = cx.spawn(async move |this, cx| {
+            while watch_events.recv().await.is_ok() {
+                if this
+                    .update(cx, |this, _| {
+                        let changes = this.git.watches.as_ref().unwrap().take();
+                        this.git.observe_watches(changes);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let task = cx.spawn(async move |this, cx| {
             let mut immediate = true;
             let mut discovery = DiscoveryCache::default();
             let mut schedule = Schedule::default();
             let mut active_roots = Vec::new();
             let mut next_scan = None;
+            let mut last_tick = std::time::SystemTime::now();
             loop {
                 if !immediate {
                     let event = events.recv();
@@ -70,18 +98,35 @@ impl State {
                 }
                 while events.try_recv().is_ok() {}
                 let job = this.update(cx, |this, _| {
+                    // A long wall-clock gap also detects sleep/resume when the
+                    // active window doesn't receive a new activation event.
+                    let now = std::time::SystemTime::now();
+                    if now
+                        .duration_since(last_tick)
+                        .is_ok_and(|elapsed| elapsed > Duration::from_secs(30))
+                    {
+                        this.git.pending.all = true;
+                    }
+                    last_tick = now;
                     (
                         this.git.scopes.clone(),
                         this.git.priorities.clone(),
                         this.git.generation,
-                        std::mem::take(&mut this.git.pending),
+                        if this.git.enabled {
+                            std::mem::take(&mut this.git.pending)
+                        } else {
+                            Pending::default()
+                        },
                         this.git.snapshot.clone(),
+                        this.git.healthy_watches.clone(),
+                        this.git.enabled,
                     )
                 });
-                let Ok((scopes, priorities, generation, pending, previous)) = job else {
+                let Ok((scopes, priorities, generation, pending, previous, healthy, enabled)) = job
+                else {
                     break;
                 };
-                if scopes.is_empty() {
+                if scopes.is_empty() || !enabled {
                     if events.recv().await.is_err() {
                         break;
                     }
@@ -96,6 +141,7 @@ impl State {
                     }
                 }
                 let now = cx.background_executor().now();
+                discovery.retain_watched(&healthy, now);
                 let mut discovery_failed = false;
                 if discovery.needs_refresh(&scopes, now) {
                     let cancel = Arc::new(AtomicBool::new(false));
@@ -122,6 +168,7 @@ impl State {
                     _ => discovery_failed = true,
                 }
                 let roots = schedule.reconcile(&active_roots, now);
+                schedule.set_healthy(&healthy);
                 schedule.prioritize(&priorities, now);
                 schedule.invalidate(&pending, previous.as_deref());
                 let mut old_roots: Vec<_> = previous
@@ -161,7 +208,7 @@ impl State {
                     let cancel = Arc::new(AtomicBool::new(false));
                     let previous = this
                         .update(cx, |this, cx| {
-                            if this.git.generation != generation {
+                            if this.git.generation != generation || !this.git.enabled {
                                 return None;
                             }
                             this.git.cancel = cancel.clone();
@@ -251,6 +298,10 @@ impl State {
             tab_scopes: Vec::new(),
             generation: 0,
             pending: Pending::default(),
+            healthy_watches: Default::default(),
+            watches,
+            enabled: true,
+            _watch_events: watch_task,
             wake,
             cancel: Arc::new(AtomicBool::new(false)),
             _task: task,
@@ -261,6 +312,34 @@ impl State {
     fn wake(&self) {
         let _ = self.wake.try_send(());
     }
+    pub fn set_active(&mut self, active: bool) {
+        if self.enabled != active {
+            self.enabled = active;
+            // Focus restoration is a reconciliation point for missed events,
+            // external tools and watch-less/network filesystems.
+            if active {
+                self.pending.all = true;
+            }
+            self.wake();
+        }
+    }
+    fn observe_watches(&mut self, changes: plastext_git::watch::Changes) {
+        self.pending.repositories.extend(changes.dirty);
+        if let Some(healthy) = changes.healthy {
+            self.healthy_watches = healthy;
+        }
+        self.wake();
+    }
+    pub fn changed_file(&mut self, path: &Path) {
+        // Existing open-document metadata checks can detect changes even on a
+        // network filesystem whose native watch silently emits no events.
+        if self.pending.paths.len() < 256 {
+            self.pending.paths.insert(path.to_owned());
+        } else {
+            self.pending.all = true;
+        }
+        self.wake();
+    }
     #[cfg(test)]
     pub fn request(&mut self) {
         self.pending.all = true;
@@ -270,6 +349,23 @@ impl State {
         // Watch registration emits an empty rescan hint. It must not turn
         // expanding/collapsing a folder into a full Git status scan.
         for path in batch.events.iter().flat_map(|event| &event.paths) {
+            // Git's own watcher filters build output before delivery. Tree
+            // watches remain useful for discovering new repositories and for
+            // incomplete watch coverage, but must not bypass that filter.
+            let relevant = path.file_name().is_some_and(|name| name == ".git")
+                || self.snapshot.as_ref().is_some_and(|set| {
+                    set.roots().any(|root| {
+                        if self.healthy_watches.contains(root) {
+                            return false;
+                        }
+                        set.repository(root)
+                            .and_then(|repo| repo.watch.as_ref())
+                            .is_some_and(|plan| plan.relevant(path))
+                    })
+                });
+            if !relevant {
+                continue;
+            }
             if self.pending.paths.len() < 256 {
                 self.pending.paths.insert(path.clone());
             } else {
@@ -280,11 +376,19 @@ impl State {
             self.wake();
         }
     }
-    pub fn directories(&self) -> impl Iterator<Item = PathBuf> + '_ {
-        self.snapshot
-            .iter()
-            .filter(|_| !self.scopes.is_empty())
-            .flat_map(|set| set.watch_directories().chain(set.roots()).cloned())
+    fn update_watches(&self) {
+        if let Some(watches) = &self.watches {
+            let plans = self
+                .snapshot
+                .iter()
+                .filter(|_| !self.scopes.is_empty())
+                .flat_map(|set| {
+                    set.roots()
+                        .filter_map(|root| set.repository(root)?.watch.clone())
+                })
+                .collect();
+            watches.set(plans);
+        }
     }
     pub fn label(&self) -> Option<&'static str> {
         if self.failed {
@@ -337,6 +441,7 @@ impl Workspace {
             tree.update(cx, |tree, cx| tree.set_git_status(Some(snapshot), cx));
         }
         self.update_disk_watches(cx);
+        self.git.update_watches();
         cx.notify();
         cx.background_executor()
             .spawn(async move { drop(retired) })
@@ -389,10 +494,14 @@ impl Workspace {
         scopes.sort();
         scopes.dedup();
         if scopes != self.git.scopes || priority_changed {
+            let was_empty = self.git.scopes.is_empty();
             self.git.scopes = scopes;
             self.git.priorities = priorities;
             self.git.generation = self.git.generation.wrapping_add(1);
             self.git.wake();
+            if was_empty != self.git.scopes.is_empty() {
+                self.git.update_watches();
+            }
         }
     }
 }

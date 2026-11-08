@@ -10,6 +10,7 @@ use std::{
 
 mod discovery;
 pub use discovery::DiscoveryCache;
+pub mod watch;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FileStatus {
@@ -52,6 +53,7 @@ impl FileStatus {
 pub struct Snapshot {
     pub root: PathBuf,
     pub watch_directories: Vec<PathBuf>,
+    pub watch: Option<Arc<watch::Plan>>,
     files: HashMap<PathBuf, FileStatus>,
 }
 
@@ -324,10 +326,8 @@ pub fn status(
         config.commit().map_err(|error| error.to_string())?;
     }
     let common = std::fs::canonicalize(repo.common_dir()).map_err(|e| e.to_string())?;
-    let mut watch_directories = vec![
-        std::fs::canonicalize(repo.git_dir()).map_err(|e| e.to_string())?,
-        common.clone(),
-    ];
+    let git_dir = std::fs::canonicalize(repo.git_dir()).map_err(|e| e.to_string())?;
+    let mut watch_directories = vec![git_dir.clone(), common.clone()];
     if let Some(name) = repo.head_name().map_err(|error| error.to_string())? {
         let path = common.join(gix::path::from_bstr(name.as_bstr()).map_err(|e| e.to_string())?);
         if let Some(parent) = path.parent() {
@@ -336,9 +336,12 @@ pub fn status(
     }
     watch_directories.sort();
     watch_directories.dedup();
+    let index = repo.index_or_empty().map_err(|e| e.to_string())?;
+    let watch = watch::Plan::from_index(&index, &root, &[git_dir, common], &cancel)?;
     let iter = repo
         .status(gix::progress::Discard)
         .map_err(|e| e.to_string())?
+        .index(index.into())
         .untracked_files(gix::status::UntrackedFiles::None)
         .index_worktree_submodules(None)
         .index_worktree_rewrites(None)
@@ -391,6 +394,7 @@ pub fn status(
     Ok(Some(Snapshot {
         root,
         watch_directories,
+        watch: Some(Arc::new(watch)),
         files,
     }))
 }

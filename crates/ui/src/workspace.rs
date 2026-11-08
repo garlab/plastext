@@ -298,6 +298,9 @@ impl Workspace {
         plastext_editor::configure_editing(settings.editor.clone(), cx);
         let mut subscriptions = vec![
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
+            cx.observe_window_activation(window, |this, window, _| {
+                this.git.set_active(window.is_window_active())
+            }),
             cx.observe_global::<welcome::RecentFolders>(|_, cx| cx.notify()),
         ];
         let icon_themes = IconThemes::shared(&settings.icons, cx);

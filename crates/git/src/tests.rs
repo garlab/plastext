@@ -1,7 +1,7 @@
 use super::*;
 use std::{fs, process::Command, time::Instant};
 
-fn git(root: &Path, args: &[&str]) {
+pub(super) fn git(root: &Path, args: &[&str]) {
     let output = command(root).args(args).output().unwrap();
     assert!(
         output.status.success(),
@@ -32,12 +32,12 @@ fn command(root: &Path) -> Command {
         ]);
     cmd
 }
-fn repo() -> tempfile::TempDir {
+pub(super) fn repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q", "-b", "main"]);
     dir
 }
-fn scan(root: &Path) -> Snapshot {
+pub(super) fn scan(root: &Path) -> Snapshot {
     status(root, Arc::new(AtomicBool::new(false)), Limits::default())
         .unwrap()
         .unwrap()
@@ -154,6 +154,25 @@ fn linked_worktree_discovery_and_conflicts() {
     let snapshot = scan(&work.join("sub"));
     assert_eq!(snapshot.root, work);
     assert!(snapshot.watch_directories.contains(&root.join(".git")));
+    let private = snapshot
+        .watch_directories
+        .iter()
+        .find(|dir| dir.starts_with(root.join(".git/worktrees")))
+        .unwrap();
+    assert!(
+        snapshot
+            .watch
+            .as_ref()
+            .unwrap()
+            .relevant(&private.join("index"))
+    );
+    assert!(
+        snapshot
+            .watch
+            .as_ref()
+            .unwrap()
+            .relevant(&private.join("HEAD"))
+    );
     assert_eq!(
         decoration(&snapshot, &work.join("file")),
         Some(Decoration::Staged)
@@ -314,6 +333,7 @@ fn folder_summaries_combine_descendants_and_clear_without_visiting_the_filesyste
     };
     let snapshot = |files: &[(&str, FileStatus)]| Snapshot {
         root: root.clone(),
+        watch: None,
         watch_directories: Vec::new(),
         files: files
             .iter()
@@ -353,6 +373,7 @@ fn folder_summaries_combine_descendants_and_clear_without_visiting_the_filesyste
     );
     let inner = Snapshot {
         root: nested.clone(),
+        watch: None,
         watch_directories: Vec::new(),
         files: HashMap::from([(PathBuf::from("conflict"), conflict)]),
     };
@@ -365,6 +386,7 @@ fn folder_summaries_combine_descendants_and_clear_without_visiting_the_filesyste
         &nested,
         Some(Snapshot {
             root: nested.clone(),
+            watch: None,
             watch_directories: Vec::new(),
             files: HashMap::new(),
         }),
@@ -460,6 +482,7 @@ fn folder_summary_100k_changes() {
     for pass in 0..5 {
         let mut snapshot = Snapshot {
             root: root.clone(),
+            watch: None,
             watch_directories: Vec::new(),
             files: files.clone(),
         };

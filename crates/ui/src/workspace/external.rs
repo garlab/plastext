@@ -200,7 +200,6 @@ impl Workspace {
             .as_ref()
             .map(|tree| tree.read(cx).watched_directories().to_vec())
             .unwrap_or_default();
-        directories.extend(self.git.directories());
         directories.sort();
         directories.dedup();
         if paths != self.disk.paths || directories != self.disk.directories {
@@ -320,6 +319,9 @@ impl Workspace {
                         .and_then(|v| v.as_ref())
                         .map(DiskVersion::target)
                         != current.as_ref().map(DiskVersion::target);
+                    if changed {
+                        this.git.changed_file(&path);
+                    }
                     this.disk.versions.insert(path, current);
                     if target_changed {
                         this.disk.watches.set_paths_and_directories(

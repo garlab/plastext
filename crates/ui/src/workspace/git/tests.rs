@@ -294,6 +294,69 @@ fn slow_scans_reduce_refresh_frequency() {
 }
 
 #[gpui::test]
+fn watched_repository_is_idle_until_an_event_and_defers_work_while_inactive(
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    git(&root, &["init", "-qb", "main"]);
+    let path = root.join("file.txt");
+    std::fs::write(&path, "initial\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-qm", "initial"]);
+    cx.update(crate::init);
+    let window =
+        cx.add_window(|window, cx| Workspace::new(Some(root.clone()), Arc::default(), window, cx));
+    cx.run_until_parked();
+    let count = window
+        .update(cx, |workspace, _, _| {
+            workspace.git.observe_watches(plastext_git::watch::Changes {
+                healthy: Some([root.clone()].into()),
+                ..Default::default()
+            });
+            workspace.git.scan_counts[&root]
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(180));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.scan_counts[&root], count);
+            workspace.git.set_active(false);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    std::fs::write(&path, "changed while inactive\n").unwrap();
+    window
+        .update(cx, |workspace, _, _| {
+            workspace.git.observe_watches(plastext_git::watch::Changes {
+                dirty: [root.clone()].into(),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+    cx.executor().advance_clock(Duration::from_secs(40));
+    cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| {
+            assert_eq!(workspace.git.scan_counts[&root], count);
+            workspace.git.set_active(true);
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    expect(window, &path, Some(Decoration::Modified), cx);
+    window
+        .update(cx, |workspace, window, _| {
+            assert_eq!(workspace.git.scan_counts[&root], count + 1);
+            window.remove_window();
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn collapse_reopen_keeps_colors_without_scanning_and_disk_events_are_targeted(
     cx: &mut TestAppContext,
 ) {

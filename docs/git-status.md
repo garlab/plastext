@@ -31,8 +31,9 @@ they are expanded. Repositories containing open tabs are also tracked when
 outside the opened folder.
 
 Collapsing a folder retains its cached status. Reopening it shows the same
-colors immediately. Fresh caches require no scan. Selecting or expanding a
-previously background repository queues revalidation if its last check is
+colors immediately. Healthy watches keep these caches current without a scan
+on expansion. If watch coverage is incomplete, selecting or expanding a
+previously background repository queues revalidation when its last check is
 older than five seconds. Caches live for
 the window's lifetime; when the 64-repository limit is reached, the least
 recently used inactive repository is evicted first. Empty folderless windows
@@ -45,23 +46,43 @@ repository share one status scan, while sibling checkouts, nested repositories,
 expanded submodules and linked worktrees each get their own cache. The nearest
 repository determines a file's color; a clean nested repository does not
 inherit changes reported by its parent. Linked worktrees watch both their
-private Git directory and the shared repository directory.
+private Git directory and the shared repository directory. Positive discovery
+results covered by healthy repository watches do not expire on a timer.
 
 ## Refresh cost
 
 `plastext-git` uses `gix` with status support and no network backend. Git does
 not need to be installed to run the application. Discovery, index loading,
 status computation and snapshot comparison run off the UI thread. Rendering
-only looks up cached status for visible tree rows and open tabs. Only changed
-paths are retained between scans; temporary index memory still scales with
+only looks up cached status for visible tree rows and open tabs. Changed paths
+and a bounded set of directories from Git's index are retained between scans;
+the full index is released. Temporary index memory still scales with
 the tracked-file count. Files that need content comparison incur background
 I/O and hashing; native content conversions can also need temporary buffers.
 
-Filesystem events are coalesced for 300 ms and invalidate only affected
-repositories, including linked worktrees sharing Git metadata. Tree expansion,
-collapse and watcher registration do not invalidate fresh status. Cached
+Filesystem events are the primary update trigger. They are coalesced by
+repository before reaching the UI, then batched for 300 ms. Only affected
+repositories refresh, including linked worktrees sharing Git metadata. Tree expansion,
+collapse and unchanged watch registration do not invalidate fresh status. Cached
 discovery results are reused, and unchanged snapshots do not rebuild folder
 summaries.
+
+Events in directories absent from Git's index are filtered before delivery,
+so activity deep in untracked build-output or dependency directories does not
+trigger Git scans. Files alongside tracked files can still trigger a scan;
+tracked files are never excluded just because their directory is named `target`
+or `node_modules`. Git object writes, reflog writes and lock-file churn are
+filtered too; index, HEAD, refs, configuration and attribute changes are retained.
+The callback performs no filesystem inspection or Git work.
+
+macOS and Windows use native recursive watches on repository roots and Git
+metadata. Linux and other backends use nonrecursive watches on indexed
+directories and a bounded traversal of Git refs, avoiding a recursive walk
+through build outputs. Registration is batched on a worker and unchanged watches
+are reused. Each window is limited to 4,096 native watch paths. The directory
+filter is capped at 8,192 directories and 512 KiB of relative path bytes per
+repository. Exceeding a limit or failing registration keeps fallback polling
+enabled instead of claiming complete coverage.
 
 Discovery and status scans run one at a time per window. Each completed
 repository is published immediately. A batch stops after about 500 ms of
@@ -73,12 +94,19 @@ files prioritize their owning repository. These scans keep a per-repository
 cooldown capped at five seconds and bypass unrelated background cooldowns;
 they run after the current scan finishes, before queued background work.
 
-Watches cover expanded directories, open files, cached repository roots and
-Git metadata. Fallback status checks run every 30 seconds for prioritized
-repositories, and every two minutes for merely listed or other retained caches,
-subject to the scan pacing above. Thus changes deep inside
-collapsed, unwatched folders can take longer to appear; their last known
-colors remain available immediately.
+Healthy repositories have a ten-minute reconciliation check, with no routine
+30-second/two-minute Git scan. Registration changes, dropped events, watcher
+errors, window reactivation and detected sleep/resume gaps request reconciliation.
+Registration is followed by a check to cover the gap after the initial status
+snapshot. Inactive windows retain/coalesce events and defer Git work until
+reactivated.
+
+When watch coverage is incomplete or a status scan fails, fallback checks run every 30 seconds for
+prioritized repositories and every two minutes for other retained caches,
+subject to scan pacing. Watch setup is retried at most once a minute when idle.
+Native watchers can silently miss events on network filesystems: the ten-minute
+check and reactivation still reconcile these, and the existing open-document
+metadata checks can request a Git refresh when they detect a change.
 
 The previous snapshot remains visible while a refresh runs. The status bar
 shows refresh/unavailable state. Discovery and each repository scan have a
@@ -108,8 +136,8 @@ debounces filesystem events and throttles status; its
 also limits concurrent initial status requests. Zed's
 [repository activation](https://zed.dev/docs/git#repository-activation) activates
 repositories directly beneath a project container and defers deeper ones.
-Plastext retains nonrecursive watches and periodic fallback checks, so an
-unwatched descendant edit is not guaranteed to be noticed immediately.
+Notifications are treated as invalidations, not as a replacement for Git status:
+each affected repository is rescanned in the background before publishing colors.
 
 ## Theme colors
 
@@ -130,6 +158,11 @@ recovery after a failed refresh.
 Priority tests cover browsing ahead of background work, reuse of fresh caches,
 and revalidation of older caches. Deletion tests cover a removed hidden directory
 with no surviving child row, both before and after staging.
+Native watcher tests cover collapsed descendants, atomic replacement, staging,
+deletion and unavailable watches. Deterministic tests cover build-event filtering,
+event storms/overflow, linked-worktree metadata, idle scan counts, inactive windows
+and fallback deadlines. Native watcher tests require filesystem notification
+permissions; run them outside a sandbox that blocks FSEvents.
 
 Run the disposable 100,000-file diagnostic separately from UI benchmarks:
 
@@ -146,6 +179,11 @@ On an Apple M2 Pro with 16 GiB RAM, the release diagnostic's five warm scans
 on 2026-11-07 took 220–253 ms (median 241 ms), below the specification's
 300 ms target for warm status in a 100k-file repository. This is a local
 measurement, not certification on the reference M1 Air.
+
+After event-driven watching was added, the same diagnostic on 2026-11-08 took
+224–240 ms (median 227 ms), including construction of the bounded directory
+filter. This remains below 300 ms on this machine; it does not measure native
+watch-registration latency or change the accepted M1/M2 baseline.
 
 The separate folder-summary diagnostic uses 100,000 changed files across
 1,000 directories, rebuilding the summaries five times:

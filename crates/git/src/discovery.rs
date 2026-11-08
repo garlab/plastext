@@ -18,6 +18,21 @@ struct Entry {
 }
 
 impl DiscoveryCache {
+    /// Working repository watches invalidate status when a repository moves or
+    /// loses its Git directory; don't rediscover those same roots on a timer.
+    pub fn retain_watched(&mut self, roots: &std::collections::HashSet<PathBuf>, now: Instant) {
+        for entry in self.entries.values_mut() {
+            if entry
+                .result
+                .as_ref()
+                .ok()
+                .and_then(Option::as_ref)
+                .is_some_and(|root| roots.contains(root))
+            {
+                entry.checked = now;
+            }
+        }
+    }
     pub fn invalidate(&mut self, directory: &Path) {
         self.entries.retain(|path, _| !path.starts_with(directory));
     }
