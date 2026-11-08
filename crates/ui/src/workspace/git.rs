@@ -391,6 +391,17 @@ impl State {
         self.wake();
     }
     pub fn changed_file(&mut self, path: &Path) {
+        // Open-document metadata checks must not bypass the repository's
+        // untracked-file filter. Unknown repositories still get discovery.
+        let plan = self.snapshot.as_ref().and_then(|set| {
+            path.ancestors()
+                .find_map(|parent| set.repository(parent))
+                .and_then(|repo| repo.watch.as_ref())
+        });
+        if plan.is_some_and(|plan| !plan.relevant(path)) {
+            git_trace!("document_ignored path={path:?}");
+            return;
+        }
         git_trace!("document_changed path={path:?}");
         // Existing open-document metadata checks can detect changes even on a
         // network filesystem whose native watch silently emits no events.

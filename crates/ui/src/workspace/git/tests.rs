@@ -318,6 +318,12 @@ fn watched_repository_is_idle_until_an_event_and_defers_work_while_inactive(
         })
         .unwrap();
     cx.run_until_parked();
+    window
+        .update(cx, |workspace, _, _| {
+            workspace.git.changed_file(&root.join("generated.part"));
+            assert!(workspace.git.pending.paths.is_empty());
+        })
+        .unwrap();
     cx.executor().advance_clock(Duration::from_secs(180));
     cx.run_until_parked();
     window

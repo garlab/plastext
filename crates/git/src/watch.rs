@@ -11,6 +11,7 @@ use std::{
 };
 
 mod service;
+mod tracked;
 pub use service::Watches;
 
 const MAX_DIRECTORIES: usize = 8192;
@@ -25,6 +26,7 @@ pub struct Plan {
     /// Relative directories containing tracked files, including ancestors.
     /// None means the bounded index exceeded its limit: retain polling fallback.
     directories: Option<HashSet<PathBuf>>,
+    tracked: Option<tracked::Paths>,
 }
 
 impl Plan {
@@ -40,6 +42,12 @@ impl Plan {
         for entry in index.entries() {
             if cancel.load(Ordering::Relaxed) {
                 return Err("Git status cancelled".into());
+            }
+            // Sparse-directory entries stand for tracked descendants which
+            // aren't enumerated here. Keep conservative events and polling.
+            if entry.mode.is_sparse() {
+                complete = false;
+                break;
             }
             let path = gix::path::from_bstr(entry.path(index)).map_err(|e| e.to_string())?;
             for parent in path.parent().into_iter().flat_map(Path::ancestors) {
@@ -62,10 +70,16 @@ impl Plan {
         let mut metadata = metadata.to_vec();
         metadata.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
         metadata.dedup();
+        let tracked = if complete {
+            tracked::Paths::from_index(index, &directories, cancel)?
+        } else {
+            None
+        };
         Ok(Self {
             root: root.to_owned(),
             metadata,
             directories: complete.then_some(directories),
+            tracked,
         })
     }
 
@@ -109,6 +123,18 @@ impl Plan {
         };
         if relative == Path::new(".git") {
             return true;
+        }
+        // Attributes can change tracked-file conversions even when the
+        // .gitattributes file itself isn't tracked. Index/ref changes above
+        // always refresh membership, including newly staged files.
+        if relative.file_name().is_some_and(|name| {
+            name.as_encoded_bytes()
+                .eq_ignore_ascii_case(b".gitattributes")
+        }) {
+            return true;
+        }
+        if let Some(tracked) = &self.tracked {
+            return tracked.may_contain(relative);
         }
         self.directories.as_ref().is_none_or(|dirs| {
             dirs.contains(relative)

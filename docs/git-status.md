@@ -54,9 +54,9 @@ results covered by healthy repository watches do not expire on a timer.
 `plastext-git` uses `gix` with status support and no network backend. Git does
 not need to be installed to run the application. Discovery, index loading,
 status computation and snapshot comparison run off the UI thread. Rendering
-only looks up cached status for visible tree rows and open tabs. Changed paths
-and a bounded set of directories from Git's index are retained between scans;
-the full index is released. Temporary index memory still scales with
+only looks up cached status for visible tree rows and open tabs. Changed paths,
+compact path fingerprints and a bounded set of directories from Git's index
+are retained between scans; the full index is released. Temporary index memory still scales with
 the tracked-file count. Files that need content comparison incur background
 I/O and hashing; native content conversions can also need temporary buffers.
 
@@ -67,10 +67,21 @@ collapse and unchanged watch registration do not invalidate fresh status. Cached
 discovery results are reused, and unchanged snapshots do not rebuild folder
 summaries.
 
-Events in directories absent from Git's index are filtered before delivery,
-so activity deep in untracked build-output or dependency directories does not
-trigger Git scans. Files alongside tracked files can still trigger a scan;
-tracked files are never excluded just because their directory is named `target`
+Tracked-file and parent-directory fingerprints filter events before delivery,
+including untracked scratch files beside tracked files. The same filter applies
+to open-document metadata notifications. It retains directory changes and the
+tracked side of renames/atomic saves. Index changes rebuild membership, so newly
+staged files immediately become eligible. Untracked `.gitattributes` files still
+trigger checks because they can change tracked-file conversions.
+
+Fingerprints use at most 1 MiB per repository; larger indexes retain the previous
+directory-based filter. ASCII paths are matched without case sensitivity and
+non-ASCII paths are conservatively accepted to avoid missing edits across
+filesystem case/normalization rules. Hash collisions can cause extra checks but
+cannot hide changes. These fallbacks can still admit some untracked activity.
+Sparse-directory index entries use conservative events and polling because
+their tracked descendants are not enumerated in the index.
+Tracked files are never excluded just because their directory is named `target`
 or `node_modules`. Git object writes, reflog writes and lock-file churn are
 filtered too; index, HEAD, refs, configuration and attribute changes are retained.
 The callback performs no filesystem inspection or Git work.
@@ -206,6 +217,11 @@ event storms/overflow, linked-worktree metadata, idle scan counts, inactive wind
 and fallback deadlines. Native watcher tests require filesystem notification
 permissions; run them outside a sandbox that blocks FSEvents.
 
+Additional coverage checks the 250 ms indicator delay and timer cancellation,
+untracked neighbors, staging into an existing directory, path case handling,
+attribute changes, fingerprint limits and sparse-index fallback. A macOS native
+test verifies that scratch-file writes/renames remain quiet until the file is staged.
+
 Run the disposable 100,000-file diagnostic separately from UI benchmarks:
 
 ```sh
@@ -226,6 +242,11 @@ After event-driven watching was added, the same diagnostic on 2026-11-08 took
 224–240 ms (median 227 ms), including construction of the bounded directory
 filter. This remains below 300 ms on this machine; it does not measure native
 watch-registration latency or change the accepted M1/M2 baseline.
+
+With tracked-path fingerprints, another local run on the same machine took
+158–198 ms (median 160 ms), including construction of the filter. These warm
+status measurements remain below the 300 ms target; the accepted baseline is
+unchanged.
 
 The separate folder-summary diagnostic uses 100,000 changed files across
 1,000 directories, rebuilding the summaries five times:
