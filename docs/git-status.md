@@ -148,6 +148,46 @@ colors take precedence.
 
 ## Validation
 
+### Diagnosing repeated refreshes
+
+Quit the running application, then launch with Git tracing enabled:
+
+```sh
+PLASTEXT_GIT_TRACE=1 cargo run -p plastext-app -- ~/projects
+```
+
+The terminal prints the log path: `/tmp/plastext-git-<pid>-<timestamp>.log` on
+Unix, or the system temporary directory on Windows. Restarting matters because
+later launches normally forward their request to the already running process.
+Logs record filesystem event kinds and paths, accepted/ignored events, watch
+registration and failures, focus changes, scheduling causes, and each status
+scan's duration and whether its result changed. Ignored events are counted and
+sampled (three per second) so build output cannot crowd out scan diagnostics.
+Use `PLASTEXT_GIT_TRACE=all` to include every raw event instead. Logs contain filenames and
+repository paths, but no document contents or file diffs.
+
+Logging is disabled by default. A background writer uses a bounded queue;
+overflow is reported as `trace_dropped`, and each process stops logging at
+8 MiB. The log stays outside the watched project and is never added to Git.
+Each record starts with milliseconds since tracing began; the header includes
+the process ID and Unix start time for correlating separate captures.
+
+An independent, read-only event probe can observe a project container without
+opening another application window:
+
+```sh
+PLASTEXT_GIT_TRACE=1 PLASTEXT_GIT_WATCH_ROOT=~/projects \
+  PLASTEXT_GIT_WATCH_SECONDS=180 \
+  cargo test --locked -p plastext-git watch_directory_events -- --ignored --nocapture
+```
+
+The probe reads repository indexes to configure the same event filter as the
+application, watches for the requested period, and logs affected repositories.
+It does not run status scans or change repository files. Native watcher
+permissions are required, as for the integration tests below.
+
+### Automated checks
+
 Automated coverage includes staged/unstaged/mixed changes, unstage/commit,
 unborn HEAD, deleted files, staged renames, intent-to-add, conflicts,
 linked worktrees, cancellation and result limits. UI tests cover shared

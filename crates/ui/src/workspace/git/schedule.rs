@@ -12,6 +12,7 @@ struct Entry {
     active: bool,
     priority: bool,
     dirty: bool,
+    cause: &'static str,
     next_event: Instant,
     next_poll: Instant,
     checked: Instant,
@@ -62,6 +63,7 @@ impl Schedule {
                     active: true,
                     priority: false,
                     dirty: true,
+                    cause: "initial",
                     next_event: now,
                     next_poll: now,
                     checked: now,
@@ -99,8 +101,12 @@ impl Schedule {
                 entry.next_poll = entry.checked + entry.poll_interval();
                 if priority {
                     entry.next_event = entry.next_event.min(entry.checked + Duration::from_secs(5));
-                    entry.dirty |= !entry.healthy
-                        && now.saturating_duration_since(entry.checked) >= Duration::from_secs(5);
+                    if !entry.healthy
+                        && now.saturating_duration_since(entry.checked) >= Duration::from_secs(5)
+                    {
+                        entry.dirty = true;
+                        entry.cause = "browsing_stale_cache";
+                    }
                 }
             }
         }
@@ -118,22 +124,29 @@ impl Schedule {
     }
     pub fn invalidate(&mut self, pending: &Pending, snapshot: Option<&RepositorySet>) {
         for (root, entry) in &mut self.entries {
-            if pending.all
-                || pending.repositories.contains(root)
-                || pending.paths.iter().any(|path| {
-                    path.starts_with(root)
-                        || root.starts_with(path)
-                        || snapshot
-                            .and_then(|set| set.repository(root))
-                            .is_some_and(|snapshot| {
-                                snapshot
-                                    .watch_directories
-                                    .iter()
-                                    .any(|dir| path.starts_with(dir))
-                            })
-                })
-            {
+            let cause = if pending.all {
+                Some("full_reconciliation")
+            } else if pending.repositories.contains(root) {
+                Some("watch_invalidation")
+            } else if pending.paths.iter().any(|path| {
+                path.starts_with(root)
+                    || root.starts_with(path)
+                    || snapshot
+                        .and_then(|set| set.repository(root))
+                        .is_some_and(|snapshot| {
+                            snapshot
+                                .watch_directories
+                                .iter()
+                                .any(|dir| path.starts_with(dir))
+                        })
+            }) {
+                Some("path_invalidation")
+            } else {
+                None
+            };
+            if let Some(cause) = cause {
                 entry.dirty = true;
+                entry.cause = cause;
             }
         }
     }
@@ -149,6 +162,13 @@ impl Schedule {
     pub fn started(&mut self, root: &Path) {
         if let Some(entry) = self.entries.get_mut(root) {
             entry.dirty = false;
+        }
+    }
+    pub fn reason(&self, root: &Path) -> &'static str {
+        match self.entries.get(root) {
+            Some(entry) if entry.dirty => entry.cause,
+            Some(entry) if entry.healthy && !entry.failed => "reconciliation_timer",
+            _ => "fallback_timer",
         }
     }
     pub fn completed(&mut self, root: &Path, now: Instant, elapsed: Duration, failed: bool) {

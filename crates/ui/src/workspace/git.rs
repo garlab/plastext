@@ -1,5 +1,5 @@
 use super::*;
-use plastext_git::{Decoration, DiscoveryCache, FileStatus, RepositorySet};
+use plastext_git::{Decoration, DiscoveryCache, FileStatus, RepositorySet, git_trace};
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
@@ -17,7 +17,7 @@ pub(crate) fn color(status: Option<FileStatus>, theme: Theme) -> Option<gpui::Rg
 mod schedule;
 use schedule::Schedule;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Pending {
     all: bool,
     paths: std::collections::HashSet<PathBuf>,
@@ -49,6 +49,7 @@ pub(super) struct State {
 
 impl State {
     pub fn new(scope: Option<PathBuf>, cx: &mut Context<Workspace>) -> Self {
+        git_trace!("workspace_start scope={scope:?}");
         let (wake, events) = async_channel::bounded(1);
         // Native watcher behavior has its own integration tests. GPUI's
         // deterministic clock tests inject the same Changes messages directly.
@@ -105,6 +106,10 @@ impl State {
                         .duration_since(last_tick)
                         .is_ok_and(|elapsed| elapsed > Duration::from_secs(30))
                     {
+                        git_trace!(
+                            "invalidate_all reason=clock_gap elapsed={:?}",
+                            now.duration_since(last_tick)
+                        );
                         this.git.pending.all = true;
                     }
                     last_tick = now;
@@ -133,6 +138,9 @@ impl State {
                     immediate = true;
                     continue;
                 }
+                if pending.all || !pending.paths.is_empty() || !pending.repositories.is_empty() {
+                    git_trace!("schedule_pending {pending:?}");
+                }
                 for path in &pending.paths {
                     if path.file_name().is_some_and(|name| name == ".git")
                         && let Some(parent) = path.parent()
@@ -144,6 +152,7 @@ impl State {
                 discovery.retain_watched(&healthy, now);
                 let mut discovery_failed = false;
                 if discovery.needs_refresh(&scopes, now) {
+                    git_trace!("discovery_start scopes={}", scopes.len());
                     let cancel = Arc::new(AtomicBool::new(false));
                     if this
                         .update(cx, |this, _| this.git.cancel = cancel.clone())
@@ -162,6 +171,7 @@ impl State {
                         Ok(cache) => discovery = cache,
                         Err(_) => discovery_failed = true,
                     }
+                    git_trace!("discovery_end failed={discovery_failed}");
                 }
                 match discovery.cached(&scopes) {
                     Ok(roots) if !discovery_failed => active_roots = roots,
@@ -223,6 +233,11 @@ impl State {
                         .ok()
                         .flatten();
                     let Some(previous) = previous else { break };
+                    git_trace!(
+                        "scan_start root={root:?} reason={} priority={}",
+                        schedule.reason(&root),
+                        schedule.is_priority(&root)
+                    );
                     schedule.started(&root);
                     let flag = cancel.clone();
                     let path = root.clone();
@@ -236,6 +251,17 @@ impl State {
                             .map(|changed| (gone, changed.then(|| Arc::new(next))))
                     });
                     let result = bounded(work, &cancel, cx).await;
+                    git_trace!(
+                        "scan_end root={root:?} elapsed_ms={} result={:?}",
+                        started.elapsed().as_millis(),
+                        result.as_ref().map(|(gone, snapshot)| if *gone {
+                            "gone"
+                        } else if snapshot.is_some() {
+                            "changed"
+                        } else {
+                            "unchanged"
+                        })
+                    );
                     scan_time += started.elapsed();
                     schedule.completed(
                         &root,
@@ -314,6 +340,7 @@ impl State {
     }
     pub fn set_active(&mut self, active: bool) {
         if self.enabled != active {
+            git_trace!("activation active={active}");
             self.enabled = active;
             // Focus restoration is a reconciliation point for missed events,
             // external tools and watch-less/network filesystems.
@@ -324,6 +351,11 @@ impl State {
         }
     }
     fn observe_watches(&mut self, changes: plastext_git::watch::Changes) {
+        git_trace!(
+            "watch_batch dirty={:?} healthy={:?}",
+            changes.dirty,
+            changes.healthy
+        );
         self.pending.repositories.extend(changes.dirty);
         if let Some(healthy) = changes.healthy {
             self.healthy_watches = healthy;
@@ -331,6 +363,7 @@ impl State {
         self.wake();
     }
     pub fn changed_file(&mut self, path: &Path) {
+        git_trace!("document_changed path={path:?}");
         // Existing open-document metadata checks can detect changes even on a
         // network filesystem whose native watch silently emits no events.
         if self.pending.paths.len() < 256 {
@@ -366,6 +399,7 @@ impl State {
             if !relevant {
                 continue;
             }
+            git_trace!("tree_invalidate path={path:?}");
             if self.pending.paths.len() < 256 {
                 self.pending.paths.insert(path.clone());
             } else {
@@ -494,6 +528,10 @@ impl Workspace {
         scopes.sort();
         scopes.dedup();
         if scopes != self.git.scopes || priority_changed {
+            git_trace!(
+                "scope_changed scopes={} priorities={priorities:?}",
+                scopes.len()
+            );
             let was_empty = self.git.scopes.is_empty();
             self.git.scopes = scopes;
             self.git.priorities = priorities;

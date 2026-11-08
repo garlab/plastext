@@ -201,13 +201,23 @@ struct Shared {
     registered: HashSet<PathBuf>,
     reset: bool,
     generation: u64,
+    trace_ignored: u64,
+    trace_sampled_at: Option<std::time::Instant>,
 }
 impl Shared {
     fn event(&mut self, event: notify::Result<Event>) -> bool {
+        let tracing = crate::trace::enabled();
+        if tracing && crate::trace::all_events() {
+            crate::git_trace!("fs_event event={event:?}");
+        }
         let event = match event {
             Ok(event) if matches!(event.kind, EventKind::Access(_)) => return false,
             Ok(event) if !event.need_rescan() => event,
-            _ => {
+            other => {
+                crate::git_trace!(
+                    "watch_reset reason=overflow_or_error event={other:?} repositories={}",
+                    self.plans.len()
+                );
                 self.changes
                     .dirty
                     .extend(self.plans.iter().map(|plan| plan.root.clone()));
@@ -228,6 +238,7 @@ impl Shared {
             .iter()
             .any(|path| self.registered.contains(path))
         {
+            crate::git_trace!("watch_reset reason=registered_path_removed event={event:?}");
             self.reset = true;
             self.generation = self.generation.wrapping_add(1);
             self.healthy.clear();
@@ -254,13 +265,40 @@ impl Shared {
         let mut relevant = false;
         for plan in &self.plans {
             if event.paths.iter().any(|path| plan.relevant(path)) {
+                crate::git_trace!(
+                    "fs_invalidate root={:?} kind={:?} paths={:?}",
+                    plan.root,
+                    event.kind,
+                    event.paths
+                );
                 self.changes.dirty.insert(plan.root.clone());
                 relevant = true;
+            }
+        }
+        if !relevant && tracing {
+            // Build storms must not fill the diagnostic file before the useful
+            // events arrive. Full raw capture remains available with TRACE=all.
+            let now = std::time::Instant::now();
+            if self
+                .trace_sampled_at
+                .is_none_or(|start| now.duration_since(start).as_secs() >= 1)
+            {
+                if self.trace_ignored != 0 {
+                    crate::git_trace!("fs_ignored_summary count={}", self.trace_ignored);
+                }
+                self.trace_sampled_at = Some(now);
+                self.trace_ignored = 0;
+            }
+            self.trace_ignored += 1;
+            if self.trace_ignored <= 3 || crate::trace::all_events() {
+                crate::git_trace!("fs_ignored kind={:?} paths={:?}", event.kind, event.paths);
             }
         }
         relevant
     }
 }
 
+#[cfg(test)]
+mod probe;
 #[cfg(test)]
 mod tests;

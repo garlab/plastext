@@ -10,6 +10,7 @@ use std::{
 
 mod discovery;
 pub use discovery::DiscoveryCache;
+pub mod trace;
 pub mod watch;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

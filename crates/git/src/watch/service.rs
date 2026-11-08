@@ -53,6 +53,7 @@ impl Watches {
                         .filter(|plan| !current.contains(plan))
                         .map(|plan| plan.root.clone())
                         .collect();
+                    crate::git_trace!("watch_config repositories={} changed={changed:?}", next.len());
                     current = next;
                     retry = Instant::now() + Duration::from_secs(60);
                     let generation = {
@@ -83,7 +84,9 @@ impl Watches {
                                 let _ = wake.try_send(());
                             }
                         })
-                        .ok();
+                        .map_err(|error| {
+                            crate::git_trace!("watch_error operation=create error={error}");
+                        }).ok();
                     }
                     let mut desired = BTreeMap::new();
                     let mut required = Vec::new();
@@ -105,6 +108,7 @@ impl Watches {
                     }
                     let mut setup_failed = false;
                     let registration_changed = desired != watched;
+                    crate::git_trace!("watch_registration changed={registration_changed} desired={} installed={} reset={}", desired.len(), watched.len(), generation.1);
                     if registration_changed && let Some(watcher) = &mut watcher {
                         let mut edits = watcher.paths_mut();
                         let obsolete: Vec<_> = watched
@@ -117,11 +121,15 @@ impl Watches {
                             watched.remove(&path);
                         }
                         for (path, mode) in &desired {
-                            if !watched.contains_key(path) && edits.add(path, *mode).is_ok() {
-                                watched.insert(path.clone(), *mode);
+                            if !watched.contains_key(path) {
+                                match edits.add(path, *mode) {
+                                    Ok(()) => { watched.insert(path.clone(), *mode); }
+                                    Err(error) => { crate::git_trace!("watch_error operation=add path={path:?} error={error}"); }
+                                }
                             }
                         }
-                        if edits.commit().is_err() {
+                        if let Err(error) = edits.commit() {
+                            crate::git_trace!("watch_error operation=commit error={error}");
                             watched.clear();
                             setup_failed = true;
                         }
@@ -163,6 +171,7 @@ impl Watches {
                         state.healthy = healthy.clone();
                         state.changes.healthy = Some(healthy);
                         state.registered = watched.keys().cloned().collect();
+                        crate::git_trace!("watch_ready healthy={:?} dirty={:?}", state.healthy, state.changes.dirty);
                     }
                     let _ = wake.try_send(());
                 }
