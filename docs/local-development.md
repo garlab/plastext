@@ -1,6 +1,6 @@
 # Local development
 
-See [Building](../README.md#building) for prerequisites. Run the commands below from the repository root unless noted otherwise.
+See [Building and running](../CONTRIBUTING.md#building-and-running) for prerequisites. Run the commands below from the repository root unless noted otherwise.
 
 ## Try another folder
 
@@ -74,9 +74,10 @@ crate, maintained in [its own repository](https://github.com/garlab/document-gra
 Plastext retains its own queue, cache and UI code; shared renderer and protocol
 tests belong in that library.
 
-Plastext pins published `document-graphics` 0.1.7 with `sgf`, `chess` and
-`image-native`. The Mermaid backend and math dependencies also resolve from
-crates.io. Normal builds need no local dependency overrides.
+Plastext pins an exact published `document-graphics` version (see the root
+`Cargo.toml`) with `sgf`, `chess` and `image-native`. The Mermaid backend and
+math dependencies also resolve from crates.io. Normal builds need no local
+dependency overrides.
 
 To work on document-graphics alongside Plastext, place its checkout beside
 Plastext and add the following to an untracked `.cargo/config.toml` in the

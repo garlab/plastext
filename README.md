@@ -1,39 +1,50 @@
 # plastext
 
-A fast, native, read-first viewer and light editor for code, Markdown and assets. It's built for people who write code through LLM agents in the terminal and mostly need to read, review and tweak it.
+A fast, native, read-first viewer and light editor for code, Markdown and assets
+on macOS. It's built for people who write code through LLM agents in the terminal
+and mostly need to read, review and tweak it.
 
-> **Status:** M3 editing is in progress. Files open for reading; plain text, code and Markdown Source now support [editing and saving](docs/editing.md). M1's code reader, navigation, search, themes and hex view remain available. Markdown opens in a virtualized native preview with headings, links, code fences, [Mermaid diagrams](docs/mermaid.md) and rendered-text find. [Image previews](docs/images.md) support bounded large-image tiles, AVIF/HEIC, animated GIF/WebP and SVG source mode; CSV/TSV tables have paged views. [SGF Go records](docs/sgf.md) and [PGN/FEN chess records](docs/chess.md) open as interactive boards with move and variation navigation. PDFs have an isolated, tiled preview with a Binary toggle ([scope and limits](docs/pdf-and-tex-preview.md#first-pdf-increment)). Math renders natively, inline and display (KaTeX via katex-rs). See [M3 progress](docs/m3-progress.md) for editing work; Git review follows in M4. See [M2 progress and limits](docs/m2-progress.md), the [accepted performance baseline](docs/m1-performance.md), and the [full specification](docs/specs.md).
+## What it opens
 
-## Building
+- **Code and text**, with syntax highlighting, folding, an outline, go to symbol,
+  search and a hex view. Plain text, code and Markdown source can be
+  [edited and saved](docs/editing.md).
+- **Markdown** in a virtualized native preview: headings, links, code fences,
+  front matter tables, [Mermaid diagrams](docs/mermaid.md), math rendered
+  natively (KaTeX through [katex-native](https://crates.io/crates/katex-native)),
+  and find in the rendered text.
+- **Images** with bounded large-image tiles, AVIF/HEIC, animated GIF/WebP and an
+  SVG source mode; see [image previews](docs/images.md).
+- **CSV/TSV** in paged tables.
+- **Go and chess records**: [SGF](docs/sgf.md) and [PGN/FEN](docs/chess.md)
+  open as interactive boards with move and variation navigation.
+- **PDF** in an isolated, tiled preview with a Binary toggle, and **TeX** through
+  an installed pdfLaTeX; see [PDF and TeX preview](docs/pdf-and-tex-preview.md).
 
-Shared rendering and image decoding use published `document-graphics` 0.1.5.
-Normal builds need no sibling checkout; see
-[local development](docs/local-development.md#shared-rendering-libraries) to work
-on the shared library alongside Plastext.
+Status: editing (milestone M3) is in progress, and Git review follows in M4. See
+[M3 progress](docs/m3-progress.md), [M2 progress and limits](docs/m2-progress.md),
+and the [specification](docs/specs.md).
 
-You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The Xcode Command Line Tools are enough; full Xcode isn't required.
+## Install
+
+You need macOS on Apple Silicon and a stable Rust toolchain (1.99 or later). The
+Xcode Command Line Tools are enough; full Xcode isn't required. From a checkout,
+install the app and its launcher together:
 
 ```sh
-cargo run -p plastext-app        # welcome screen: open a folder, file or recent folder
-cargo run -p plastext-app -- .   # open the current folder
-cargo test --workspace
-cargo build --release            # builds target/release/plastext and plastext-app
+cargo install --path crates/app --locked
+cargo install --path crates/cli --locked
+plastext .   # open the current folder
 ```
 
-With full Xcode and its Metal compiler installed, precompile the shaders to avoid runtime shader compilation on a cold launch:
+`plastext` hands its arguments to the running app, or starts the `plastext-app`
+binary next to it, so keep the two in the same directory (`~/.cargo/bin` by
+default). Without a path, the welcome screen offers Open Folder, Open File and
+recent folders. To update, run both install commands again and relaunch the app.
+See [local development](docs/local-development.md) for running a development
+build alongside the installed app.
 
-```sh
-cargo build --release -p plastext-app --no-default-features
-cargo build --release -p plastext-cli
-```
-
-Default builds use the `runtime-shaders` feature so development works with Command Line Tools alone. Use the package-specific command above: building the whole workspace enables the UI crates' default features again.
-
-`plastext` is the command-line launcher. It hands its arguments to the running app, or starts the `plastext-app` binary sitting next to it, so keep the two in the same directory. Settings are read from `~/.config/plastext/config.toml`; see spec §5.10.
-
-See [Local development](docs/local-development.md) to open other projects, install a copy on your `PATH`, and run development independently of the installed app.
-
-## Keys
+## Using plastext
 
 | Keys | Action |
 |---|---|
@@ -61,70 +72,47 @@ See [Local development](docs/local-development.md) to open other projects, insta
 | `⌘R` in PDF preview | Reload the file from disk |
 | `⌘+` / `⌘-` / `⌘0` | Zoom documents in / out / reset (50–200%); `⌘=` also zooms in |
 
-Drag the divider beside the Files/Search pane or between split panes to resize them. The pointer shows the resize direction; split pane proportions stay in place as the window resizes.
+**Files and tabs.** Single-click a file in the navigation pane to open a
+temporary preview tab, shown with an italic title; clicking another file reuses
+it. Double-click the file or its tab to keep it open; each split pane has its own
+preview tab. Files opened through Quick Open, search results or the command line
+stay open. Right-click a tab for **Close Others**, **Close Right**, **Close Left**
+or **Close Saved Files**, which apply to that pane; the first three keep the
+clicked tab open, and Close Saved Files keeps untitled drafts, modified files and
+files with unresolved disk changes. Right-click a file or folder for **Copy Path**
+or **Copy Relative Path**. Drag the divider beside the Files/Search pane or
+between split panes to resize them.
 
-Project search has separate **Aa** (Match Case), **ab** (Match Whole Word) and
-**`.*`** (Regular Expression) toggles, with hover descriptions. Case matching is off
-by default, including for uppercase queries. Results are grouped alphabetically
-by folder and filename, with matches in line order. **File filters** adds
-include/exclude globs; **Show more** continues after each 10,000 matching lines.
-The capped results are deterministic for unchanged files. See [project search](docs/search.md).
+**Git status** colors files and folders in the tree and filenames in tabs: green
+for staged changes, amber for unstaged changes, purple for both, and red for
+conflicts. Untracked files stay neutral until staged, and status refreshes in the
+background. See [Git status](docs/git-status.md).
 
-HTML source highlights JavaScript inside `<script>` and CSS inside `<style>`.
-Module scripts and JSON script data are recognized by their `type` attribute.
-Embedded parsing runs in the background under the existing syntax file-size
-limit; highlighting visits only the requested viewport.
+**Project search** has **Aa** (Match Case), **ab** (Match Whole Word) and
+**`.*`** (Regular Expression) toggles; case matching is off by default. Results
+are grouped by folder and filename, with matches in line order. **File filters**
+adds include/exclude globs, and **Show more** continues after each 10,000
+matching lines. See [project search](docs/search.md).
 
-Right-click a tab for **Close Others**, **Close Right**, **Close Left**, or
-**Close Saved Files**. These actions apply only to that pane. The first three
-keep the clicked tab open; Close Saved Files closes clean saved tabs, keeping
-untitled drafts, modified files and files with unresolved disk changes open.
+**Quick Open** boosts recent files, then other files by fuzzy relevance. It
+streams the best 256 results; type more to narrow a broad query.
 
-Single-click a file in the navigation pane to open a temporary preview tab,
-shown with an italic title. Clicking another file reuses that tab. Double-click
-the file or its tab to keep it open; each split pane has its own preview tab.
-Files opened explicitly through Quick Open, search results or the CLI stay open.
-Right-click a file or folder in the navigation pane for **Copy Path** (absolute)
-or **Copy Relative Path** (relative to the project root).
+**Folding** uses tree-sitter when a full parse is available, including
+unindented blocks and multiline comments and literals, and falls back to
+indentation otherwise. Large files color a 64 KiB prefix first, then the full
+file in the background. HTML highlights JavaScript in `<script>` (including
+modules and JSON data) and CSS in `<style>`.
 
-Git changes color files and folders in the tree and filenames in tabs: green for staged changes,
-amber for unstaged changes, purple for both, and red for conflicts. The unsaved
-dot still refers to editor edits. Collapsing folders retains their cached colors.
-Status refreshes in the background; untracked
-files stay neutral until staged. See [Git status and performance limits](docs/git-status.md).
-
-TeX opens in preview with an installed TeX Live pdfLaTeX. Roots and local inputs
-are detected automatically; external saves update the preview. Split with `⌘D`
-or `⇧⌘D`, then switch either pane to Source for side-by-side reading. Advanced
-overrides live in **Settings…** and `.plastext/tex.toml`. See
+**TeX** opens in preview with an installed TeX Live pdfLaTeX. Roots and local
+inputs are detected automatically, and external saves update the preview. Split
+with `⌘D` or `⇧⌘D`, then switch either pane to Source for side-by-side reading.
+Advanced overrides live in **Settings…** and `.plastext/tex.toml`. See
 [setup, behavior and limits](docs/pdf-and-tex-preview.md#local-tex-increment).
 
-The file tree shows coloured file-type icons, with dedicated icons for common languages, documents, images, configuration files and folders. Use `⇧⌘P` → **File Icon Theme** to choose Material, None, or an imported VS Code icon theme, including Seti. The choice applies immediately and is saved independently of the colour theme. See [icon themes](docs/icon-themes.md) for imports and compatibility.
+## Configuration
 
-## Benchmarks
-
-```sh
-cargo bench -p plastext-bench --bench text              # text engine micro-benchmarks
-cargo build --release -p plastext-app -p plastext-bench
-target/release/plastext-bench launch -- .               # time to first frame, 10 launches
-target/release/plastext-bench log 10GB /path/big.log    # spec §6.2 fixtures; also long-line, wide-dir
-target/release/plastext-bench m1 /path/linux-6.12 --million --output /tmp/m1.json
-target/release/plastext-bench read /path/linux-6.12/kernel/sched/core.c --root /path/linux-6.12 --foreground
-python3 scripts/m2-fixtures.py /tmp/plastext-m2          # 100 MB Markdown + 20M CSV records
-target/release/plastext-bench m2 /tmp/plastext-m2/large.md --output /tmp/m2-markdown.json
-target/release/plastext-bench csv /tmp/plastext-m2/large.csv
-target/release/plastext-bench read /tmp/plastext-m2/large.md --frames 10000 --foreground --keep-visible --output /tmp/m2-native.json
-```
-
-`m1` measures first streamed Quick Open results and completed query rankings separately (including cached backspacing), plus warm project search. `--million` also tests one million synthetic paths derived from the real tree. `read` drives 10,000 native scroll frames and measures first paint, initial viewport highlighting, full-tree availability and GPUI frame drawing/submission. `--foreground` activates its window; leave it visible because macOS suspends drawing for covered windows. Both runners return a nonzero exit code when a measured budget fails. These checks do not substitute for the reference M1 Air run or measure GPU completion, idle memory, or features from later milestones. See [the M1 performance report](docs/m1-performance.md) for results and remaining gaps.
-
-The `m2` command measures the Markdown index, bounded page cache, rendered search and memory; `csv` measures core indexing. Native scrolling and milestone sign-off require separate checks. Open [the M2 demo](docs/fixtures/m2.md) to exercise the new views. YAML and TOML front matter expand into virtualized key/value tables. Markdown find uses case-sensitive literal text, reveals collapsed metadata matches and highlights code matches over their syntax colors; Source offers the existing text reader's search and selection.
-
-`read` also profiles Markdown, including initial preview paint, completion of the full model, and scrolling through distant sections. `--keep-visible` uses a temporary popup window above other apps to prevent occlusion; it requires `--foreground` and changes only benchmark windows. The runner saves failed and incomplete results with `--output`, and aborts after 30 seconds without frame progress.
-
-Benchmark `--output` files contain summaries only. Full sample arrays and native logs stay in ignored `target/benchmarks/`; the math corpus runner has a separate `--summary` option. Only `*.summary.json` reports go into [docs/benchmarks](docs/benchmarks/README.md), with a CI check against raw data and machine-specific paths.
-
-Markdown typography can be configured in `config.toml` (restart to apply):
+Settings are read from `~/.config/plastext/config.toml` (spec §5.10). Markdown
+typography applies after a restart:
 
 ```toml
 [markdown]
@@ -135,11 +123,7 @@ mermaid = true      # false keeps diagram fences as source
 
 Code and inline code use `editor.font` independently of the prose font.
 
-## Themes and folding
-
-Folding uses bundled tree-sitter queries when a full parse is available, including unindented blocks and multiline comments/literals. Large source files first parse a 64 KiB prefix for viewport coloring, then replace it with the full tree in the background. Before folding queries finish, and for files without syntax support, folding falls back to indentation. Quick Open boosts matching recent files in most-recent-first order, followed by other files in fuzzy relevance order. It streams and refines the best 256 results; type more to narrow a broad query.
-
-To import a local VS Code JSON or JSONC color theme, add its path to `config.toml` and restart plastext:
+To import a local VS Code JSON or JSONC color theme, add its path and restart:
 
 ```toml
 [theme.dark]
@@ -149,11 +133,20 @@ import = "themes/my-dark-theme.json" # relative to config.toml; absolute paths a
 comment = "#8b949e"                 # explicit TOML colors override imported ones
 ```
 
-The same setting works under `[theme.light]`. Imports support comments, trailing commas, relative `include` files, RGB/RGBA colors and common TextMate token scopes. Unsupported workbench colors, contextual token selectors, semantic token styles and font styles are ignored. Standalone `.tmTheme` files and extension packages are not imported.
+The same setting works under `[theme.light]`. Imports support comments, trailing
+commas, relative `include` files, RGB/RGBA colors and common TextMate token
+scopes. Unsupported workbench colors, contextual token selectors, semantic token
+styles and font styles are ignored; standalone `.tmTheme` files and extension
+packages are not imported.
 
-## Layout
+The file tree shows file-type icons. Use `⇧⌘P` → **File Icon Theme** to choose
+Material, None, or an imported VS Code icon theme such as Seti; see
+[icon themes](docs/icon-themes.md).
 
-The workspace follows spec §7.3, with one crate per concern under `crates/`. Only `app`, `ui` and `editor` may depend on GPUI. Every other crate is UI-agnostic and must build and pass its tests on macOS, Linux and Windows. CI enforces both rules; the first is checked by `scripts/check-gpui-boundary.sh`.
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building from a checkout, the checks
+and benchmarks, and the workspace layout.
 
 ## License
 
