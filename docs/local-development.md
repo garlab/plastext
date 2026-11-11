@@ -114,3 +114,13 @@ overrides when verifying a published release.
 
 Each app selects raster fitting, cache size and worker lifetime; shared renderer
 changes should preserve those policies unless explicitly intended.
+
+Native LaTeX reading uses the published `latex-reader` crate. To work on its
+parser alongside Plastext, add this entry to the same untracked
+`[patch.crates-io]` table:
+
+```toml
+latex-reader = { path = "../latex-reader" }
+```
+
+Remove the override when validating a published release.

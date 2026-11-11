@@ -192,7 +192,9 @@ impl MarkdownView {
             offset_in_item: px(0.),
         });
         if let Some(source) = &self.source_view {
-            source.update(cx, |v, cx| v.scroll_to_offset(hit.source as u64, cx));
+            source.update(cx, |v, cx| {
+                v.scroll_to_offset(self.document.source_offset(hit.source) as u64, cx)
+            });
         }
         cx.notify();
     }

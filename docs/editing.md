@@ -176,7 +176,8 @@ changes a document during save cleanup, it stays dirty and requests another Save
 
 Remaining M3 work:
 
-- Automatic editing applies to plain text, code and Markdown Source. Other preview/source
+- Automatic editing applies to plain text, code, Markdown Source and
+  [TeX Source](latex-reading.md). Other preview/source
   toggles remain read-only until their synchronization is connected.
 - Column selection and restoring historical cursor selections on undo remain to
   implement. New File creates an untitled draft or starts inline naming in the

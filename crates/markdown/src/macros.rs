@@ -29,11 +29,13 @@ pub struct MacroContext {
     definitions: Arc<Vec<Definition>>,
     count: usize,
     overflow: bool,
+    latex: Option<latex_reader::MacroContext>,
 }
 
 impl PartialEq for MacroContext {
     fn eq(&self, other: &Self) -> bool {
         self.count == other.count
+            && self.latex == other.latex
             && self.overflow == other.overflow
             && (self.count == 0 || Arc::ptr_eq(&self.definitions, &other.definitions))
     }
@@ -42,6 +44,10 @@ impl Eq for MacroContext {}
 impl Hash for MacroContext {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.count.hash(state);
+        self.latex
+            .as_ref()
+            .map(|context| (context.hash(), context.is_incomplete()))
+            .hash(state);
         self.overflow.hash(state);
         if self.count != 0 {
             (Arc::as_ptr(&self.definitions) as usize).hash(state);
@@ -49,11 +55,22 @@ impl Hash for MacroContext {
     }
 }
 impl MacroContext {
+    pub(crate) fn from_latex(context: latex_reader::MacroContext) -> Self {
+        Self {
+            latex: Some(context),
+            ..Self::default()
+        }
+    }
+    pub fn latex(&self) -> Option<&latex_reader::MacroContext> {
+        self.latex.as_ref()
+    }
     pub fn is_empty(&self) -> bool {
-        self.count == 0 && !self.overflow
+        self.count == 0
+            && !self.overflow
+            && self.latex.as_ref().is_none_or(|context| context.is_empty())
     }
     pub fn sources(&self) -> Result<impl Iterator<Item = (&str, bool)>, &'static str> {
-        if self.overflow {
+        if self.overflow || self.latex.is_some() {
             return Err("Document math macro limit exceeded; showing TeX source.");
         }
         Ok(self.definitions[..self.count]
@@ -68,6 +85,7 @@ impl MacroHistory {
             count: self.definitions.partition_point(|d| d.end <= source),
             definitions: self.definitions.clone(),
             overflow: self.overflow.is_some_and(|at| source >= at),
+            latex: None,
         }
     }
     pub(crate) fn collect(&mut self, block: &Block) {

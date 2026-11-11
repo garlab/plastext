@@ -77,7 +77,7 @@ impl BlockEntry {
                 .is_some_and(|header| header.default_open ^ toggled.contains(&header.source.start))
         })
     }
-    fn new(block: &Block, page: usize, local: usize, previous: &[Self]) -> Self {
+    pub(crate) fn new(block: &Block, page: usize, local: usize, previous: &[Self]) -> Self {
         Self {
             source: block.source.clone(),
             page: page as u32,
@@ -152,12 +152,53 @@ pub struct DocumentIndex {
     pub pages: Vec<Page>,
     pub equation_starts: HashMap<usize, u32>,
     pub macros: crate::MacroHistory,
+    pub(crate) latex: Option<Arc<crate::latex::LatexDocument>>,
     references: References,
     footnotes: HashSet<UniCase<String>>,
     html_context_bytes: usize,
 }
 
 impl DocumentIndex {
+    /// Translate reading-model offsets to the original editor snapshot.
+    pub fn source_offset(&self, offset: usize) -> usize {
+        self.latex
+            .as_ref()
+            .map_or(offset, |latex| latex.source_map.source_offset(offset))
+    }
+
+    /// Translate original editor offsets to the reading model.
+    pub fn rendered_offset(&self, offset: usize) -> usize {
+        self.latex
+            .as_ref()
+            .map_or(offset, |latex| latex.source_map.expanded_offset(offset))
+    }
+
+    pub fn dependencies(&self) -> &[crate::latex::Dependency] {
+        self.latex.as_ref().map_or(&[], |latex| &latex.dependencies)
+    }
+
+    pub fn macro_context(&self, offset: usize) -> crate::MacroContext {
+        self.latex.as_ref().map_or_else(
+            || self.macros.at(offset),
+            |latex| crate::MacroContext::from_latex(latex.index.macro_context(offset)),
+        )
+    }
+
+    pub(crate) fn push_latex_page(&mut self, range: Range<usize>, blocks: &[Arc<Block>]) {
+        let start = self.blocks.len();
+        let page = self.pages.len();
+        for (local, block) in blocks.iter().enumerate() {
+            self.blocks
+                .push(BlockEntry::new(block, page, local, &self.blocks));
+        }
+        self.pages.push(Page {
+            source: range,
+            blocks: start..self.blocks.len(),
+            mode: Mode::Normal,
+            fingerprint: 0,
+            html: None,
+        });
+    }
     /// Used only for the bounded first-screen preview while indexing runs.
     pub fn initial(document: &Document, bytes: usize) -> Self {
         let mut macros = crate::MacroHistory::default();
@@ -337,6 +378,10 @@ impl DocumentIndex {
                 .sum::<usize>()
             + self.equation_starts.capacity() * 24
             + self.macros.retained_bytes()
+            + self
+                .latex
+                .as_ref()
+                .map_or(0, |latex| latex.retained_bytes())
     }
     pub fn parse_page(
         &self,
@@ -344,6 +389,9 @@ impl DocumentIndex {
         page: usize,
         cancelled: impl Fn() -> bool,
     ) -> io::Result<Vec<Arc<Block>>> {
+        if let Some(latex) = &self.latex {
+            return latex.parse_page(page, &cancelled);
+        }
         let (mut document, _) =
             self.read_page(source, page, &cancelled, &mut HeadingIds::default())?;
         let expected = &self.pages[page];

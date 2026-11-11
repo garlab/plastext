@@ -26,6 +26,7 @@ mod diagrams;
 mod editing;
 mod find;
 mod highlights;
+mod inputs;
 mod math;
 mod metadata;
 mod profile;
@@ -72,7 +73,15 @@ enum Update {
 const BODY_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 1.55;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DocumentFormat {
+    Markdown,
+    Latex,
+}
+
 pub struct MarkdownView {
+    format: DocumentFormat,
+    embedded: bool,
     path: PathBuf,
     source: Arc<FileSource>,
     preview_source: Arc<dyn plastext_markdown::DocumentSource>,
@@ -82,6 +91,9 @@ pub struct MarkdownView {
     reading_position: Option<(plastext_buffer::PaneId, u64)>,
     refresh_generation: Option<u64>,
     refresh_task: Option<Task<()>>,
+    inputs_dirty: bool,
+    checking_inputs: bool,
+    input_versions: Vec<plastext_markdown::latex::Dependency>,
     index: Arc<LineIndex>,
     text_style: TextStyle,
     settings: Arc<plastext_settings::Markdown>,
@@ -128,14 +140,63 @@ impl MarkdownView {
         settings: Arc<plastext_settings::Markdown>,
         cx: &mut Context<Self>,
     ) -> Self {
+        Self::new_format(
+            path,
+            source,
+            index,
+            text_style,
+            settings,
+            DocumentFormat::Markdown,
+            cx,
+        )
+    }
+    pub(crate) fn new_latex(
+        path: PathBuf,
+        source: Arc<FileSource>,
+        index: Arc<LineIndex>,
+        text_style: TextStyle,
+        settings: Arc<plastext_settings::Markdown>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut view = Self::new_format(
+            path,
+            source,
+            index,
+            text_style,
+            settings,
+            DocumentFormat::Latex,
+            cx,
+        );
+        view.embedded = true;
+        view
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn new_format(
+        path: PathBuf,
+        source: Arc<FileSource>,
+        index: Arc<LineIndex>,
+        text_style: TextStyle,
+        settings: Arc<plastext_settings::Markdown>,
+        format: DocumentFormat,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         let (send, receive) = async_channel::bounded(2);
         cx.background_executor()
             .spawn({
                 let source = source.clone();
+                let path = path.clone();
                 let cancel = cancel.clone();
                 async move {
                     let result = (|| -> std::io::Result<()> {
+                        if format == DocumentFormat::Latex {
+                            let source: Arc<dyn plastext_markdown::DocumentSource> = source;
+                            send.send_blocking(editing::build_preview(
+                                &source, &cancel, format, &path,
+                            )?)
+                            .ok();
+                            return Ok(());
+                        }
                         let head = source.head(64 * 1024)?;
                         let initial = parse(&String::from_utf8_lossy(&head));
                         if send
@@ -225,6 +286,8 @@ impl MarkdownView {
         })
         .detach();
         Self {
+            format,
+            embedded: false,
             path,
             preview_source: source.clone(),
             editing_document: None,
@@ -233,6 +296,9 @@ impl MarkdownView {
             reading_position: None,
             refresh_generation: None,
             refresh_task: None,
+            inputs_dirty: false,
+            checking_inputs: false,
+            input_versions: Vec::new(),
             source,
             index,
             text_style,
@@ -289,6 +355,7 @@ impl MarkdownView {
                 }
                 self.reading = selection::State::default();
                 let old_document = std::mem::replace(&mut self.document, document);
+                self.input_versions = self.document.dependencies().to_vec();
                 let old_pages = std::mem::take(&mut self.pages);
                 self.pending_pages.clear();
                 self.failed_pages.clear();
@@ -307,7 +374,10 @@ impl MarkdownView {
                     })
                     .detach();
                 self.list.scroll_to(ListOffset {
-                    item_ix: self.visible.row(self.document.block_at(offset)),
+                    item_ix: self.visible.row(
+                        self.document
+                            .block_at(self.document.rendered_offset(offset)),
+                    ),
                     offset_in_item: within,
                 });
                 self.search(cx);
@@ -336,7 +406,7 @@ impl MarkdownView {
             && let Some(offset) = self.document.anchor(&anchor)
         {
             self.pending_anchor = None;
-            self.scroll_to_offset(offset as u64, cx);
+            self.scroll_to_rendered_offset(offset, cx);
         }
         cx.notify();
     }
@@ -348,7 +418,8 @@ impl MarkdownView {
                 .map(|h| Symbol {
                     name: h.text.clone(),
                     kind: "heading".into(),
-                    range: h.source.clone(),
+                    range: self.document.source_offset(h.source.start)
+                        ..self.document.source_offset(h.source.end),
                     depth: h.level.saturating_sub(1) as usize,
                 })
                 .collect(),
@@ -366,28 +437,38 @@ impl MarkdownView {
         self.visible
             .block(self.list.logical_scroll_top().item_ix)
             .and_then(|ix| self.document.blocks.get(ix))
-            .map_or(0, |b| b.source.start as u64)
+            .map_or(0, |b| self.document.source_offset(b.source.start) as u64)
     }
     pub fn scroll_to_offset(&mut self, offset: u64, cx: &mut Context<Self>) {
-        if let Some(view) = &self.source_view {
-            view.update(cx, |v, cx| v.scroll_to_offset(offset, cx));
-        }
+        let rendered = self.document.rendered_offset(offset as usize);
         if self.parsing
-            && self
-                .document
-                .blocks
-                .last()
-                .is_none_or(|b| b.source.end < offset as usize)
+            && (self.format == DocumentFormat::Latex
+                || self
+                    .document
+                    .blocks
+                    .last()
+                    .is_none_or(|b| b.source.end < rendered))
         {
             self.pending_offset = Some(offset as usize);
+            if let Some(view) = &self.source_view {
+                view.update(cx, |v, cx| v.scroll_to_offset(offset, cx));
+            }
         } else {
-            let block = self.document.block_at(offset as usize);
-            self.reveal_metadata(block);
-            self.list.scroll_to(ListOffset {
-                item_ix: self.visible.row(block),
-                offset_in_item: px(0.),
-            });
+            self.scroll_to_rendered_offset(rendered, cx);
         }
+        cx.notify();
+    }
+    fn scroll_to_rendered_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
+        if let Some(view) = &self.source_view {
+            let source = self.document.source_offset(offset) as u64;
+            view.update(cx, |v, cx| v.scroll_to_offset(source, cx));
+        }
+        let block = self.document.block_at(offset);
+        self.reveal_metadata(block);
+        self.list.scroll_to(ListOffset {
+            item_ix: self.visible.row(block),
+            offset_in_item: px(0.),
+        });
         cx.notify();
     }
     pub fn scroll_to_line(&mut self, line: u64, cx: &mut Context<Self>) {
@@ -402,7 +483,7 @@ impl MarkdownView {
         if let Some(line) = anchor.strip_prefix('L').and_then(|s| s.parse::<u64>().ok()) {
             self.scroll_to_line(line, cx);
         } else if let Some(offset) = self.document.anchor(&anchor) {
-            self.scroll_to_offset(offset as u64, cx);
+            self.scroll_to_rendered_offset(offset, cx);
         } else if self.parsing {
             self.pending_anchor = Some(anchor);
         } else {
@@ -467,7 +548,8 @@ impl MarkdownView {
             .as_ref()
             .map(|view| view.update(cx, |view, cx| view.duplicate(cx)));
         cx.new(|cx| {
-            let mut view = Self::new(path, source, index, style, settings, cx);
+            let mut view = Self::new_format(path, source, index, style, settings, self.format, cx);
+            view.embedded = self.embedded;
             view.pending_offset = Some(offset as usize);
             view.rendered = rendered;
             view.expanded = expanded;
@@ -480,6 +562,16 @@ impl MarkdownView {
             }
             view
         })
+    }
+    pub(crate) fn set_rendered(
+        &mut self,
+        rendered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.rendered != rendered {
+            self.toggle_source(&ToggleSource, window, cx);
+        }
     }
     pub(crate) fn show_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.rendered {
@@ -1593,7 +1685,11 @@ impl Render for MarkdownView {
                 .p_6()
                 .text_color(theme.text_muted)
                 .child(if self.parsing {
-                    "Rendering Markdown…"
+                    if self.format == DocumentFormat::Latex {
+                        "Rendering LaTeX…"
+                    } else {
+                        "Rendering Markdown…"
+                    }
                 } else {
                     "Empty document"
                 })
@@ -1617,7 +1713,9 @@ impl Render for MarkdownView {
             .size_full()
             .flex()
             .flex_col()
-            .on_action(cx.listener(Self::toggle_source))
+            .when(!self.embedded, |view| {
+                view.on_action(cx.listener(Self::toggle_source))
+            })
             .when(
                 self.editing_document
                     .as_ref()
@@ -1669,58 +1767,60 @@ impl Render for MarkdownView {
                     .size_full(),
                 )
             })
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .h(px(30.))
-                    .px_3()
-                    .text_xs()
-                    .bg(theme.surface)
-                    .text_color(theme.text_muted)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(if self.rendered && self.parsing {
-                        "Markdown · rendering…"
-                    } else if !self.rendered
-                        && self
-                            .editing_document
-                            .as_ref()
-                            .is_some_and(|doc| doc.read(cx).is_preparing())
-                    {
-                        "Markdown · preparing editor…"
-                    } else if !self.rendered
-                        && self.source_status(cx).is_some_and(|status| !status.editing)
-                    {
-                        if self
-                            .editing_document
-                            .as_ref()
-                            .and_then(|doc| doc.read(cx).notice())
-                            .is_some_and(|notice| notice == "Read-only file")
+            .when(!self.embedded, |view| {
+                view.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .h(px(30.))
+                        .px_3()
+                        .text_xs()
+                        .bg(theme.surface)
+                        .text_color(theme.text_muted)
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(if self.rendered && self.parsing {
+                            "Markdown · rendering…"
+                        } else if !self.rendered
+                            && self
+                                .editing_document
+                                .as_ref()
+                                .is_some_and(|doc| doc.read(cx).is_preparing())
                         {
-                            "Markdown · read-only"
-                        } else {
-                            "Markdown · source"
-                        }
-                    } else {
-                        "Markdown"
-                    })
-                    .child(
-                        div()
-                            .id("md-toggle-source")
-                            .debug_selector(|| "md-toggle-source".into())
-                            .cursor_pointer()
-                            .child(if self.rendered {
-                                "Source  ⇧⌘V"
+                            "Markdown · preparing editor…"
+                        } else if !self.rendered
+                            && self.source_status(cx).is_some_and(|status| !status.editing)
+                        {
+                            if self
+                                .editing_document
+                                .as_ref()
+                                .and_then(|doc| doc.read(cx).notice())
+                                .is_some_and(|notice| notice == "Read-only file")
+                            {
+                                "Markdown · read-only"
                             } else {
-                                "Rendered  ⇧⌘V"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_source(&ToggleSource, window, cx)
-                            })),
-                    ),
-            )
+                                "Markdown · source"
+                            }
+                        } else {
+                            "Markdown"
+                        })
+                        .child(
+                            div()
+                                .id("md-toggle-source")
+                                .debug_selector(|| "md-toggle-source".into())
+                                .cursor_pointer()
+                                .child(if self.rendered {
+                                    "Source  ⇧⌘V"
+                                } else {
+                                    "Rendered  ⇧⌘V"
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_source(&ToggleSource, window, cx)
+                                })),
+                        ),
+                )
+            })
             .children(find_bar)
             .child(
                 div()

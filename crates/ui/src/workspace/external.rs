@@ -193,6 +193,9 @@ impl Workspace {
             .iter()
             .map(|d| d.read(cx).path().to_owned())
             .collect();
+        for view in self.tex_reading_views(cx) {
+            paths.extend(view.read(cx).input_paths().map(Path::to_owned));
+        }
         paths.sort();
         paths.dedup();
         let mut directories = self
@@ -217,6 +220,9 @@ impl Workspace {
             tree.update(cx, |tree, cx| tree.refresh_external(&batch, polled, cx));
         }
         batch.rescan |= polled;
+        for view in self.tex_reading_views(cx) {
+            view.update(cx, |view, cx| view.check_inputs(&batch, cx));
+        }
         for document in self.disk_documents(cx) {
             let Some(expected) = document.read(cx).disk_version().or_else(|| {
                 self.disk
@@ -337,6 +343,19 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+    fn tex_reading_views(&self, cx: &App) -> Vec<Entity<MarkdownView>> {
+        self.panes
+            .values()
+            .flat_map(|pane| &pane.tabs)
+            .filter_map(|tab| {
+                if let TabView::Tex(tex) = &tab.view {
+                    Some(tex.read(cx).rendered_view())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
     pub(super) fn render_disk_banner(
         &self,

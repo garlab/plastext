@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+latex-reader.workspace = true
 pulldown-cmark = { version = "0.13.4", default-features = false }
 # Tokenization and byte spans only; no DOM, scripting, or resource loader.
 html5gum = { version = "0.8.3", default-features = false }
@@ -20,6 +21,9 @@ unicode-segmentation = "1.13"
 saphyr-parser = "=0.2.2"
 toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 toml_parser = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,13 +1,13 @@
 mod model;
-use crate::pdf_view::PdfView;
+use crate::{markdown_view::MarkdownView, pdf_view::PdfView};
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, KeyBinding, Pixels, Point, Render, SharedString,
     Subscription, Task, Window, actions, div, prelude::*, px,
 };
 use model::Model;
 use plastext_buffer::{FileSource, LineIndex, OpenOptions};
-use plastext_editor::{TextStyle, TextView, Theme};
-use plastext_syntax::{Language, Symbol};
+use plastext_editor::{EditingDocument, TextStyle, TextViewStatus, Theme};
+use plastext_syntax::Symbol;
 use std::{path::PathBuf, sync::Arc};
 
 use crate::actions::TogglePreview as ToggleSource;
@@ -16,13 +16,21 @@ pub(crate) fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", ToggleSource, Some("Tex")),
         KeyBinding::new("cmd-r", Rebuild, Some("Tex")),
+        KeyBinding::new("cmd-s", plastext_editor::actions::Save, Some("Tex")),
     ]);
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Mode {
+    Source,
+    Rendered,
+    Pdf,
+}
+
 pub struct TexView {
     path: PathBuf,
     style: TextStyle,
-    source: Entity<TextView>,
-    source_observer: Subscription,
+    source: Entity<MarkdownView>,
+    _source_observer: Subscription,
     model: Entity<Model>,
     _model_observer: Subscription,
     pdf: Option<Entity<PdfView>>,
@@ -31,9 +39,9 @@ pub struct TexView {
     staging_observer: Option<Subscription>,
     staged_reading: Option<(u32, bool, Point<f64>)>,
     prepare: Option<Task<()>>,
-    source_reload: Option<Task<()>>,
     output_id: u64,
-    preview: bool,
+    mode: Mode,
+    reading_mode: Mode,
     visible: bool,
     zoom: f32,
     focus: FocusHandle,
@@ -48,24 +56,26 @@ impl TexView {
         source: Arc<FileSource>,
         index: Arc<LineIndex>,
         style: TextStyle,
-        language: Option<&'static Language>,
+        settings: Arc<plastext_settings::Markdown>,
         config: (Option<PathBuf>, plastext_settings::Tex),
         cx: &mut Context<Self>,
     ) -> Self {
         let source = cx.new(|cx| {
-            let mut view = TextView::new(source, index, style.clone(), language, cx);
-            view.set_file_path(&path);
-            view
+            MarkdownView::new_latex(path.clone(), source, index, style.clone(), settings, cx)
         });
         let preview = config.1.preview;
         let model = cx.new(|_| Model::new(path.clone(), config.0, config.1));
         let mut view = Self::with_model(path, source, model, style, cx);
-        view.preview = preview;
+        view.mode = if preview {
+            Mode::Rendered
+        } else {
+            Mode::Source
+        };
         view
     }
     fn with_model(
         path: PathBuf,
-        source: Entity<TextView>,
+        source: Entity<MarkdownView>,
         model: Entity<Model>,
         style: TextStyle,
         cx: &mut Context<Self>,
@@ -85,7 +95,7 @@ impl TexView {
             path,
             style,
             source,
-            source_observer,
+            _source_observer: source_observer,
             model,
             _model_observer: model_observer,
             pdf: None,
@@ -94,9 +104,9 @@ impl TexView {
             staging_observer: None,
             staged_reading: None,
             prepare: None,
-            source_reload: None,
             output_id: 0,
-            preview: false,
+            mode: Mode::Rendered,
+            reading_mode: Mode::Rendered,
             visible: false,
             zoom: 1.,
             focus: cx.focus_handle(),
@@ -116,7 +126,8 @@ impl TexView {
                 self.style.clone(),
                 cx,
             );
-            view.preview = self.preview;
+            view.mode = self.mode;
+            view.reading_mode = self.reading_mode;
             view.zoom = self.zoom;
             if let Some(pdf) = &self.pdf {
                 view.pdf = Some(pdf.update(cx, |pdf, cx| pdf.duplicate(cx)));
@@ -129,7 +140,10 @@ impl TexView {
     }
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.visible = visible;
-        let active = visible && self.preview;
+        self.source.update(cx, |view, cx| {
+            view.set_visible(visible && self.mode != Mode::Pdf, cx)
+        });
+        let active = visible && self.mode == Mode::Pdf;
         let owner = cx.entity_id();
         self.model.update(cx, |model, cx| {
             model.visible(owner, active);
@@ -157,17 +171,17 @@ impl TexView {
         self.zoom = factor;
         self.style.font_size = font_size;
         self.source
-            .update(cx, |source, cx| source.set_font_size(font_size, cx));
+            .update(cx, |source, cx| source.set_zoom(factor, font_size, cx));
         for pdf in [&self.pdf, &self.staging].into_iter().flatten() {
             pdf.update(cx, |pdf, cx| pdf.set_zoom(factor, font_size, cx));
         }
         cx.notify();
     }
     pub fn symbols(&self, cx: &App) -> Option<Arc<Vec<Symbol>>> {
-        self.source.read(cx).symbols()
+        Some(self.source.read(cx).symbols())
     }
     pub fn position(&self, cx: &App) -> u64 {
-        self.source.read(cx).position()
+        self.source.read(cx).position(cx)
     }
     pub fn scroll_to_offset(&mut self, offset: u64, cx: &mut Context<Self>) {
         self.source
@@ -178,13 +192,21 @@ impl TexView {
             .update(cx, |source, cx| source.scroll_to_line(line, cx));
     }
     pub fn notice(&self, cx: &App) -> Option<SharedString> {
+        if self.mode != Mode::Pdf {
+            return self.source.read(cx).notice(cx);
+        }
         self.error
             .clone()
             .or_else(|| self.model.read(cx).state.error.clone().map(Into::into))
     }
     pub fn summary(&self, cx: &App) -> String {
-        if !self.preview {
-            return "TeX · Source".into();
+        if self.mode != Mode::Pdf {
+            return if self.mode == Mode::Rendered {
+                "TeX · Rendered"
+            } else {
+                "TeX · Source"
+            }
+            .into();
         }
         let model = self.model.read(cx);
         format!(
@@ -196,47 +218,49 @@ impl TexView {
                 .unwrap_or_default()
         )
     }
-    fn toggle(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
-        self.preview = !self.preview;
-        if self.preview {
-            self.model.update(cx, |model, cx| model.setup(cx));
-        } else {
-            let path = self.path.clone();
-            self.source_reload = Some(cx.spawn_in(window, async move |this, cx| {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { plastext_buffer::open(&path, OpenOptions::default()) })
-                    .await;
-                let _ = this.update_in(cx, |this, window, cx| {
-                    if let Ok((source, index)) = result {
-                        let position = this.source.read(cx).position();
-                        this.source = cx.new(|cx| {
-                            let mut view = TextView::new(
-                                source,
-                                index,
-                                this.style.clone(),
-                                plastext_syntax::detect(&this.path, b""),
-                                cx,
-                            );
-                            view.set_file_path(&this.path);
-                            view.scroll_to_offset(position, cx);
-                            view
-                        });
-                        this.source_observer = cx.observe(&this.source, |_, _, cx| cx.notify());
-                        if !this.preview {
-                            this.source.focus_handle(cx).focus(window);
-                        }
-                    }
-                    cx.notify();
-                });
-            }));
+    pub(crate) fn rendered_view(&self) -> Entity<MarkdownView> {
+        self.source.clone()
+    }
+    pub fn editing_document(&self, cx: &App) -> Option<Entity<EditingDocument>> {
+        self.source.read(cx).editing_document()
+    }
+    pub fn set_editing_document(
+        &mut self,
+        document: Entity<EditingDocument>,
+        cx: &mut Context<Self>,
+    ) {
+        self.source
+            .update(cx, |view, cx| view.set_editing_document(document, cx));
+    }
+    pub fn source_status(&self, cx: &App) -> Option<TextViewStatus> {
+        (self.mode == Mode::Source)
+            .then(|| self.source.read(cx).source_status(cx))
+            .flatten()
+    }
+    pub(crate) fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = mode;
+        if mode != Mode::Source {
+            self.reading_mode = mode;
+        }
+        if mode != Mode::Pdf {
+            self.source.update(cx, |view, cx| {
+                view.set_rendered(mode == Mode::Rendered, window, cx)
+            });
         }
         self.set_visible(self.visible, cx);
         self.focus_handle(cx).focus(window);
         cx.notify();
     }
+    fn toggle(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
+        let next = if self.mode == Mode::Source {
+            self.reading_mode
+        } else {
+            Mode::Source
+        };
+        self.set_mode(next, window, cx);
+    }
     fn prepare_output(&mut self, cx: &mut Context<Self>) {
-        if !self.visible || !self.preview {
+        if !self.visible || self.mode != Mode::Pdf {
             return;
         }
         let Some(output) = self.model.read(cx).state.output.clone() else {
@@ -307,7 +331,7 @@ impl TexView {
                     if let Some(state) = this.staged_reading {
                         pdf.restore_reading_state(state, cx);
                     }
-                    pdf.set_visible(this.visible && this.preview, cx);
+                    pdf.set_visible(this.visible && (this.mode == Mode::Pdf), cx);
                     pdf
                 });
                 this.staging_observer = Some(cx.observe(&pdf, |this, _, cx| {
@@ -421,7 +445,7 @@ impl TexView {
 }
 impl Focusable for TexView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if !self.preview {
+        if self.mode != Mode::Pdf {
             self.source.focus_handle(cx)
         } else {
             self.pdf
@@ -432,7 +456,12 @@ impl Focusable for TexView {
 }
 impl Render for TexView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.preview
+        if self.mode != Mode::Pdf {
+            self.source.update(cx, |view, cx| {
+                view.set_rendered(self.mode == Mode::Rendered, window, cx)
+            });
+        }
+        if self.mode == Mode::Pdf
             && (self
                 .old_focus
                 .take()
@@ -445,10 +474,13 @@ impl Render for TexView {
         let model = self.model.read(cx);
         let input = model.input.clone();
         let status = model.state.status.clone();
+        let unsaved = self
+            .editing_document(cx)
+            .is_some_and(|doc| doc.read(cx).is_dirty());
         let slow = model.slow();
         let cancelled = status == "Preview cancelled";
         let error = self.notice(cx);
-        let body = if !self.preview {
+        let body = if self.mode != Mode::Pdf {
             self.source.clone().into_any_element()
         } else {
             div()
@@ -503,8 +535,17 @@ impl Render for TexView {
             .flex()
             .flex_col()
             .on_action(cx.listener(Self::toggle))
+            .on_action(
+                cx.listener(|this, _: &plastext_editor::actions::Save, _, cx| {
+                    if let Some(document) = this.editing_document(cx) {
+                        document.update(cx, |doc, cx| doc.save(cx));
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &Rebuild, _, cx| {
-                this.model.update(cx, |model, cx| model.rebuild(cx))
+                if this.mode == Mode::Pdf {
+                    this.model.update(cx, |model, cx| model.rebuild(cx));
+                }
             }))
             .child(
                 div()
@@ -522,12 +563,22 @@ impl Render for TexView {
                     .text_color(theme.text_muted)
                     .text_xs()
                     .child("TeX")
-                    .child(div().flex_1().min_w_0().truncate().child(if self.preview {
-                        status
-                    } else {
-                        String::new()
-                    }))
-                    .when(self.preview && slow, |bar| {
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(if self.mode == Mode::Pdf {
+                                if unsaved {
+                                    "Unsaved changes · PDF shows saved files".into()
+                                } else {
+                                    status
+                                }
+                            } else {
+                                String::new()
+                            }),
+                    )
+                    .when(self.mode == Mode::Pdf && slow, |bar| {
                         bar.child(
                             div()
                                 .id("tex-cancel")
@@ -539,20 +590,25 @@ impl Render for TexView {
                                 })),
                         )
                     })
-                    .when(self.preview && (error.is_some() || cancelled), |bar| {
-                        bar.child(
-                            div()
-                                .id("tex-retry")
-                                .cursor_pointer()
-                                .child("Retry")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.model.update(cx, |model, cx| model.rebuild(cx));
-                                    this.focus_handle(cx).focus(window);
-                                })),
-                        )
-                    })
                     .when(
-                        self.preview && error.is_some() && self.pdf.is_some(),
+                        self.mode == Mode::Pdf && (error.is_some() || cancelled),
+                        |bar| {
+                            bar.child(
+                                div()
+                                    .id("tex-retry")
+                                    .cursor_pointer()
+                                    .child("Retry")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        if this.mode == Mode::Pdf {
+                                            this.model.update(cx, |model, cx| model.rebuild(cx));
+                                        };
+                                        this.focus_handle(cx).focus(window);
+                                    })),
+                            )
+                        },
+                    )
+                    .when(
+                        self.mode == Mode::Pdf && error.is_some() && self.pdf.is_some(),
                         |bar| {
                             bar.child(
                                 div()
@@ -566,7 +622,7 @@ impl Render for TexView {
                             )
                         },
                     )
-                    .when(self.preview, |bar| {
+                    .when(self.mode == Mode::Pdf, |bar| {
                         bar.child(
                             div()
                                 .id("tex-settings")
@@ -578,21 +634,31 @@ impl Render for TexView {
                                 })),
                         )
                     })
-                    .child(
-                        div()
-                            .id("tex-toggle")
-                            .cursor_pointer()
-                            .child(if self.preview {
-                                "Source  ⇧⌘V"
-                            } else {
-                                "Preview  ⇧⌘V"
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle(&ToggleSource, window, cx)
-                            })),
+                    .children(
+                        [
+                            (Mode::Source, "Source", "tex-source"),
+                            (Mode::Rendered, "Rendered", "tex-rendered"),
+                            (Mode::Pdf, "PDF Preview", "tex-pdf"),
+                        ]
+                        .map(|(mode, label, id)| {
+                            div()
+                                .id(id)
+                                .debug_selector(move || id.into())
+                                .px_2()
+                                .py_1()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .when(self.mode == mode, |button| {
+                                    button.bg(theme.selection).text_color(theme.text)
+                                })
+                                .child(label)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.set_mode(mode, window, cx)
+                                }))
+                        }),
                     ),
             )
-            .when(self.preview && self.settings_open, |d| {
+            .when(self.mode == Mode::Pdf && self.settings_open, |d| {
                 d.child(
                     div()
                         .flex_none()
@@ -645,7 +711,10 @@ impl Render for TexView {
                                         .cursor_pointer()
                                         .child("Retry")
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.model.update(cx, |model, cx| model.rebuild(cx));
+                                            if this.mode == Mode::Pdf {
+                                                this.model
+                                                    .update(cx, |model, cx| model.rebuild(cx));
+                                            };
                                             this.focus_handle(cx).focus(window);
                                         })),
                                 ),

@@ -431,3 +431,86 @@ fn readonly_markdown_source_never_enables_typing_or_emojis(cx: &mut TestAppConte
         dispatch(cx, window, crate::actions::TogglePreview);
     }
 }
+
+#[gpui::test]
+fn latex_modes_share_unsaved_text_and_rendered_split_refreshes(cx: &mut TestAppContext) {
+    use crate::tex_view::Mode;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("document.tex");
+    std::fs::write(&path, "\\section{Original}\nText with $x^2$.\n").unwrap();
+    let window = open(cx, &path);
+    let mut visual = gpui::VisualTestContext::from_window(window.into(), cx);
+    for selector in ["tex-source", "tex-rendered", "tex-pdf"] {
+        assert!(visual.debug_bounds(selector).is_some());
+    }
+    let native = window
+        .update(cx, |workspace, _, cx| {
+            let TabView::Tex(view) = &workspace.panes[&workspace.active_pane]
+                .active_tab()
+                .unwrap()
+                .view
+            else {
+                panic!("TeX view");
+            };
+            assert_eq!(view.read(cx).summary(cx), "TeX · Rendered");
+            view.clone()
+        })
+        .unwrap();
+    assert!(native.read_with(cx, |view, cx| {
+        view.symbols(cx)
+            .unwrap()
+            .iter()
+            .any(|s| s.name.contains("Original"))
+    }));
+    dispatch(cx, window, crate::actions::TogglePreview);
+    assert!(native.read_with(cx, |view, cx| {
+        view.source_status(cx).is_some_and(|s| s.editing)
+    }));
+    dispatch(cx, window, crate::actions::TogglePreview);
+    assert_eq!(
+        native.read_with(cx, |view, cx| view.summary(cx)),
+        "TeX · Rendered"
+    );
+    dispatch(cx, window, SplitRight);
+    window
+        .update(cx, |workspace, window, cx| {
+            let TabView::Tex(view) = &workspace.panes[&workspace.active_pane]
+                .active_tab()
+                .unwrap()
+                .view
+            else {
+                panic!("TeX view");
+            };
+            assert_eq!(
+                view.read(cx).editing_document(cx),
+                native.read(cx).editing_document(cx)
+            );
+            view.update(cx, |view, cx| view.set_mode(Mode::Source, window, cx));
+        })
+        .unwrap();
+    cx.run_until_parked();
+    dispatch(cx, window, edit::SelectAll);
+    clipboard(cx, "\\section{Changed}\nUnsaved $y^2$.\n");
+    dispatch(cx, window, edit::Paste);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    assert!(native.read_with(cx, |view, cx| {
+        view.symbols(cx)
+            .unwrap()
+            .iter()
+            .any(|s| s.name.contains("Changed"))
+    }));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Original"));
+    // Switching to Rendered never reopens the disk file or loses edits.
+    dispatch(cx, window, crate::actions::TogglePreview);
+    assert!(text(cx, window).contains("Changed"));
+    dispatch(cx, window, edit::SelectAll);
+    dispatch(cx, window, edit::Copy);
+    assert!(
+        cx.update(|cx| cx.read_from_clipboard().unwrap().text().unwrap())
+            .contains("Changed")
+    );
+    dispatch(cx, window, edit::Save);
+    assert!(std::fs::read_to_string(&path).unwrap().contains("Changed"));
+}

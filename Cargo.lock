@@ -5098,6 +5098,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "latex-reader"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bd8e8f0e33b49572184863da8269462fc9f9c6b458ae5ca1c28062a0a7bc9af"
+
+[[package]]
 name = "latex-rust"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6511,6 +6517,8 @@ name = "plastext-markdown"
 version = "0.1.0"
 dependencies = [
  "html5gum",
+ "latex-reader",
+ "libc",
  "percent-encoding",
  "plastext-buffer",
  "pulldown-cmark",
@@ -6529,6 +6537,7 @@ version = "0.1.0"
 dependencies = [
  "katex-native",
  "katex-rs",
+ "latex-reader",
  "latex-rust",
  "mitex",
  "serde_json",

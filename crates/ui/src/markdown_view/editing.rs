@@ -21,6 +21,7 @@ impl MarkdownView {
         self._document_observer = Some(cx.observe(&document, |this, document, cx| {
             if this.path != document.read(cx).path() {
                 this.path = document.read(cx).path().to_owned();
+                this.inputs_dirty = this.format == DocumentFormat::Latex;
                 this.clear_images(cx);
             }
             this.refresh_preview(false, cx);
@@ -105,10 +106,8 @@ impl MarkdownView {
         let Some(document) = self.editing_document.clone() else {
             return;
         };
-        let Some(version) = document.read(cx).version() else {
-            return;
-        };
-        let generation = version.generation();
+        let version = document.read(cx).version();
+        let generation = version.as_ref().map(DocumentSnapshot::generation);
         let offset = self
             .pending_offset
             .map_or_else(|| self.position(cx), |offset| offset as u64);
@@ -117,7 +116,7 @@ impl MarkdownView {
         }) {
             self.pending_offset = Some(mapped as usize);
         }
-        if self.preview_generation == Some(generation) {
+        if self.preview_generation == generation && !self.inputs_dirty {
             return;
         }
         if !self.rendered || self.diagrams.hidden {
@@ -130,7 +129,7 @@ impl MarkdownView {
             self.parsing = false;
             return;
         }
-        if self.refresh_generation == Some(generation) && !immediate {
+        if self.refresh_generation == generation && self.parsing && !immediate {
             return;
         }
         self.cancel.store(true, Ordering::Relaxed);
@@ -139,11 +138,17 @@ impl MarkdownView {
             task.detach();
         }
         self.cancel = Arc::new(AtomicBool::new(false));
-        self.refresh_generation = Some(generation);
+        self.refresh_generation = generation;
         self.parsing = true;
         self.notice = None;
         self.preview_complete = false;
         let cancel = self.cancel.clone();
+        let format = self.format;
+        let path = self.path.clone();
+        let source: Arc<dyn DocumentSource> = version.as_ref().map_or_else(
+            || self.preview_source.clone(),
+            |v| Arc::new(v.text().clone()) as Arc<dyn DocumentSource>,
+        );
         self.refresh_task = Some(cx.spawn(async move |this, cx| {
             if !immediate {
                 cx.background_executor()
@@ -158,11 +163,10 @@ impl MarkdownView {
                     .detach();
                 return;
             }
-            let source: Arc<dyn DocumentSource> = Arc::new(version.text().clone());
             let work = cx.background_executor().spawn({
                 let source = source.clone();
                 let cancel = cancel.clone();
-                async move { build_preview(&source, &cancel) }
+                async move { build_preview(&source, &cancel, format, &path) }
             });
             let result = work.await;
             // Keep rejected indexes and snapshots off the UI thread on retirement.
@@ -170,7 +174,14 @@ impl MarkdownView {
             this.update(cx, |this, cx| {
                 if cancel.load(Ordering::Relaxed)
                     || !Arc::ptr_eq(&cancel, &this.cancel)
-                    || !this.current_version(&version, cx)
+                    || version.as_ref().map_or_else(
+                        || {
+                            this.editing_document
+                                .as_ref()
+                                .is_some_and(|doc| doc.read(cx).version().is_some())
+                        },
+                        |version| !this.current_version(version, cx),
+                    )
                 {
                     return;
                 }
@@ -188,14 +199,16 @@ impl MarkdownView {
                         this.diagrams.reset_source_choices();
                         this.clear_images(cx);
                         this.expanded.clear();
-                        this.preview_generation = Some(generation);
+                        this.preview_generation = generation;
+                        this.inputs_dirty = false;
                         this.receive(update, cx);
                     }
                     Err(error) => {
                         this.parsing = false;
+                        this.inputs_dirty = false;
                         this.notice = Some(
                             format!(
-                                "Couldn't refresh Markdown: {error}. Showing the previous preview."
+                                "Couldn't refresh document: {error}. Showing the previous preview."
                             )
                             .into(),
                         );
@@ -219,16 +232,25 @@ impl MarkdownView {
     }
 }
 
-fn build_preview(source: &Arc<dyn DocumentSource>, cancel: &AtomicBool) -> std::io::Result<Update> {
-    let document = Arc::new(DocumentIndex::build(
-        source,
-        || cancel.load(Ordering::Relaxed),
-        |tex, macros| {
-            macros.sources().map_or(0, |sources| {
-                plastext_math::equation_numbers_with_macros(tex, sources)
-            })
-        },
-    )?);
+pub(super) fn build_preview(
+    source: &Arc<dyn DocumentSource>,
+    cancel: &AtomicBool,
+    format: DocumentFormat,
+    path: &std::path::Path,
+) -> std::io::Result<Update> {
+    let document = Arc::new(if format == DocumentFormat::Latex {
+        plastext_markdown::latex::build_with_path(source, path, cancel)?
+    } else {
+        DocumentIndex::build(
+            source,
+            || cancel.load(Ordering::Relaxed),
+            |tex, macros| {
+                macros.sources().map_or(0, |sources| {
+                    plastext_math::equation_numbers_with_macros(tex, sources)
+                })
+            },
+        )?
+    });
     let symbols = Arc::new(
         document
             .headings
@@ -236,7 +258,8 @@ fn build_preview(source: &Arc<dyn DocumentSource>, cancel: &AtomicBool) -> std::
             .map(|heading| Symbol {
                 name: heading.text.clone(),
                 kind: "heading".into(),
-                range: heading.source.clone(),
+                range: document.source_offset(heading.source.start)
+                    ..document.source_offset(heading.source.end),
                 depth: heading.level.saturating_sub(1) as usize,
             })
             .collect(),

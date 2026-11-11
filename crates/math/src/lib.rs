@@ -69,7 +69,71 @@ pub fn render_with_macros<'a>(
     definitions: impl Iterator<Item = (&'a str, bool)>,
 ) -> Result<Rendered, String> {
     let settings = macro_settings(display, definitions);
-    let layout = katex_native::layout_numbered(context(), tex, &settings, first_number)
+    render_settings(tex, first_number, px_per_em, rgba, &settings)
+}
+
+/// LaTeX supplies the bindings at this exact source position and explicit
+/// equation tags. A render cannot mutate the document or any other formula.
+pub fn render_with_latex(
+    tex: &str,
+    display: bool,
+    px_per_em: f32,
+    rgba: [u8; 4],
+    macros: &latex_reader::MacroContext,
+) -> Result<Rendered, String> {
+    if macros.is_incomplete() {
+        return Err("LaTeX macro context is incomplete; showing source.".into());
+    }
+    let settings = Settings::builder()
+        .global_group(true)
+        .max_expand(1000)
+        .build();
+    for binding in macros.bindings() {
+        let definition = if binding.kind == latex_reader::BindingKind::Command {
+            let parameters: String = (1..=binding.params).map(|n| format!("#{n}")).collect();
+            Some(if let Some(default) = &binding.default {
+                // KaTeX's newcommand omits LaTeX's optional-default form. Use
+                // its delimited def and ifnextchar primitives without expanding
+                // the body. Keep generated names outside the document bindings.
+                let mut helper = format!("{}@plastextoptional", binding.name);
+                while macros.bindings().any(|other| other.name == helper) {
+                    helper.push('@');
+                }
+                let required: String = (2..=binding.params).map(|n| format!("#{n}")).collect();
+                format!(
+                    "\\gdef{helper}[#1]{required}{{{}}}\\gdef{}{{\\@ifnextchar[{{{helper}}}{{{helper}[{{{default}}}]}}}}",
+                    binding.body, binding.name
+                )
+            } else {
+                // Retain the declared arity even when a parameter is unused,
+                // and permit replacement of KaTeX built-ins with renewcommand.
+                format!("\\gdef{}{parameters}{{{}}}", binding.name, binding.body)
+            })
+        } else {
+            binding.katex_definition()
+        };
+        if let Some(definition) = definition {
+            katex_native::katex::parse_tree::parse_tree(context(), &definition, &settings)
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    let settings = Settings::builder()
+        .display_mode(display)
+        .global_group(false)
+        .max_expand(1000)
+        .macros(settings.macros.into_inner())
+        .build();
+    render_settings(tex, 1, px_per_em, rgba, &settings)
+}
+
+fn render_settings(
+    tex: &str,
+    first_number: u32,
+    px_per_em: f32,
+    rgba: [u8; 4],
+    settings: &Settings,
+) -> Result<Rendered, String> {
+    let layout = katex_native::layout_numbered(context(), tex, settings, first_number)
         .map_err(|err| err.to_string())?;
     let [r, g, b, a] = rgba;
     let raster = |layout: &katex_native::Layout| {
@@ -154,6 +218,71 @@ pub fn may_number(tex: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latex_scopes_and_explicit_equation_tags_render_independently() {
+        let source = r"\newcommand{\field}{\mathbb{R}}
+\newcommand{\pair}[2][x]{#1+#2}
+$\field$ {\renewcommand{\field}{\mathbb{C}} $\field$} $\field$
+\begin{align}a&=\pair{b}\label{one}\\c&=d\label{two}\end{align}
+\begin{equation}x=\eqref{two}\end{equation}";
+        let index = latex_reader::index(
+            source,
+            &Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        let formulas: Vec<_> = index
+            .events(source)
+            .filter_map(|e| match e.event {
+                latex_reader::Event::Math(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(formulas.len(), 5);
+        assert_ne!(formulas[0].context.hash(), formulas[1].context.hash());
+        assert_eq!(formulas[0].context.hash(), formulas[2].context.hash());
+        for formula in formulas.iter().rev() {
+            let rendered = render_with_latex(
+                &formula.prepared,
+                formula.display,
+                20.,
+                [255; 4],
+                &formula.context,
+            )
+            .unwrap();
+            assert!(rendered.body.width > 0);
+            if formula.display {
+                assert!(rendered.tag.is_some());
+            }
+        }
+        assert!(render(r"\field", false, 1, 20., [255; 4]).is_err());
+    }
+
+    #[test]
+    fn latex_macro_arity_and_optional_defaults_match_explicit_math() {
+        let source = r"\newcommand{\ignore}[1]{1}\newcommand{\pair}[2][x]{#1+#2}$x$";
+        let index = latex_reader::index(
+            source,
+            &Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        let context = index.macro_context(source.find('$').unwrap());
+        for (input, expected) in [
+            (r"\ignore{discard}", "1"),
+            (r"\pair{y}", "x+y"),
+            (r"\pair[z]{y}", "z+y"),
+        ] {
+            let actual = render_with_latex(input, false, 20., [255; 4], &context).unwrap();
+            let expected = render(expected, false, 1, 20., [255; 4]).unwrap();
+            assert_eq!(
+                (actual.body.width, actual.body.height),
+                (expected.body.width, expected.body.height)
+            );
+            assert_eq!(actual.body.rgba, expected.body.rgba, "{input}");
+        }
+    }
 
     #[test]
     fn renders_and_reports_errors() {

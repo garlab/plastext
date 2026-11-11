@@ -640,7 +640,7 @@ impl Workspace {
                                     view
                                 }))
                             }
-                            Opened::Text(source, index, language)
+                            Opened::Text(source, index, _)
                                 if path
                                     .extension()
                                     .is_some_and(|s| s.eq_ignore_ascii_case("tex")) =>
@@ -651,7 +651,7 @@ impl Workspace {
                                         source,
                                         index,
                                         style,
-                                        language,
+                                        markdown_settings,
                                         (this.root.clone(), this.tex_settings.clone()),
                                         cx,
                                     )
@@ -740,6 +740,11 @@ impl Workspace {
                     view.edit_by_default(cx);
                 });
             }
+            TabView::Tex(tex) => {
+                let document =
+                    plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
+                tex.update(cx, |view, cx| view.set_editing_document(document, cx));
+            }
             TabView::Markdown(markdown) => {
                 let document =
                     plastext_editor::EditingDocument::shared(path.clone(), self.open_options, cx);
@@ -786,22 +791,23 @@ impl Workspace {
                 cx.notify();
             })
         });
-        let links = if let TabView::Markdown(markdown) = &view {
-            Some(
-                cx.subscribe_in(markdown, window, |this, _, event, window, cx| {
-                    let MarkdownEvent::Open { path, fragment } = event;
-                    this.record_jump(cx);
-                    this.open(
-                        path.clone(),
-                        fragment.clone().map(Target::Anchor),
-                        window,
-                        cx,
-                    );
-                }),
-            )
-        } else {
-            None
+        let reading_view = match &view {
+            TabView::Markdown(markdown) => Some(markdown.clone()),
+            TabView::Tex(tex) => Some(tex.read(cx).rendered_view()),
+            _ => None,
         };
+        let links = reading_view.map(|markdown| {
+            cx.subscribe_in(&markdown, window, |this, _, event, window, cx| {
+                let MarkdownEvent::Open { path, fragment } = event;
+                this.record_jump(cx);
+                this.open(
+                    path.clone(),
+                    fragment.clone().map(Target::Anchor),
+                    window,
+                    cx,
+                );
+            })
+        });
         let pane_id = destination.pane;
         let pane = self.panes.get_mut(&pane_id).unwrap();
         let tab = Tab {

@@ -37,6 +37,7 @@ impl TabView {
         match self {
             Self::Text(view) => view.read(cx).editing_document(),
             Self::Markdown(view) => view.read(cx).editing_document(),
+            Self::Tex(view) => view.read(cx).editing_document(cx),
             _ => None,
         }
     }
@@ -186,10 +187,14 @@ impl TabView {
                 notice: view.read(cx).notice(),
                 summary: view.read(cx).summary(cx),
             },
-            Self::Tex(view) => TabStatus::Preview {
-                notice: view.read(cx).notice(cx),
-                summary: view.read(cx).summary(cx),
-            },
+            Self::Tex(view) => view
+                .read(cx)
+                .source_status(cx)
+                .map(TabStatus::Text)
+                .unwrap_or_else(|| TabStatus::Preview {
+                    notice: view.read(cx).notice(cx),
+                    summary: view.read(cx).summary(cx),
+                }),
             Self::Markdown(view) => view
                 .read(cx)
                 .source_status(cx)

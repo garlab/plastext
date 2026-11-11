@@ -19,6 +19,7 @@ plastext-git = { path = "crates/git" }
 plastext-markdown = { path = "crates/markdown" }
 plastext-math = { path = "crates/math" }
 katex-native = { version = "=0.1.0", features = ["raster"] }
+latex-reader = "=0.2.0"
 document-graphics = { version = "=0.1.9", features = ["sgf", "chess", "image-native"] }
 plastext-platform = { path = "crates/platform" }
 plastext-project = { path = "crates/project" }

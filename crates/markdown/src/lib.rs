@@ -5,6 +5,7 @@ mod cache;
 mod index;
 #[cfg(test)]
 mod index_tests;
+pub mod latex;
 mod links;
 mod math_blocks;
 mod metadata;

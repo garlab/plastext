@@ -41,7 +41,8 @@ pub struct Settings {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Tex {
-    /// Open TeX in preview; compilation still pauses when no preview is visible.
+    /// Open TeX in native Rendered mode; false opens Source. PDF compilation
+    /// starts only when PDF Preview is selected.
     pub preview: bool,
     /// Optional installed TeX Live pdfLaTeX executable. Never a project command.
     pub compiler: Option<PathBuf>,

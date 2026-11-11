@@ -24,7 +24,10 @@ no additional public crate or worker framework is needed.
 
 Math remains in `katex-native`. Markdown/HTML parsing, layout, navigation and
 icon-theme loading remain application concerns. TeX compilation stays with
-project/tool orchestration. Defer PDF extraction until another consumer needs
+project/tool orchestration. Native LaTeX semantics come from `latex-reader`;
+Plastext adapts its events directly to virtualized reading blocks. See
+[LaTeX reading](latex-reading.md) for modes and current bounds.
+Defer PDF extraction until another consumer needs
 it. Keep new backends optional and initialize them only when used.
 
 ## M3 editing
@@ -71,6 +74,10 @@ gutter markers and the Changes view remain in M4.
 
 ## M2 follow-ups
 
+- Extend native LaTeX rendering with unsaved included-file snapshots,
+  figure extension/graphics-path lookup, and richer typography. Local includes,
+  listings, saved-file refresh and root source maps are implemented.
+  Source, Rendered and PDF Preview remain separate modes.
 - Finish the [large-workload checks](m2-validation.md): local 10,000-frame
   Markdown and CSV runs now pass the 8 ms target. Reference M1 Air measurements
   and native PDF/TeX interaction review remain outstanding.

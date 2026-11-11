@@ -1,0 +1,56 @@
+\documentclass{article}
+\usepackage{amsmath,amsthm}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\pair}[2][x]{#1 + #2}
+\newtheorem{theorem}{Theorem}
+\title{Native LaTeX reading}
+\author{Example document}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Reading and editing}
+Choose Source in one pane and Rendered in another. Edit this paragraph:
+the rendered pane updates before you save. Text can be \textbf{bold},
+\emph{emphasized}, or \texttt{monospaced}. Inline math uses the document's
+macros: $f : \R \to \R$ and $\pair{y}$.
+
+\begin{quote}
+Rendered mode reflows to the pane. PDF Preview remains available for exact
+typesetting of saved files.
+\end{quote}
+
+\section{Equations}
+\begin{align}
+  (x+y)^2 &= x^2 + 2xy + y^2 \label{square} \\
+  x^2-y^2 &= (x-y)(x+y) \label{difference}
+\end{align}
+Equation \eqref{square} and equation \eqref{difference} keep their numbers
+when you scroll or change panes.
+
+\begin{theorem}[An example]
+For every $x \in \R$, $x^2 \geq 0$.
+\end{theorem}
+\begin{proof}
+This text and its math are laid out natively.
+\end{proof}
+
+\section{Lists and tables}
+\begin{enumerate}
+  \item Source edits the shared document.
+  \item Rendered follows unsaved changes.
+  \item PDF Preview compiles saved files.
+\end{enumerate}
+
+\begin{tabular}{lr}
+  Mode & Compiler required \\ \hline
+  Source & No \\
+  Rendered & No \\
+  PDF Preview & Yes \\
+\end{tabular}
+
+\begin{verbatim}
+Commands inside verbatim stay literal: \section{Example} and $x^2$.
+\end{verbatim}
+\end{document}

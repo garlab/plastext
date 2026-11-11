@@ -18,8 +18,9 @@ and mostly need to read, review and tweak it.
 - **CSV/TSV** in paged tables.
 - **Go and chess records**: [SGF](docs/sgf.md) and [PGN/FEN](docs/chess.md)
   open as interactive boards with move and variation navigation.
-- **PDF** in an isolated, tiled preview with a Binary toggle, and **TeX** through
-  an installed pdfLaTeX; see [PDF and TeX preview](docs/pdf-and-tex-preview.md).
+- **PDF** in an isolated, tiled preview with a Binary toggle. **TeX** offers
+  editable Source, native Rendered mode with live unsaved updates, and PDF Preview
+  through an installed pdfLaTeX; see [TeX modes](docs/latex-reading.md).
 
 Status: editing (milestone M3) is in progress, and Git review follows in M4. See
 [M3 progress](docs/m3-progress.md), [M2 progress and limits](docs/m2-progress.md),
@@ -65,7 +66,7 @@ build alongside the installed app.
 | `←` / `→` in SGF/chess | Cycle variations at the same tree depth |
 | `⌘↑` / `⌘↓` in SGF/chess | Previous / next fork (or start / end) |
 | `⇧⌘V` in PDF | Toggle Preview / Binary, preserving each position |
-| `⇧⌘V` in TeX | Toggle Source / Preview; preview opens automatically with installed pdfLaTeX |
+| `⇧⌘V` in TeX | Toggle Source / selected reading mode (Rendered or PDF Preview) |
 | `⌘R` in TeX | Retry preview and reload advanced TeX settings |
 | `←` / `→`, `Home` / `End` in PDF preview | Previous / next page, first / last page |
 | `⌃G` in PDF preview | Jump to a page number |
@@ -103,11 +104,12 @@ indentation otherwise. Large files color a 64 KiB prefix first, then the full
 file in the background. HTML highlights JavaScript in `<script>` (including
 modules and JSON data) and CSS in `<style>`.
 
-**TeX** opens in preview with an installed TeX Live pdfLaTeX. Roots and local
-inputs are detected automatically, and external saves update the preview. Split
-with `⌘D` or `⇧⌘D`, then switch either pane to Source for side-by-side reading.
-Advanced overrides live in **Settings…** and `.plastext/tex.toml`. See
-[setup, behavior and limits](docs/pdf-and-tex-preview.md#local-tex-increment).
+**TeX** opens in **Rendered** mode without a TeX installation. Split with `⌘D`
+or `⇧⌘D` and choose **Source** in either pane: unsaved edits update the rendered
+pane after a short debounce. Save explicitly with `⌘S`. **PDF Preview** retains
+the installed pdfLaTeX workflow for exact typesetting of saved files, including
+root/input discovery and **Settings…** overrides. See [native rendering and its
+limits](docs/latex-reading.md) and [PDF setup](docs/pdf-and-tex-preview.md#local-tex-increment).
 
 ## Configuration
 

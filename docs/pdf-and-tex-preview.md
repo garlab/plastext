@@ -9,8 +9,10 @@ PDF files open in Preview, with a persistent Preview/Binary switch and
 Cmd+Shift+V shortcut. Binary uses the existing hex reader. Each mode retains its
 position. Preview failure must never prevent inspecting the file's bytes.
 
-TeX files open in Preview and offer a Source/Preview switch. Preview compiles a document to PDF locally;
-formula rendering alone cannot reproduce a complete LaTeX document.
+TeX files offer **Source**, **Rendered**, and **PDF Preview**. The default
+[Rendered mode](latex-reading.md) reads LaTeX natively for fast editing feedback.
+PDF Preview compiles saved files locally for exact typesetting. Both reading
+modes remain available; native rendering does not replace PDF compilation.
 
 ## Performance and isolation
 
@@ -207,13 +209,14 @@ work; headless worker measurements do not certify scrolling or GPU memory. The a
 
 ## Local TeX increment
 
-Open a `.tex` file to see its preview automatically. Plastext detects an installed
+Select **PDF Preview** in a `.tex` file. Plastext detects an installed
 MacTeX/BasicTeX pdfLaTeX, the root document and local inputs. There is no enable or
 build button in the normal workflow. Nothing is installed or downloaded; macOS
 and a TeX Live installation with the document's packages/fonts are required.
-A missing compiler leaves Source available and explains the dependency.
+A missing compiler leaves Source and Rendered available and explains the dependency.
 
-Use **Source/Preview** (Cmd+Shift+V) to switch modes. For source and preview side
+Use the three mode buttons, or Cmd+Shift+V to toggle Source and the selected
+reading mode. For source and preview side
 by side, split with Cmd+D or Cmd+Shift+D and switch either pane to Source. Splits
 share a compiler session; modes and reading positions are independent. Hiding
 all previews stops compilation automatically. After ten seconds of active work,
@@ -259,7 +262,7 @@ Personal defaults belong in Plastext's usual `config.toml` (restart to apply):
 
 ```toml
 [tex]
-preview = true # false opens Source first, with no compilation until Preview
+preview = true # opens Rendered; false opens Source. Only PDF Preview compiles.
 # compiler = "/path/to/texlive/bin/pdflatex"
 ```
 

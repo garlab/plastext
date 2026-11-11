@@ -20,7 +20,7 @@ pub(super) const SLOT_CHAR: char = 'l';
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct FormulaKey {
     tex: String,
-    macros: plastext_markdown::MacroContext,
+    macros: MacroKey,
     display: bool,
     /// The first automatic equation number, or 0 if it numbers none.
     first_number: u32,
@@ -29,6 +29,22 @@ pub(super) struct FormulaKey {
     scale: u32,
     /// Surrounding text size in logical pixels, in thousandths (including zoom).
     font_size: u32,
+}
+
+/// Cache identities must not keep the definition arenas of old LaTeX edits
+/// alive. The actual context is held only by the current index and workers.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum MacroKey {
+    Markdown(plastext_markdown::MacroContext),
+    Latex(u128, bool),
+}
+impl From<plastext_markdown::MacroContext> for MacroKey {
+    fn from(context: plastext_markdown::MacroContext) -> Self {
+        match context.latex() {
+            Some(latex) => Self::Latex(latex.hash(), latex.is_incomplete()),
+            None => Self::Markdown(context),
+        }
+    }
 }
 
 /// A rendered piece of a formula, in logical pixels.
@@ -184,14 +200,14 @@ impl MarkdownView {
         for span in block.spans.iter().filter(|span| span.style.math) {
             let key = FormulaKey {
                 tex: block.text[span.range.clone()].to_owned(),
-                macros: self.document.macros.at(span.source.start),
+                macros: self.document.macro_context(span.source.start).into(),
                 display: false,
                 first_number: 0,
                 color: channels(inline_color(&span.style, theme)),
                 scale: scale_key(scale),
                 font_size: size_key,
             };
-            self.request_formula(&key, ix, scale, cx);
+            self.request_formula(&key, span.source.start, ix, scale, cx);
         }
     }
 
@@ -208,7 +224,7 @@ impl MarkdownView {
         let metrics = self.formulas.inline.get(&size_key)?;
         let key = FormulaKey {
             tex: tex.to_owned(),
-            macros: self.document.macros.at(source),
+            macros: self.document.macro_context(source).into(),
             display: false,
             first_number: 0,
             color: channels(color),
@@ -333,7 +349,7 @@ impl MarkdownView {
         let scale = window.scale_factor();
         // Numbered formulas wait until their first number is known.
         let first_number = if plastext_math::may_number(&block.text)
-            || !self.document.macros.at(block.source.start).is_empty()
+            || !self.document.macro_context(block.source.start).is_empty()
         {
             self.formulas
                 .numbering
@@ -344,7 +360,7 @@ impl MarkdownView {
         };
         let key = first_number.map(|first_number| FormulaKey {
             tex: block.text.to_string(),
-            macros: self.document.macros.at(block.source.start),
+            macros: self.document.macro_context(block.source.start).into(),
             display: true,
             first_number,
             color: channels(theme.text),
@@ -352,7 +368,7 @@ impl MarkdownView {
             font_size: scale_key(BODY_SIZE * self.zoom),
         });
         if let Some(key) = &key {
-            self.request_formula(key, ix, scale, cx);
+            self.request_formula(key, block.source.start, ix, scale, cx);
         }
         // Without the newlines that usually surround `$$` math.
         let start = block.text.len() - block.text.trim_start().len();
@@ -413,7 +429,14 @@ impl MarkdownView {
         }
     }
 
-    fn request_formula(&mut self, key: &FormulaKey, ix: usize, scale: f32, cx: &mut Context<Self>) {
+    fn request_formula(
+        &mut self,
+        key: &FormulaKey,
+        source: usize,
+        ix: usize,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) {
         let rows = self.formulas.rows.entry(key.clone()).or_default();
         if !rows.contains(&ix) && rows.len() < 128 {
             rows.push(ix);
@@ -431,17 +454,28 @@ impl MarkdownView {
         self.formulas.order.push_back(key.clone());
         let rendering = cx.background_executor().spawn({
             let key = key.clone();
+            let macros = self.document.macro_context(source);
             let body_size = key.font_size as f32 / 1000.;
             async move {
                 let px_per_em = body_size * plastext_math::SCALE * scale;
-                let rendered = plastext_math::render_with_macros(
-                    &key.tex,
-                    key.display,
-                    key.first_number.max(1),
-                    px_per_em,
-                    key.color,
-                    key.macros.sources()?,
-                )?;
+                let rendered = if let Some(macros) = macros.latex() {
+                    plastext_math::render_with_latex(
+                        &key.tex,
+                        key.display,
+                        px_per_em,
+                        key.color,
+                        macros,
+                    )
+                } else {
+                    plastext_math::render_with_macros(
+                        &key.tex,
+                        key.display,
+                        key.first_number.max(1),
+                        px_per_em,
+                        key.color,
+                        macros.sources()?,
+                    )
+                }?;
                 Ok(Formula {
                     body: image(rendered.body, scale)?,
                     tag: rendered.tag.map(|tag| image(tag, scale)).transpose()?,
