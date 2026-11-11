@@ -282,6 +282,24 @@ struct Tab {
     _links: Option<Subscription>,
 }
 
+struct TabPathTooltip(SharedString);
+impl Render for TabPathTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::get(window, cx);
+        div()
+            .max_w((window.viewport_size().width - px(32.)).min(px(640.)))
+            .p_2()
+            .rounded_sm()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .text_color(theme.text)
+            .text_xs()
+            .whitespace_normal()
+            .child(self.0.clone())
+    }
+}
+
 impl Pane {
     fn active_tab(&self) -> Option<&Tab> {
         self.tabs.get(self.active?)
@@ -1775,6 +1793,11 @@ impl Workspace {
             .border_color(theme.border)
             .children(pane.tabs.iter().enumerate().map(|(index, tab)| {
                 let active = pane.active == Some(index);
+                let path = (!tab
+                    .view
+                    .editing_document(cx)
+                    .is_some_and(|doc| doc.read(cx).is_untitled()))
+                .then(|| tab.path.clone());
                 div()
                     .id(("tab", index))
                     .h_full()
@@ -1787,6 +1810,16 @@ impl Workspace {
                     .border_r_1()
                     .border_color(theme.border)
                     .cursor_pointer()
+                    .when_some(path, |tab, path| {
+                        tab.tooltip(move |_, cx| {
+                            let full_path =
+                                std::path::absolute(&path).unwrap_or_else(|_| path.clone());
+                            cx.new(|_| {
+                                TabPathTooltip(full_path.to_string_lossy().into_owned().into())
+                            })
+                            .into()
+                        })
+                    })
                     .when(active, |tab| tab.bg(theme.background))
                     .text_color(if active && focused_pane {
                         theme.text
