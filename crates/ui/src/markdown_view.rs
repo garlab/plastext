@@ -27,6 +27,8 @@ mod editing;
 mod find;
 mod highlights;
 mod inputs;
+#[cfg(test)]
+mod layout_tests;
 mod math;
 mod metadata;
 mod profile;
@@ -1357,6 +1359,8 @@ impl MarkdownView {
             BlockKind::Heading { level, id } => {
                 let anchor = id.clone();
                 div()
+                    .id(("md-heading", ix))
+                    .debug_selector(move || format!("md-heading-{ix}"))
                     .flex()
                     .items_center()
                     .gap(px(8. * self.zoom))
@@ -1365,18 +1369,28 @@ impl MarkdownView {
                     .when(*level <= 2, |d| d.border_b_1().border_color(theme.border))
                     .text_size(px(math::text_size(&block.kind) * self.zoom))
                     .font_weight(FontWeight::BOLD)
-                    .child(self.rich_text(
-                        &block,
-                        0..block.text.len(),
-                        (ix, 0),
-                        false,
-                        theme,
-                        window,
-                        cx,
-                    ))
+                    .child(
+                        div()
+                            .id(("md-heading-text", ix))
+                            .debug_selector(move || format!("md-heading-text-{ix}"))
+                            // Let the text shrink below its intrinsic width and
+                            // wrap, while keeping short headings beside their anchor.
+                            .min_w_0()
+                            .flex_shrink()
+                            .child(self.rich_text(
+                                &block,
+                                0..block.text.len(),
+                                (ix, 0),
+                                false,
+                                theme,
+                                window,
+                                cx,
+                            )),
+                    )
                     .child(
                         div()
                             .id(("md-anchor", ix))
+                            .debug_selector(move || format!("md-anchor-{ix}"))
                             .flex_none()
                             .text_size(px(14. * self.zoom))
                             .text_color(theme.text_muted)
