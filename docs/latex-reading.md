@@ -15,6 +15,11 @@ Click a mode; Cmd+Shift+V toggles Source and the last selected reading mode.
 Split with Cmd+D or Cmd+Shift+D to edit
 Source beside Rendered. Each pane retains its own mode and reading position;
 all panes share edits, undo, explicit saving and dirty-file close protection.
+Enable **View > Synchronize Scrolling** (or **Sync Scroll** in the status bar) to
+link Source and Rendered panes showing the same file. It is off by default and
+supports more than two panes. Source alignment uses the existing block source
+map; two Rendered panes can also follow positions inside included files. PDF
+Preview stays independent until a separate SyncTeX integration is available.
 The [example document](fixtures/latex-reading.tex) exercises the three modes.
 
 ## Live updates

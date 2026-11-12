@@ -17,6 +17,7 @@ use gpui::App;
 
 pub use document::{DiskChange, EditingDocument, configure_editing};
 pub use hex_view::{HexView, HexViewStatus};
+pub use scroll::ScrollAnchor;
 pub use text_input::{TextInput, TextInputEvent};
 pub use text_view::{TextStyle, TextView, TextViewStatus, focused_word_wrap};
 pub use theme::{Theme, Themes};

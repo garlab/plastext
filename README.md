@@ -83,6 +83,9 @@ clicked tab open, and Close Saved Files keeps untitled drafts, modified files an
 files with unresolved disk changes. Right-click a file or folder for **Copy Path**
 or **Copy Relative Path**. Drag the divider beside the Files/Search pane or
 between split panes to resize them.
+**View > Synchronize Scrolling** links panes showing the same file, including
+Markdown Source/Preview and TeX Source/Rendered. It starts off; the **Sync Scroll**
+status bar button also toggles it. Carets and selections remain independent.
 
 **Git status** colors files and folders in the tree and filenames in tabs: green
 for staged changes, amber for unstaged changes, purple for both, and red for

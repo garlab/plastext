@@ -47,6 +47,7 @@ mod menu_tests;
 #[cfg(test)]
 mod new_file_tests;
 mod opening;
+mod scroll_sync;
 pub(crate) mod welcome;
 pub use editing::request_quit;
 use opening::{Destination, OpenKind, Openings, Placement};
@@ -59,6 +60,7 @@ actions!(
         NewFile,
         SplitRight,
         SplitDown,
+        ToggleScrollSync,
         OpenQuickOpen,
         GoToLine,
         SearchProject,
@@ -153,6 +155,7 @@ pub fn init(cx: &mut App) {
 /// A window's root view: one project with its file tree, panes of tabs and
 /// status bar (spec §4.1, PRJ-1).
 pub struct Workspace {
+    scroll_sync: scroll_sync::State,
     git: git::State,
     disk: external::DiskState,
     root: Option<PathBuf>,
@@ -315,6 +318,7 @@ impl Workspace {
     ) -> Self {
         plastext_editor::configure_editing(settings.editor.clone(), cx);
         let mut subscriptions = vec![
+            scroll_sync::observe_keys(cx),
             cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
             cx.observe_window_activation(window, |this, window, _| {
                 this.git.set_active(window.is_window_active())
@@ -382,6 +386,7 @@ impl Workspace {
             tree
         });
         Self {
+            scroll_sync: scroll_sync::State::default(),
             disk: external::DiskState::new(window, cx),
             git: git::State::new(root.clone(), cx),
             root,
@@ -778,7 +783,10 @@ impl Workspace {
                 |name| name.to_string_lossy().into_owned(),
             )
             .into();
-        let status = view.observe(cx);
+        let status = view.observe(cx, |this, cx| {
+            this.queue_scroll_sync(cx);
+            cx.notify();
+        });
         let editing_status = view.editing_document(cx).map(|document| {
             cx.observe(&document, |this, document, cx| {
                 let path = document.read(cx).path().to_owned();
@@ -896,6 +904,7 @@ impl Workspace {
             self.recent.remove(0);
         }
         self.active_pane = pane;
+        self.lead_scroll(pane, cx);
         if focus_editor {
             self.sync_tree_selection(cx);
         }
@@ -904,6 +913,7 @@ impl Workspace {
 
     /// Makes `pane` the one new files open in, without moving focus.
     fn focus_pane(&mut self, pane: usize, cx: &mut Context<Self>) {
+        self.lead_scroll(pane, cx);
         if self.active_pane != pane {
             self.active_pane = pane;
             self.sync_tree_selection(cx);
@@ -1608,6 +1618,7 @@ impl Workspace {
     /// the same position.
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         self.divider_drag = None;
+        let original_pane = self.active_pane;
         let new_pane = self.next_pane;
         self.next_pane += 1;
         if !self.layout.split(self.active_pane, axis, new_pane) {
@@ -1634,6 +1645,9 @@ impl Workspace {
             ),
             None => cx.notify(),
         }
+        // A duplicate may still be parsing and only have a coarse initial
+        // position. Align it to the existing pane, not the other way around.
+        self.lead_scroll(original_pane, cx);
     }
 
     fn render_layout(&self, layout: &Layout, theme: Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -1756,9 +1770,12 @@ impl Workspace {
         };
         div()
             .id(("pane", id))
+            .debug_selector(|| format!("pane-{id}"))
             .size_full()
             .flex()
             .flex_col()
+            .capture_any_mouse_down(cx.listener(move |this, _, _, cx| this.lead_scroll(id, cx)))
+            .on_scroll_wheel(cx.listener(move |this, _, _, cx| this.lead_scroll(id, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| this.focus_pane(id, cx)),
@@ -1927,6 +1944,14 @@ impl Workspace {
             .children(view_message)
             .children(self.git.label())
             .child(div().flex_1())
+            .when(self.panes.len() > 1 || self.scroll_sync.enabled, |d| {
+                d.child(div()
+                    .id("scroll-sync")
+                    .cursor_pointer()
+                    .text_color(if self.scroll_sync.enabled { theme.text } else { theme.text_muted })
+                    .child(if self.scroll_sync.enabled { "Sync Scroll: On" } else { "Sync Scroll: Off" })
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_scroll_sync(&ToggleScrollSync, window, cx))))
+            })
             .when(self.zoom != Zoom::default(), |d| {
                 d.child(format!("{}%", self.zoom.percent()))
             })
@@ -2000,6 +2025,9 @@ impl Render for Workspace {
         self.update_disk_watches(cx);
         for pane in self.panes.values() {
             for (index, tab) in pane.tabs.iter().enumerate() {
+                if self.scroll_sync.enabled && pane.active != Some(index) {
+                    tab.view.cancel_scroll_sync(cx);
+                }
                 tab.view.set_visible(pane.active == Some(index), cx);
             }
         }
@@ -2051,6 +2079,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
+            .on_action(cx.listener(Self::toggle_scroll_sync))
             .on_action(cx.listener(Self::open_quick_open))
             .on_action(cx.listener(Self::go_to_line))
             .on_action(cx.listener(Self::search_project))
@@ -2126,6 +2155,23 @@ impl Render for Workspace {
             })
             .when(!welcome || self.notice.is_some(), |view| {
                 view.child(self.render_status_bar(theme, cx))
+            })
+            .when(self.scroll_sync.enabled, |view| {
+                // Virtualized readers finalize measured heights and clamp their
+                // scroll position during layout, after their change notification.
+                // Reconcile that final position without requesting another frame
+                // unless a follower actually needs to move.
+                let weak = cx.entity().downgrade();
+                view.child(
+                    canvas(
+                        |_, _, _| (),
+                        move |_, _, _, cx| {
+                            weak.update(cx, |this, cx| this.queue_scroll_sync(cx)).ok();
+                        },
+                    )
+                    .absolute()
+                    .size_0(),
+                )
             })
             .when_some(self.divider_drag, |d, drag| {
                 d.child(self.divider_drag_overlay(drag, cx))

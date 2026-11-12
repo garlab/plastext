@@ -51,6 +51,33 @@ pub struct TexView {
     settings_open: bool,
 }
 impl TexView {
+    pub(crate) fn cancel_scroll_sync(&mut self, cx: &mut Context<Self>) {
+        self.source
+            .update(cx, |view, cx| view.cancel_scroll_sync(cx));
+    }
+
+    pub(crate) fn scroll_revision(&self, cx: &App) -> Option<crate::scroll_sync::Revision> {
+        (self.mode != Mode::Pdf).then(|| self.source.read(cx).scroll_revision())
+    }
+
+    pub(crate) fn scroll_position(&self, cx: &App) -> Option<crate::scroll_sync::Position> {
+        if self.mode == Mode::Pdf {
+            return None;
+        }
+        self.source.read(cx).scroll_position(cx)
+    }
+
+    pub(crate) fn sync_scroll(
+        &mut self,
+        position: crate::scroll_sync::Position,
+        cx: &mut Context<Self>,
+    ) {
+        if self.mode != Mode::Pdf {
+            self.source
+                .update(cx, |view, cx| view.sync_scroll(position, cx));
+        }
+    }
+
     pub fn new(
         path: PathBuf,
         source: Arc<FileSource>,

@@ -12,6 +12,7 @@ mod pdf_view;
 mod picker;
 mod quick_open;
 mod record_view;
+mod scroll_sync;
 mod search_panel;
 mod tab_view;
 mod tex_view;

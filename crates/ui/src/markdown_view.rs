@@ -32,6 +32,7 @@ mod layout_tests;
 mod math;
 mod metadata;
 mod profile;
+mod scroll_sync;
 mod selection;
 mod sgf;
 mod visibility;
@@ -119,6 +120,7 @@ pub struct MarkdownView {
     notice: Option<SharedString>,
     pending_offset: Option<usize>,
     pending_anchor: Option<String>,
+    scroll_sync: Option<scroll_sync::Pending>,
     expanded: HashSet<usize>,
     images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
     image_cancels: HashMap<String, Arc<AtomicBool>>,
@@ -258,7 +260,11 @@ impl MarkdownView {
         let list = ListState::new(0, ListAlignment::Top, px(300.));
         let weak = cx.entity().downgrade();
         list.set_scroll_handler(move |_, _, cx| {
-            weak.update(cx, |_, cx| cx.notify()).ok();
+            weak.update(cx, |this, cx| {
+                this.scroll_sync = None;
+                cx.notify();
+            })
+            .ok();
         });
         let owner = cx.entity_id();
         cx.on_release(move |this, cx| {
@@ -325,6 +331,7 @@ impl MarkdownView {
             notice: None,
             pending_offset: None,
             pending_anchor: None,
+            scroll_sync: None,
             expanded: HashSet::new(),
             images: HashMap::new(),
             image_cancels: HashMap::new(),
@@ -1643,6 +1650,7 @@ impl Focusable for MarkdownView {
 }
 impl Render for MarkdownView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.apply_scroll_sync(window, cx);
         if self.rendered
             && let Some(document) = self.editing_document.clone()
             && document

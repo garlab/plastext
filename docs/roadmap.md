@@ -63,8 +63,9 @@ Next, in order:
    and injected save failures. Debounced external reloads and conflict choices
    are implemented, as is New File. Finish content anchoring on the first reload
    of preview-only documents, which currently retains the reading byte offset.
-3. Add continuous Markdown source/preview scroll sync, double-click-to-source, tail mode
-   and CLI `--wait`; validate `$EDITOR`, fuzzing and typing latency.
+3. Add double-click-to-source, tail mode and CLI `--wait`; validate `$EDITOR`,
+   fuzzing and typing latency. Opt-in synchronized scrolling is implemented for
+   text/code, Markdown Source/Preview and TeX Source/Rendered across split panes.
 
 M4 Git review and M5 release hardening follow M3. The first
 [Git status increment](git-status.md) now colors tracked filenames in the tree

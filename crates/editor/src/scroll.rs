@@ -2,6 +2,39 @@
 
 use gpui::{Pixels, px};
 
+/// A viewport position within a source span. Fractions keep linked views smooth
+/// even when their rows have different heights or wrap at different widths.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollAnchor {
+    pub start: u64,
+    pub end: u64,
+    pub fraction: f32,
+}
+impl ScrollAnchor {
+    pub fn new(start: u64, end: u64, fraction: f32) -> Self {
+        Self {
+            start,
+            end: end.max(start),
+            fraction: if fraction.is_finite() {
+                fraction.clamp(0., 1.)
+            } else {
+                0.
+            },
+        }
+    }
+    pub fn offset(self) -> u64 {
+        self.start
+            .saturating_add(((self.end - self.start) as f64 * self.fraction as f64) as u64)
+    }
+    pub fn fraction_in(self, start: u64, end: u64) -> f32 {
+        if end <= start {
+            return 0.;
+        }
+        let position = self.start as f64 + (self.end - self.start) as f64 * self.fraction as f64;
+        ((position - start as f64) / (end - start) as f64).clamp(0., 1.) as f32
+    }
+}
+
 /// A scroll position: the row at the top, and how much of it is scrolled
 /// out of view, in `0..line_height`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,6 +103,17 @@ pub(crate) fn scroll<Row: Copy, E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchors_map_fractional_positions_across_different_rows() {
+        let anchor = ScrollAnchor::new(100, 200, 0.75);
+        assert_eq!(anchor.offset(), 175);
+        assert_eq!(anchor.fraction_in(150, 200), 0.5);
+        assert_eq!(anchor.fraction_in(200, 210), 0.);
+        assert_eq!(anchor.fraction_in(120, 160), 1.);
+        assert_eq!(anchor.fraction_in(200, 200), 0.);
+        assert_eq!(ScrollAnchor::new(100, 50, f32::NAN).offset(), 100);
+    }
 
     const LINE: Pixels = px(20.);
     const LAST: u32 = 9;

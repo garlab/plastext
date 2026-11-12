@@ -33,6 +33,43 @@ pub(crate) enum TabStatus {
 }
 
 impl TabView {
+    pub(crate) fn cancel_scroll_sync(&self, cx: &mut App) {
+        match self {
+            Self::Text(view) => view.update(cx, |view, _| view.cancel_scroll_sync()),
+            Self::Markdown(view) => view.update(cx, |view, cx| view.cancel_scroll_sync(cx)),
+            Self::Tex(view) => view.update(cx, |view, cx| view.cancel_scroll_sync(cx)),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn scroll_revision(&self, cx: &App) -> Option<crate::scroll_sync::Revision> {
+        use crate::scroll_sync::Revision;
+        match self {
+            Self::Text(_) => Some(Revision::Source),
+            Self::Markdown(view) => Some(view.read(cx).scroll_revision()),
+            Self::Tex(view) => view.read(cx).scroll_revision(cx),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn scroll_position(&self, cx: &App) -> Option<crate::scroll_sync::Position> {
+        match self {
+            Self::Text(view) => view.read(cx).scroll_anchor().map(Into::into),
+            Self::Markdown(view) => view.read(cx).scroll_position(cx),
+            Self::Tex(view) => view.read(cx).scroll_position(cx),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn sync_scroll(&self, position: crate::scroll_sync::Position, cx: &mut App) {
+        match self {
+            Self::Text(view) => view.update(cx, |view, cx| view.sync_scroll(position.source, cx)),
+            Self::Markdown(view) => view.update(cx, |view, cx| view.sync_scroll(position, cx)),
+            Self::Tex(view) => view.update(cx, |view, cx| view.sync_scroll(position, cx)),
+            _ => {}
+        }
+    }
+
     pub fn editing_document(&self, cx: &App) -> Option<Entity<plastext_editor::EditingDocument>> {
         match self {
             Self::Text(view) => view.read(cx).editing_document(),
@@ -215,16 +252,20 @@ impl TabView {
     }
 
     /// Re-renders the observer whenever the view changes.
-    pub fn observe<T: 'static>(&self, cx: &mut Context<T>) -> Subscription {
+    pub fn observe<T: 'static>(
+        &self,
+        cx: &mut Context<T>,
+        mut changed: impl FnMut(&mut T, &mut Context<T>) + 'static,
+    ) -> Subscription {
         match self {
-            Self::Text(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Hex(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Markdown(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Image(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Csv(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Pdf(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Tex(view) => cx.observe(view, |_, _, cx| cx.notify()),
-            Self::Record(view) => cx.observe(view, |_, _, cx| cx.notify()),
+            Self::Text(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Hex(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Markdown(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Image(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Csv(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Pdf(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Tex(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
+            Self::Record(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
         }
     }
 

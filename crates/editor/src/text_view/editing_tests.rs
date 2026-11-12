@@ -74,6 +74,33 @@ fn content(cx: &TestAppContext, view: &Entity<TextView>) -> String {
 }
 
 #[gpui::test]
+fn synchronized_scroll_keeps_selections_and_maps_different_wrapping(cx: &mut TestAppContext) {
+    let text = "abcdefghijklmnopqrstuvwxyz\n".repeat(100);
+    let (_dir, a, b) = setup(cx, text.as_bytes(), false);
+    send(cx, &b, Input::Selection(BufferSelection::new(2, 6)));
+    cx.update(|cx| {
+        a.update(cx, |view, _| {
+            view.wrapping.configure(Some(8));
+            view.top = 27 * 20 + 8;
+            view.top_offset = view.line_height * 0.5;
+        });
+        let anchor = a.read(cx).scroll_anchor().unwrap();
+        b.update(cx, |view, cx| {
+            let selection = view.selection;
+            view.wrapping.configure(Some(12));
+            view.sync_scroll(anchor, cx);
+            assert_eq!(view.top, 27 * 20 + 12);
+            assert_eq!(view.top_offset, px(0.));
+            assert_eq!(
+                view.selection.map(|s| (s.anchor, s.head)),
+                selection.map(|s| (s.anchor, s.head))
+            );
+            assert_eq!(view.scroll_anchor().unwrap().offset(), anchor.offset());
+        });
+    });
+}
+
+#[gpui::test]
 fn split_panes_share_edits_and_history(cx: &mut TestAppContext) {
     let (_dir, a, b) = setup(cx, b"abc\n", false);
     send(cx, &b, Input::Selection(BufferSelection::caret(3)));

@@ -220,6 +220,7 @@ pub struct TextView {
     /// A 1-based line to scroll to once the index reaches it.
     pending_line: Option<u64>,
     pending_jump: Option<Jump>,
+    pending_scroll_sync: Option<crate::ScrollAnchor>,
     loading: Option<Task<()>>,
     error: Option<SharedString>,
     notice: Option<SharedString>,
@@ -498,6 +499,7 @@ impl TextView {
             visible_len: 0,
             pending_line: None,
             pending_jump: None,
+            pending_scroll_sync: None,
             loading: None,
             error: None,
             notice: None,
@@ -737,6 +739,55 @@ impl TextView {
     /// The byte offset of the row at the top of the view.
     pub fn position(&self) -> u64 {
         self.top
+    }
+
+    pub fn scroll_anchor(&self) -> Option<crate::ScrollAnchor> {
+        if self.pending_scroll_sync.is_some() {
+            return None;
+        }
+        let end = self
+            .wrapping
+            .end(&self.source, self.top, self.style.tab_size)
+            .ok()?;
+        Some(crate::ScrollAnchor::new(
+            self.top,
+            end,
+            f32::from(self.top_offset) / f32::from(self.line_height.max(px(1.))),
+        ))
+    }
+
+    pub fn cancel_scroll_sync(&mut self) {
+        self.pending_scroll_sync = None;
+    }
+
+    /// Move only the viewport. Selections, focus and undo history are untouched.
+    pub fn sync_scroll(&mut self, anchor: crate::ScrollAnchor, cx: &mut Context<Self>) {
+        self.pending_line = None;
+        self.pending_jump = None;
+        self.pending_scroll_sync = Some(anchor);
+        self.apply_scroll_sync(cx);
+        cx.notify();
+    }
+
+    fn apply_scroll_sync(&mut self, cx: &mut Context<Self>) {
+        let Some(anchor) = self.pending_scroll_sync else {
+            return;
+        };
+        let offset = anchor.offset().min(self.source.len());
+        self.folds.reveal(offset);
+        let target = self.visual_row_start(offset).and_then(|top| {
+            self.wrapping
+                .end(&self.source, top, self.style.tab_size)
+                .map(|end| (top, end))
+        });
+        match target {
+            Ok((top, end)) => {
+                self.top = top;
+                self.top_offset = self.line_height * anchor.fraction_in(top, end);
+                self.pending_scroll_sync = None;
+            }
+            Err(error) => self.handle_read_error(error, cx),
+        }
     }
 
     /// Brings the row containing `offset` to the top.
@@ -1439,6 +1490,7 @@ impl TextView {
 
     /// Scrolls down by `delta` (up if negative), a row at a time.
     fn scroll_by(&mut self, delta: Pixels, cx: &mut Context<Self>) {
+        self.pending_scroll_sync = None;
         self.pending_line = None;
         self.pending_jump = None;
         let (source, folds) = (&*self.source, &self.folds);
@@ -1461,6 +1513,7 @@ impl TextView {
     }
 
     fn jump(&mut self, jump: Jump, cx: &mut Context<Self>) {
+        self.pending_scroll_sync = None;
         self.pending_jump = Some(jump);
         self.apply_pending_jump(cx);
         cx.notify();
@@ -1637,11 +1690,15 @@ impl TextView {
                 .saturating_sub(1)
                 .max(1),
         );
-        if self.wrapping.configure(wrap_columns) && self.pending_jump.is_none() {
+        if self.wrapping.configure(wrap_columns)
+            && self.pending_jump.is_none()
+            && self.pending_scroll_sync.is_none()
+        {
             self.pending_jump = Some(Jump::Offset(self.top));
         }
         self.apply_pending_line(cx);
         self.apply_pending_jump(cx);
+        self.apply_scroll_sync(cx);
         self.reveal_caret_x(text_width);
         let first_column = (self.scroll_x / char_width) as usize;
         let shift = char_width * first_column as f32 - self.scroll_x;

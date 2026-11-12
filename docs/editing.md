@@ -69,14 +69,27 @@ caret there. Cut and Paste are disabled in read-only views. Large copies run on
 a worker within the existing 64 MB text limit.
 
 Split panes share content, saved state and undo history, with independent
-selections and scroll positions. Find searches the current unsaved version.
+selections and, by default, independent scroll positions. **View > Synchronize
+Scrolling** links visible panes showing the same file; the **Sync Scroll** status
+bar button toggles the same option. It starts off in each window and works with
+two or more panes. Scrolling or navigating in either pane makes it lead, without
+moving the other panes' carets, selections or keyboard focus. Hidden tabs and
+different files stay independent.
+
+Text/code, Markdown Source/Preview and TeX Source/Rendered share source anchors.
+Rendered views follow the corresponding block and fractional position within it;
+different wrapping and non-text blocks make this an approximate visual alignment.
+Updates use existing view notifications and indexes, with no polling or additional
+document scan. Compiled PDF Preview and other asset views remain independent.
+
+Find searches the current unsaved version.
 Markdown Preview reads the unsaved version. Switching back to Preview refreshes
 it immediately; a visible preview in another pane updates after a 250 ms pause
 in typing. Hidden previews do not reparse during typing. Each refresh builds the
 compact block index on a worker and only retains parsed pages within the existing
 cache budget. New edits cancel obsolete refreshes; late results cannot replace
-newer content. `Cmd-S` also works while Preview is focused. Continuous source/preview
-scroll synchronization and double-clicking rendered blocks to edit remain to do.
+newer content. `Cmd-S` also works while Preview is focused. Double-clicking rendered
+blocks to edit remains to do.
 
 Entering edit mode preserves syntax highlighting. Edits refresh it on a worker
 after a 40 ms pause, reusing unchanged syntax-tree nodes; newer edits cancel older

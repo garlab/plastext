@@ -272,6 +272,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Split Right", ui::SplitRight),
                 MenuItem::action("Split Down", ui::SplitDown),
+                MenuItem::action("Synchronize Scrolling", ui::ToggleScrollSync),
                 MenuItem::separator(),
                 MenuItem::action("File Icon Theme…", ui::FileIconTheme),
                 MenuItem::action("Import Icon Theme…", ui::ImportIconTheme),
