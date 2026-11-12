@@ -8,6 +8,8 @@ use katex_native::{
     katex::{KatexContext, Settings},
 };
 
+mod katex_compat;
+
 #[cfg(feature = "typst-engine")]
 mod typst_engine;
 
@@ -35,7 +37,7 @@ pub const SCALE: f32 = 1.21;
 
 fn context() -> &'static KatexContext {
     static CONTEXT: OnceLock<KatexContext> = OnceLock::new();
-    CONTEXT.get_or_init(KatexContext::default)
+    CONTEXT.get_or_init(katex_compat::context)
 }
 
 /// Renders `tex` with `px_per_em` pixels per em of the formula, drawing in
@@ -282,6 +284,44 @@ $\field$ {\renewcommand{\field}{\mathbb{C}} $\field$} $\field$
             );
             assert_eq!(actual.body.rgba, expected.body.rgba, "{input}");
         }
+    }
+
+    #[test]
+    fn unbraced_radicals_render_like_grouped_radicals() {
+        let formula = r"z=\frac{1+a}{\sqrt{(1+3a)(3+a)}}\le\frac1{\sqrt3},\qquad
+            (\sqrt{A_0}+\sqrt{A_1})^2=6z^2+3z\le2+\sqrt3.";
+        for scale in [24., 32., 40.] {
+            let actual = render(formula, true, 1, scale, [255; 4]).unwrap();
+            let grouped = render(
+                &formula.replace(r"\sqrt3", r"\sqrt{3}"),
+                true,
+                1,
+                scale,
+                [255; 4],
+            )
+            .unwrap();
+            assert_eq!(actual.body.width, grouped.body.width);
+            assert_eq!(actual.body.height, grouped.body.height);
+            assert_eq!(actual.body.baseline, grouped.body.baseline);
+            assert_eq!(actual.body.rgba, grouped.body.rgba);
+        }
+    }
+
+    #[test]
+    fn latex_macros_can_expand_to_unbraced_radicals() {
+        let source = r"\newcommand{\root}[1]{\sqrt#1}$\root3$";
+        let index = latex_reader::index(
+            source,
+            &Default::default(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+        let context = index.macro_context(source.find('$').unwrap());
+        let actual = render_with_latex(r"\root3", false, 32., [255; 4], &context).unwrap();
+        let expected = render(r"\sqrt{3}", false, 1, 32., [255; 4]).unwrap();
+        assert_eq!(actual.body.width, expected.body.width);
+        assert_eq!(actual.body.height, expected.body.height);
+        assert_eq!(actual.body.rgba, expected.body.rgba);
     }
 
     #[test]
