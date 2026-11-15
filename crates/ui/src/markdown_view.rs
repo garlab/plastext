@@ -33,6 +33,7 @@ mod math;
 mod metadata;
 mod profile;
 mod scroll_sync;
+mod scrollbar;
 mod selection;
 mod sgf;
 mod visibility;
@@ -108,6 +109,7 @@ pub struct MarkdownView {
     failed_pages: HashSet<usize>,
     symbols: Arc<Vec<Symbol>>,
     list: ListState,
+    scrollbar: scrollbar::State,
     visible: visibility::VisibleBlocks,
     focus: FocusHandle,
     rendered: bool,
@@ -262,6 +264,7 @@ impl MarkdownView {
         list.set_scroll_handler(move |_, _, cx| {
             weak.update(cx, |this, cx| {
                 this.scroll_sync = None;
+                this.scrollbar.drag = None;
                 cx.notify();
             })
             .ok();
@@ -319,6 +322,7 @@ impl MarkdownView {
             failed_pages: HashSet::new(),
             symbols: Arc::default(),
             list,
+            scrollbar: scrollbar::State::default(),
             visible: visibility::VisibleBlocks::default(),
             focus: cx.focus_handle(),
             rendered: true,
@@ -468,6 +472,7 @@ impl MarkdownView {
         cx.notify();
     }
     fn scroll_to_rendered_offset(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.scroll_sync = None;
         if let Some(view) = &self.source_view {
             let source = self.document.source_offset(offset) as u64;
             view.update(cx, |v, cx| v.scroll_to_offset(source, cx));
@@ -535,6 +540,7 @@ impl MarkdownView {
         let mut anchor = self.list.logical_scroll_top();
         anchor.offset_in_item *= factor / self.zoom;
         self.zoom = factor;
+        self.scrollbar.drag = None;
         self.prose_width = None;
         self.formulas.zoom_changed();
         self.list.reset(self.visible.len());
@@ -630,6 +636,7 @@ impl MarkdownView {
             self.focus.focus(window);
         }
         self.reading.stop();
+        self.scrollbar = scrollbar::State::default();
         self.rendered = !self.rendered;
         self.refresh_preview(true, cx);
         if !self.rendered {
@@ -1748,22 +1755,27 @@ impl Render for MarkdownView {
             .on_action(cx.listener(Self::next_match))
             .on_action(cx.listener(Self::previous_match))
             .on_action(cx.listener(|this, _: &ScrollDown, _, cx| {
+                this.scroll_sync = None;
                 this.list.scroll_by(px(28.));
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ScrollUp, _, cx| {
+                this.scroll_sync = None;
                 this.list.scroll_by(px(-28.));
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &PageDown, _, cx| {
+                this.scroll_sync = None;
                 this.list.scroll_by(px(500.));
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &PageUp, _, cx| {
+                this.scroll_sync = None;
                 this.list.scroll_by(px(-500.));
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToStart, _, cx| {
+                this.scroll_sync = None;
                 this.list.scroll_to(ListOffset {
                     item_ix: 0,
                     offset_in_item: px(0.),
@@ -1771,6 +1783,7 @@ impl Render for MarkdownView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToEnd, _, cx| {
+                this.scroll_sync = None;
                 this.list
                     .scroll_to_reveal_item(this.visible.len().saturating_sub(1));
                 cx.notify();
@@ -1864,7 +1877,10 @@ impl Render for MarkdownView {
                             )
                     })
                     .child(body)
-                    .when(self.rendered, |d| d.child(self.selection_layer(cx))),
+                    .when(self.rendered, |d| {
+                        d.child(self.selection_layer(cx))
+                            .child(self.scrollbar_layer(cx))
+                    }),
             )
     }
 }

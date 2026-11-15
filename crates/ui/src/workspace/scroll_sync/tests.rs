@@ -210,6 +210,37 @@ fn scroll_sync_links_source_and_native_readers_in_both_directions(cx: &mut TestA
                 "{extension}: {source:?} -> {rendered:?}"
             );
         }
+        // A scrollbar click in a rendered follower makes that pane the leader,
+        // including when Source still has keyboard focus in another pane.
+        let mut visual = VisualTestContext::from_window(window.into(), cx);
+        let pane = visual.debug_bounds("pane-2").unwrap();
+        visual.simulate_click(
+            point(pane.right() - px(6.), pane.center().y),
+            Default::default(),
+        );
+        settle(cx);
+        window
+            .update(cx, |ws, _, _| {
+                assert_eq!(
+                    ws.scroll_sync.leader,
+                    Some(2),
+                    "{extension}: scrollbar should lead"
+                );
+            })
+            .unwrap();
+        let bar_position = position(cx, &views[2]);
+        assert_ne!(bar_position.source, source);
+        assert_eq!(
+            bar_position.rendered.unwrap().span,
+            position(cx, &views[1]).rendered.unwrap().span
+        );
+        assert!(
+            bar_position
+                .source
+                .offset()
+                .abs_diff(position(cx, &views[0]).source.offset())
+                < 2
+        );
         wheel(cx, window, "pane-1");
         let leader = position(cx, &views[1]);
         let follower = position(cx, &views[2]);

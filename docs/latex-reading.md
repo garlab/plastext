@@ -20,6 +20,8 @@ link Source and Rendered panes showing the same file. It is off by default and
 supports more than two panes. Source alignment uses the existing block source
 map; two Rendered panes can also follow positions inside included files. PDF
 Preview stays independent until a separate SyncTeX integration is available.
+Rendered mode has the same draggable scrollbar as Markdown Preview; scrolling
+with it also updates linked panes when synchronization is enabled.
 The [example document](fixtures/latex-reading.tex) exercises the three modes.
 
 ## Live updates

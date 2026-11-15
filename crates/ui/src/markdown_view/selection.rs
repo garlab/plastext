@@ -455,6 +455,7 @@ impl MarkdownView {
         }
         let distance = self.selection_scroll_step(pointer, bounds);
         if distance != 0. {
+            self.scroll_sync = None;
             self.list.scroll_by(px(distance * self.zoom));
             cx.notify();
         }

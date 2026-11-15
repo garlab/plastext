@@ -3,6 +3,11 @@
 Markdown opens in Preview. Use **⇧⌘V** or **Source** to switch views at the
 corresponding document position. Each split pane has its own view and selection.
 
+The right-edge scrollbar appears when the document extends beyond the viewport.
+Drag its thumb or click the track to jump; it follows mouse-wheel and keyboard
+scrolling too. Its extent is estimated from document blocks and visible rows,
+so opening a long document does not require laying out every paragraph.
+
 Fenced [Mermaid diagrams](mermaid.md) and [SGF Go positions](sgf.md#boards-in-markdown)
 render on demand, with per-fence Source/Preview and Copy controls. SGF supports
 `game` and `move` selectors; see the [board fixture](fixtures/sgf.md).

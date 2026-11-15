@@ -186,6 +186,7 @@ impl MarkdownView {
         };
         find.current = Some(current);
         let hit = find.matches[current].clone();
+        self.scroll_sync = None;
         self.reveal_metadata(hit.block);
         self.list.scroll_to(ListOffset {
             item_ix: self.visible.row(hit.block),
