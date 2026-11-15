@@ -517,9 +517,19 @@ impl EditingDocument {
     }
 
     fn choose_save_path(&mut self, cx: &mut Context<Self>) {
+        // An empty workspace uses ".". Native save panels need an absolute
+        // directory rather than a file URL relative to the working directory.
+        let directory = match std::path::absolute(&self.save_directory) {
+            Ok(directory) => directory,
+            Err(error) => {
+                self.notice = Some(format!("Couldn't choose a save location: {error}").into());
+                cx.notify();
+                return;
+            }
+        };
         self.save_preparing = true;
         let selection = cx.prompt_for_new_path(
-            &self.save_directory,
+            &directory,
             self.path.file_name().and_then(|name| name.to_str()),
         );
         cx.spawn(async move |this, cx| {

@@ -220,7 +220,10 @@ fn close_save_cancel_keeps_untitled_then_save_closes_the_renamed_tab(cx: &mut Te
     cx.simulate_prompt_answer("Save");
     cx.run_until_parked();
     assert!(cx.did_prompt_for_new_path());
-    cx.simulate_new_path_selection(|_| None);
+    cx.simulate_new_path_selection(|directory| {
+        assert_eq!(directory, dir.path());
+        None
+    });
     finish_close_save(cx);
     let doc = document(cx, window);
     cx.update(|cx| {
@@ -230,7 +233,10 @@ fn close_save_cancel_keeps_untitled_then_save_closes_the_renamed_tab(cx: &mut Te
     cx.simulate_keystrokes(window.into(), "cmd-w");
     cx.simulate_prompt_answer("Save");
     cx.run_until_parked();
-    cx.simulate_new_path_selection(|_| Some(path.clone()));
+    cx.simulate_new_path_selection(|directory| {
+        assert_eq!(directory, dir.path());
+        Some(path.clone())
+    });
     finish_close_save(cx);
     assert_eq!(std::fs::read_to_string(path).unwrap(), "keep this");
     window
@@ -238,5 +244,37 @@ fn close_save_cancel_keeps_untitled_then_save_closes_the_renamed_tab(cx: &mut Te
             assert!(workspace.panes[&workspace.active_pane].tabs.is_empty());
             window.remove_window();
         })
+        .unwrap();
+}
+
+#[gpui::test]
+fn untitled_save_without_a_folder_starts_in_the_working_directory(cx: &mut TestAppContext) {
+    let directory = std::env::current_dir().unwrap();
+    let window = open(cx, None);
+    cx.simulate_keystrokes(window.into(), "cmd-n");
+    paste(cx, window, "draft");
+
+    // Saving directly and saving while closing must choose the same folder.
+    cx.simulate_keystrokes(window.into(), "cmd-s");
+    cx.simulate_new_path_selection(|initial_directory| {
+        assert_eq!(initial_directory, directory);
+        None
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes(window.into(), "cmd-w");
+    cx.simulate_prompt_answer("Save");
+    cx.run_until_parked();
+    cx.simulate_new_path_selection(|initial_directory| {
+        assert_eq!(initial_directory, directory);
+        None
+    });
+    finish_close_save(cx);
+    let doc = document(cx, window);
+    cx.update(|cx| assert!(doc.read(cx).is_dirty()));
+    cx.simulate_keystrokes(window.into(), "cmd-w");
+    cx.simulate_prompt_answer("Discard");
+    cx.run_until_parked();
+    window
+        .update(cx, |_, window, _| window.remove_window())
         .unwrap();
 }

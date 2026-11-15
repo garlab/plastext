@@ -20,7 +20,8 @@ a tab; new Markdown files open in Source. New folders stay selected in the tree.
 **⌘N** starts inline file creation when the navigation pane has focus. Elsewhere,
 it opens an empty **Untitled** tab in the active editor pane, even without a
 project folder. Untitled tabs keep their contents in memory until **⌘S** opens
-the system Save dialog. Closing a nonempty draft offers Save, Cancel and Discard;
+the system Save dialog in the project folder, or the working directory when no
+project is open. Closing a nonempty draft offers Save, Cancel and Discard;
 empty drafts close immediately. Saving keeps undo history and updates all split
 views of the draft. No automatic saving is performed.
 
