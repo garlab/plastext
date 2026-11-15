@@ -10,6 +10,11 @@ the selected file. Click the editor, double-click the file or press Enter to
 focus the editor. See [file management](file-management.md) for navigation-pane
 Copy/Cut/Paste, Rename, Move and Delete shortcuts.
 
+Terraform/HCL files (`.tf`, `.tfvars`, `.hcl`, and `.tfbackend`) use syntax
+highlighting and structural folds, including expressions inside strings and
+heredocs. JSON variants such as `.tf.json` retain JSON highlighting. Markdown
+code fences accept `hcl`, `terraform`, `tf`, `tfvars`, and `tfbackend` labels.
+
 The status bar shows **EDIT**, and an unsaved tab gets a dot. A modified preview
 tab becomes permanent. Saving is explicit: press **Cmd-S**. There is no autosave;
 typing, waiting, switching tabs and switching to Preview leave the disk file alone.

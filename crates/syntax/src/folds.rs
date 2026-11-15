@@ -26,6 +26,7 @@ pub(crate) fn query(language: &str) -> Option<&'static str> {
             "[(run_instruction) (cmd_instruction) (entrypoint_instruction) (copy_instruction) (add_instruction) (env_instruction) (label_instruction) (healthcheck_instruction) (onbuild_instruction)] @fold"
         }
         "Go" => "[(block) (field_declaration_list) (literal_value) (comment)] @fold",
+        "HCL" => "[(block) (object) (tuple) (heredoc_template) (comment)] @fold",
         "HTML" | "XML" => "[(element) (script_element) (style_element) (comment)] @fold",
         "JavaScript" | "TypeScript" | "TSX" => {
             "[(statement_block) (class_body) (object) (array) (template_string) (comment)] @fold"

@@ -428,6 +428,16 @@ mod tests {
                 ],
             ),
             (
+                "main.tf",
+                include_str!("../../../docs/fixtures/terraform.tf"),
+                vec![
+                    "locals { greeting = \"hi ${upper(\"café\")}\" }\n",
+                    "locals { enabled = false }\n",
+                    "resource \"terraform_data\" \"unfinished\" {\n",
+                    "",
+                ],
+            ),
+            (
                 "a.html",
                 "<script>let a = 1;</script>",
                 vec![
@@ -462,6 +472,65 @@ mod tests {
                 tree = next;
                 before = after;
             }
+        }
+    }
+
+    #[test]
+    fn highlights_hcl_expressions_templates_and_comments() {
+        let text = include_str!("../../../docs/fixtures/terraform.tf");
+        let language = detect(Path::new("main.tf"), b"").unwrap();
+        let tree = SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+        assert!(!tree.tree.root_node().has_error());
+        let spans = tree.highlights(text.as_bytes(), 0..text.len());
+        for (token, expected) in [
+            ("# Terraform", Highlight::Comment),
+            ("// Heredocs", Highlight::Comment),
+            ("not_an_expression", Highlight::Comment),
+            ("resource", Highlight::Keyword),
+            ("for name", Highlight::Keyword),
+            ("endfor", Highlight::Keyword),
+            ("required_version", Highlight::Property),
+            ("greeting", Highlight::Property),
+            ("names[0]", Highlight::Property),
+            ("upper(name)", Highlight::Function),
+            ("3\n", Highlight::Number),
+            ("true", Highlight::Constant),
+            ("null", Highlight::Constant),
+            ("café", Highlight::String),
+            ("hello ", Highlight::String),
+            ("Hello ", Highlight::String),
+            ("EOT", Highlight::Label),
+            ("${var", Highlight::Punctuation),
+            ("!=", Highlight::Operator),
+        ] {
+            let offset = text.find(token).unwrap();
+            assert_eq!(
+                spans
+                    .iter()
+                    .find(|(range, _)| range.contains(&offset))
+                    .map(|(_, kind)| *kind),
+                Some(expected),
+                "{token}"
+            );
+        }
+        let expression = text.find("var.names[0]").unwrap();
+        assert!(
+            !spans.iter().any(|(range, _)| range.contains(&expression)),
+            "interpolated variables must not inherit string color"
+        );
+        assert!(
+            spans
+                .iter()
+                .all(|(range, _)| text.get(range.clone()).is_some())
+        );
+        let folds = tree.folds(text.as_bytes()).unwrap();
+        for header in ["terraform {", "resource ", "  lifecycle {", "  banner ="] {
+            assert!(
+                folds
+                    .iter()
+                    .any(|fold| fold.header == text.find(header).unwrap() as u64),
+                "{header}"
+            );
         }
     }
 

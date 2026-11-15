@@ -1072,12 +1072,7 @@ impl MarkdownView {
                 < 4
         {
             self.code_highlights.insert(ix, None);
-            let language = plastext_syntax::languages()
-                .iter()
-                .find(|l| l.name.eq_ignore_ascii_case(language))
-                .or_else(|| {
-                    plastext_syntax::detect(&PathBuf::from(format!("code.{language}")), b"")
-                });
+            let language = plastext_syntax::language_for_label(language);
             let parsing = cx.background_executor().spawn({
                 let block = block.clone();
                 async move {

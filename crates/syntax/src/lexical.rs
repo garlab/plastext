@@ -158,6 +158,15 @@ pub(crate) const DATA: Lexical = Lexical {
     words: words!(Constant: ["true", "false", "null", "yes", "no"]),
 };
 
+pub(crate) const HCL: Lexical = Lexical {
+    line_comments: &["#", "//"],
+    quotes: b"\"",
+    words: words!(
+        Keyword: ["terraform", "resource", "data", "variable", "output", "locals", "module", "provider", "for", "in", "if", "else", "endif", "endfor"],
+        Constant: ["true", "false", "null"],
+    ),
+};
+
 pub(crate) const JSON: Lexical = Lexical {
     line_comments: &[],
     quotes: b"\"",
@@ -255,6 +264,27 @@ mod tests {
         assert_eq!(
             spans(&DOCKERFILE, "run echo \"hello\""),
             [("run", Keyword), ("\"hello\"", String)]
+        );
+    }
+
+    #[test]
+    fn colors_hcl_before_parsing_or_above_the_parse_limit() {
+        use Highlight::*;
+        assert_eq!(
+            spans(&HCL, "enabled = true # comment"),
+            [("true", Constant), ("# comment", Comment)]
+        );
+        assert_eq!(
+            spans(&HCL, "count = 3 // comment"),
+            [("3", Number), ("// comment", Comment)]
+        );
+        assert_eq!(
+            spans(&HCL, "resource \"terraform_data\" \"demo\" {"),
+            [
+                ("resource", Keyword),
+                ("\"terraform_data\"", String),
+                ("\"demo\"", String)
+            ]
         );
     }
 

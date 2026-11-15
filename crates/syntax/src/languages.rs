@@ -119,7 +119,7 @@ macro_rules! language {
     };
 }
 
-static LANGUAGES: [Language; 18] = [
+static LANGUAGES: [Language; 19] = [
     language!(
         "Bash",
         tree_sitter_bash::LANGUAGE,
@@ -176,6 +176,15 @@ static LANGUAGES: [Language; 18] = [
         tags: [tree_sitter_go::TAGS_QUERY],
         lexical: lexical::GO,
         extensions: ["go"],
+        file_names: [],
+        interpreters: [],
+    ),
+    language!(
+        "HCL",
+        tree_sitter_hcl::LANGUAGE,
+        [include_str!("../queries/hcl-highlights.scm")],
+        lexical: lexical::HCL,
+        extensions: ["hcl", "tf", "tfvars", "tfbackend"],
         file_names: [],
         interpreters: [],
     ),
@@ -311,6 +320,22 @@ pub fn languages() -> &'static [Language] {
     &LANGUAGES
 }
 
+/// Resolve a code-fence label by language name, extension, or common alias.
+pub fn language_for_label(label: &str) -> Option<&'static Language> {
+    let label = if label.eq_ignore_ascii_case("terraform") {
+        "hcl"
+    } else {
+        label
+    };
+    LANGUAGES.iter().find(|language| {
+        language.name.eq_ignore_ascii_case(label)
+            || language
+                .extensions
+                .iter()
+                .any(|ext| ext.eq_ignore_ascii_case(label))
+    })
+}
+
 /// The language of the file at `path` whose contents start with `head`,
 /// judged by file name, then extension, then `#!` line (spec CODE-4).
 pub fn detect(path: &Path, head: &[u8]) -> Option<&'static Language> {
@@ -410,6 +435,31 @@ mod tests {
         assert_eq!(name("Dockerfile.json", ""), Some("JSON"));
         assert_eq!(name("Dockerfile-notes", ""), None);
         assert_eq!(name("Dockerfile.dev.dockerignore", ""), None);
+    }
+
+    #[test]
+    fn detects_hcl_files_and_fence_aliases_without_overriding_json() {
+        for path in [
+            "main.tf",
+            "values.TFVARS",
+            "test.auto.tfvars",
+            "terragrunt.hcl",
+            ".terraform.lock.hcl",
+            "config.pkr.hcl",
+            "dev.tfbackend",
+        ] {
+            assert_eq!(name(path, ""), Some("HCL"), "{path}");
+        }
+        for path in ["main.tf.json", "values.tfvars.json"] {
+            assert_eq!(name(path, ""), Some("JSON"));
+        }
+        for label in ["hcl", "Terraform", "TF", "tfvars", "tfbackend"] {
+            assert_eq!(language_for_label(label).map(|l| l.name), Some("HCL"));
+        }
+        for label in ["Rust", "rs", "json", "Dockerfile", "containerfile"] {
+            assert!(language_for_label(label).is_some());
+        }
+        assert!(language_for_label("unknown").is_none());
     }
 
     #[test]
