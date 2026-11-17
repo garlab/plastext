@@ -8,6 +8,79 @@ fn build_text(text: &str) -> (FileSource, DocumentIndex) {
 }
 
 #[test]
+fn title_and_abstract_keep_separate_borders_and_source_positions() {
+    let text = r"\documentclass{article}
+\title{The spectrum}\author{A. Writer}\date{A date}
+\begin{document}\maketitle\begin{abstract}
+First paragraph.
+
+Second paragraph with a display:
+\[x=2\]
+After the display.
+\end{abstract}
+\begin{quote}A separate quote.\end{quote}
+\section{Introduction}Body.\end{document}";
+    let (source, index) = build_text(text);
+    let blocks = index.parse_page(&source, 0, || false).unwrap();
+    assert!(blocks[0].text.contains("The spectrum"));
+    assert_eq!(blocks[1].text, "A. Writer");
+    assert_eq!(blocks[2].text, "A date");
+    assert!(blocks[..3].iter().all(|b| b.quote.is_none()));
+    let abstract_blocks = &blocks[3..7];
+    assert!(abstract_blocks.iter().all(|b| b.quote.is_some()));
+    assert!(!abstract_blocks[0].quote_continued);
+    assert!(abstract_blocks[1..].iter().all(|b| b.quote_continued));
+    assert_eq!(abstract_blocks[2].kind, BlockKind::Math);
+    assert_eq!(blocks[7].text, "A separate quote.");
+    assert!(blocks[7].quote.is_some() && !blocks[7].quote_continued);
+    assert!(
+        blocks[8..]
+            .iter()
+            .all(|b| b.quote.is_none() && !b.quote_continued)
+    );
+    assert!(
+        index
+            .blocks
+            .windows(2)
+            .all(|pair| pair[0].source.start <= pair[1].source.start)
+    );
+    let offset = text.find("First paragraph.").unwrap();
+    assert_eq!(index.block_at(offset), 3);
+    assert_eq!(index.source_offset(blocks[3].source.start), offset);
+    for (entry, block) in index.blocks.iter().zip(&blocks) {
+        assert_eq!(entry.quote_continued, block.quote_continued);
+    }
+}
+
+#[test]
+fn abstract_border_continues_across_lazy_pages() {
+    let text = format!(
+        "\\documentclass{{amsart}}\\title{{Title}}\\begin{{document}}\\begin{{abstract}}{}\\end{{abstract}}\\maketitle\\section{{After}}Body.\\end{{document}}",
+        "A paragraph in a long abstract.\n\n".repeat(2500)
+    );
+    let (source, index) = build_text(&text);
+    assert!(index.pages.len() > 2);
+    for page in (0..index.pages.len()).rev() {
+        let blocks = index.parse_page(&source, page, || false).unwrap();
+        let entries = index
+            .blocks
+            .iter()
+            .filter(|entry| entry.page as usize == page);
+        for (entry, block) in entries.zip(&blocks) {
+            assert_eq!(entry.quote_continued, block.quote_continued);
+        }
+        if page > 0 {
+            assert!(blocks.first().unwrap().quote_continued);
+        }
+    }
+    let last = index
+        .parse_page(&source, index.pages.len() - 1, || false)
+        .unwrap();
+    assert!(last.last().unwrap().quote.is_none());
+    assert!(!last.last().unwrap().quote_continued);
+}
+
+#[test]
 fn local_inputs_listings_and_bibliography_keep_root_positions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

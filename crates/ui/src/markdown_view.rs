@@ -1292,33 +1292,25 @@ impl MarkdownView {
         }
         let theme = Theme::get(window, cx);
         self.prepare_math(&block, ix, theme, window, cx);
+        let next_block = self.document.blocks.get(ix + 1);
+        let table_ends =
+            next_block.is_none_or(|next| next.kind != plastext_markdown::BlockType::TableRow);
+        let quote_continues =
+            block.quote.is_some() && next_block.is_some_and(|next| next.quote_continued);
+        let (padding_top, padding_bottom) = match block.kind {
+            BlockKind::FrontMatterRow { .. } => (false, false),
+            BlockKind::TableRow { header, .. } => (header, table_ends),
+            _ => (true, true),
+        };
         let base = div()
             .id(("md-block", ix))
             .w_full()
             .max_w(self.prose_width.unwrap_or(px(820.)))
             .px_6()
-            .py_2()
-            .when(
-                matches!(block.kind, BlockKind::FrontMatterRow { .. }),
-                |d| d.py_0(),
-            )
-            .when(matches!(block.kind, BlockKind::TableRow { .. }), |d| {
-                // Rows remain independently virtualized, but spacing belongs
-                // around the table, not between every pair of rows. Consult
-                // the compact index so this also works across cache pages.
-                d.py_0()
-                    .when(
-                        matches!(block.kind, BlockKind::TableRow { header: true, .. }),
-                        |d| d.pt_2(),
-                    )
-                    .when(
-                        self.document
-                            .blocks
-                            .get(ix + 1)
-                            .is_none_or(|next| next.kind != plastext_markdown::BlockType::TableRow),
-                        |d| d.pb_2(),
-                    )
-            })
+            // Keep inter-block spacing inside a continuing quote's border.
+            // The compact index carries continuation across virtualized pages.
+            .when(padding_top && !block.quote_continued, |d| d.pt_2())
+            .when(padding_bottom && !quote_continues, |d| d.pb_2())
             .text_size(px(BODY_SIZE * self.zoom))
             .line_height(relative(LINE_HEIGHT))
             .text_color(theme.text)
@@ -1525,6 +1517,8 @@ impl MarkdownView {
                             d.border_l_2()
                                 .border_color(theme.syntax(Highlight::Link))
                                 .pl_3()
+                                .when(padding_top && block.quote_continued, |d| d.pt_2())
+                                .when(padding_bottom && quote_continues, |d| d.pb_2())
                         })
                         .children(block.quote.as_ref().filter(|s| !s.is_empty()).map(|q| {
                             div()

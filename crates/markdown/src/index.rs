@@ -42,6 +42,7 @@ pub struct BlockEntry {
     pub kind: BlockType,
     pub code_first: bool,
     pub default_open: bool,
+    pub quote_continued: bool,
     section: u32,
 }
 impl BlockEntry {
@@ -98,6 +99,7 @@ impl BlockEntry {
             },
             code_first: matches!(block.kind, BlockKind::Code { first: true, .. }),
             default_open: matches!(block.kind, BlockKind::Details { open: true }),
+            quote_continued: block.quote_continued,
             section: block
                 .details
                 .or_else(|| block.kind.metadata_section())

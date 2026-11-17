@@ -240,6 +240,7 @@ struct State {
     alignment: Alignment,
     lists: usize,
     quote: usize,
+    quote_has_block: bool,
     marker: Option<String>,
     code: Option<String>,
     columns: Arc<[Alignment]>,
@@ -276,6 +277,9 @@ impl Adapter {
             }
             block.text.shrink_to_fit();
             block.spans.shrink_to_fit();
+            if block.quote.is_some() {
+                self.state.quote_has_block = true;
+            }
             let block = Arc::new(block);
             self.bytes += crate::parsed_bytes(std::slice::from_ref(&block));
             self.blocks.push(block);
@@ -287,6 +291,7 @@ impl Adapter {
         block.indent = self.state.lists.saturating_sub(1);
         block.marker = self.state.marker.take();
         block.quote = (self.state.quote > 0).then(String::new);
+        block.quote_continued = self.state.quote > 0 && self.state.quote_has_block;
         block.alignment = self.state.alignment;
         self.block = Some(block);
     }
@@ -383,6 +388,9 @@ impl Adapter {
                     Tag::ItemLabel => self.state.style.strong = true,
                     Tag::Quote(_) | Tag::Abstract => {
                         self.flush();
+                        if self.state.quote == 0 {
+                            self.state.quote_has_block = false;
+                        }
                         self.state.quote += 1;
                     }
                     Tag::Align(align) => self.state.alignment = alignment(align),
@@ -518,6 +526,9 @@ impl Adapter {
                     TagKind::Quote | TagKind::Abstract => {
                         self.flush();
                         self.state.quote = self.state.quote.saturating_sub(1);
+                        if self.state.quote == 0 {
+                            self.state.quote_has_block = false;
+                        }
                     }
                     TagKind::Code => {
                         self.flush();

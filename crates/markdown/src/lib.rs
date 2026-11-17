@@ -160,6 +160,8 @@ pub struct Block {
     pub indent: usize,
     pub marker: Option<String>,
     pub quote: Option<String>,
+    /// This block continues the preceding block's quotation or abstract.
+    pub quote_continued: bool,
     pub task: Option<bool>,
     pub alignment: Alignment,
     /// Absolute source offset of the enclosing details header.
@@ -176,6 +178,7 @@ impl Block {
             indent: 0,
             marker: None,
             quote: None,
+            quote_continued: false,
             task: None,
             alignment: Alignment::Left,
             details: None,
