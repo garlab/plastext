@@ -33,6 +33,7 @@ pub(crate) fn query(language: &str) -> Option<&'static str> {
         }
         "JSON" => "[(object) (array)] @fold",
         "Markdown" => "[(section) (fenced_code_block) (list_item) (block_quote)] @fold",
+        "Probl" => tree_sitter_probl::FOLDS_QUERY,
         "Python" => {
             "[(function_definition) (class_definition) (if_statement) (for_statement) (while_statement) (try_statement) (with_statement) (list) (dictionary) (set) (tuple) (string)] @fold"
         }

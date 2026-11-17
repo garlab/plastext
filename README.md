@@ -105,7 +105,10 @@ streams the best 256 results; type more to narrow a broad query.
 unindented blocks and multiline comments and literals, and falls back to
 indentation otherwise. Large files color a 64 KiB prefix first, then the full
 file in the background. HTML highlights JavaScript in `<script>` (including
-modules and JSON data) and CSS in `<style>`.
+modules and JSON data) and CSS in `<style>`. Probl files (`.probl`) and `probl`
+code fences share syntax colors for declarations, dice, temporal values and
+interpolated strings. Probl blocks and collections support structural folds;
+large files retain line-local coloring. Fence labels are case-insensitive.
 
 **TeX** opens in **Rendered** mode without a TeX installation. Split with `⌘D`
 or `⇧⌘D` and choose **Source** in either pane: unsaved edits update the rendered

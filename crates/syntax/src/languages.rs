@@ -119,7 +119,7 @@ macro_rules! language {
     };
 }
 
-static LANGUAGES: [Language; 19] = [
+static LANGUAGES: [Language; 20] = [
     language!(
         "Bash",
         tree_sitter_bash::LANGUAGE,
@@ -223,6 +223,15 @@ static LANGUAGES: [Language; 19] = [
         tags: [crate::symbols::MARKDOWN_TAGS],
         lexical: Lexical::NONE,
         extensions: ["md", "markdown", "mdown", "mkd", "mdx"],
+        file_names: [],
+        interpreters: [],
+    ),
+    language!(
+        "Probl",
+        tree_sitter_probl::LANGUAGE,
+        [tree_sitter_probl::HIGHLIGHTS_QUERY],
+        lexical: lexical::PROBL,
+        extensions: ["probl"],
         file_names: [],
         interpreters: [],
     ),

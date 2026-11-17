@@ -173,6 +173,24 @@ pub(crate) const JSON: Lexical = Lexical {
     words: words!(Constant: ["true", "false", "null"]),
 };
 
+// Deliberately line-local: the shared grammar handles interpolation and
+// contextual names once a bounded parse is available.
+pub(crate) const PROBL: Lexical = Lexical {
+    line_comments: &["#"],
+    quotes: b"\"'",
+    words: words!(
+        Keyword: [
+            "and", "break", "catch", "chance", "continue", "div", "else", "enum",
+            "fn", "for", "if", "import", "in", "let", "loop", "match", "mod",
+            "not", "observe", "or", "repeat", "report", "return", "score",
+            "simulate", "try", "type", "typeof", "var", "while", "with",
+        ],
+        Type: ["int", "float", "complex", "prob", "bool", "str", "date", "datetime",
+            "duration", "squared_duration", "list", "map", "bag", "set", "dist"],
+        Constant: ["true", "false"],
+    ),
+};
+
 pub(crate) const PYTHON: Lexical = Lexical {
     line_comments: &["#"],
     quotes: b"\"'",
