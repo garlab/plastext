@@ -417,6 +417,16 @@ mod tests {
                 ],
             ),
             (
+                ".env.local",
+                "# Local configuration\nexport GREETING=\"hello café\"\nPORT=3000\n",
+                vec![
+                    "GREETING=\"hello ${NAME}\"\r\n",
+                    "GREETING='hello # literal'\n",
+                    "GREETING=\"unfinished",
+                    "",
+                ],
+            ),
+            (
                 "Dockerfile",
                 include_str!("../../../docs/fixtures/Dockerfile"),
                 vec![
@@ -473,6 +483,48 @@ mod tests {
                 before = after;
             }
         }
+    }
+
+    #[test]
+    fn highlights_dotenv_assignments_comments_quotes_and_expansions() {
+        let text = "# Local configuration\nexport APP_NAME=demo\nPORT=3000\nGREETING=\"hello café ${APP_NAME}\"\nLITERAL='keep # literal'\nEMPTY=\n";
+        let language = detect(Path::new(".env"), b"").unwrap();
+        let tree = SyntaxTree::parse(language, text.as_bytes(), || false).unwrap();
+        assert!(!tree.tree.root_node().has_error());
+        let spans = tree.highlights(text.as_bytes(), 0..text.len());
+        for (token, expected) in [
+            ("# Local", Highlight::Comment),
+            ("export", Highlight::Keyword),
+            ("APP_NAME=", Highlight::Property),
+            ("PORT=", Highlight::Property),
+            ("GREETING=", Highlight::Property),
+            ("hello café", Highlight::String),
+            ("# literal", Highlight::String),
+            ("EMPTY=", Highlight::Property),
+        ] {
+            let offset = text.find(token).unwrap();
+            assert_eq!(
+                spans
+                    .iter()
+                    .find(|(range, _)| range.contains(&offset))
+                    .map(|(_, kind)| *kind),
+                Some(expected),
+                "{token}"
+            );
+        }
+        let variable = text.find("${APP_NAME}").unwrap() + 2;
+        assert_eq!(
+            spans
+                .iter()
+                .find(|(range, _)| range.contains(&variable))
+                .map(|(_, kind)| *kind),
+            Some(Highlight::Property)
+        );
+        assert!(
+            spans
+                .iter()
+                .all(|(range, _)| text.get(range.clone()).is_some())
+        );
     }
 
     #[test]

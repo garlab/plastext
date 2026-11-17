@@ -125,8 +125,8 @@ static LANGUAGES: [Language; 19] = [
         tree_sitter_bash::LANGUAGE,
         [tree_sitter_bash::HIGHLIGHT_QUERY],
         lexical: lexical::BASH,
-        extensions: ["sh", "bash", "zsh", "ksh"],
-        file_names: [".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv", "PKGBUILD"],
+        extensions: ["sh", "bash", "zsh", "ksh", "env"],
+        file_names: [".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".zshenv", "PKGBUILD", ".env"],
         interpreters: ["sh", "bash", "zsh", "ksh", "dash"],
     ),
     language!(
@@ -324,6 +324,8 @@ pub fn languages() -> &'static [Language] {
 pub fn language_for_label(label: &str) -> Option<&'static Language> {
     let label = if label.eq_ignore_ascii_case("terraform") {
         "hcl"
+    } else if label.eq_ignore_ascii_case("dotenv") || label.eq_ignore_ascii_case(".env") {
+        "env"
     } else {
         label
     };
@@ -355,6 +357,16 @@ pub fn detect(path: &Path, head: &[u8]) -> Option<&'static Language> {
         {
             return Some(language);
         }
+    }
+    // Dotenv variants such as .env.local and .env.production.example. Known
+    // extensions still win so documentation like .env.md stays Markdown.
+    if let Some(file_name) = file_name
+        && (file_name.eq_ignore_ascii_case(".env")
+            || file_name
+                .get(..5)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(".env.")))
+    {
+        return LANGUAGES.iter().find(|language| language.name == "Bash");
     }
     // Environment-specific build files, e.g. Dockerfile.dev. Recognized
     // extensions take precedence so Dockerfile.md is still Markdown.
@@ -435,6 +447,30 @@ mod tests {
         assert_eq!(name("Dockerfile.json", ""), Some("JSON"));
         assert_eq!(name("Dockerfile-notes", ""), None);
         assert_eq!(name("Dockerfile.dev.dockerignore", ""), None);
+    }
+
+    #[test]
+    fn detects_dotenv_files_and_fences_without_overriding_other_formats() {
+        for path in [
+            ".env",
+            "config/.env",
+            ".env.local",
+            ".env.example",
+            ".env.production.local",
+            ".ENV.TEST",
+            "development.env",
+            "production.ENV",
+        ] {
+            assert_eq!(name(path, ""), Some("Bash"), "{path}");
+        }
+        for label in ["env", "dotenv", ".env", "DOTENV"] {
+            assert_eq!(language_for_label(label).map(|l| l.name), Some("Bash"));
+        }
+        assert_eq!(name(".env.md", ""), Some("Markdown"));
+        assert_eq!(name(".env.json", ""), Some("JSON"));
+        for path in ["environment", ".environment", "env.local"] {
+            assert_eq!(name(path, ""), None, "{path}");
+        }
     }
 
     #[test]

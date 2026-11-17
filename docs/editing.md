@@ -15,6 +15,11 @@ highlighting and structural folds, including expressions inside strings and
 heredocs. JSON variants such as `.tf.json` retain JSON highlighting. Markdown
 code fences accept `hcl`, `terraform`, `tf`, `tfvars`, and `tfbackend` labels.
 
+Environment files (`.env`, `.env.local`, `.env.example`, other `.env.*` variants,
+and `*.env`) use shell syntax highlighting for variable names, quoted values,
+comments, `export`, and variable references. Markdown code fences accept `env`
+and `dotenv` labels.
+
 The status bar shows **EDIT**, and an unsaved tab gets a dot. A modified preview
 tab becomes permanent. Saving is explicit: press **Cmd-S**. There is no autosave;
 typing, waiting, switching tabs and switching to Preview leave the disk file alone.
