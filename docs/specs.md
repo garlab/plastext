@@ -160,7 +160,7 @@ Requirements have IDs (`MD-3`, `GIT-4`…) so they can be referenced in issues, 
 
 - **PRJ-1** Open a folder (a project) or individual files. Multiple windows, one project per window.
 - **PRJ-2** The tree loads lazily: only expanded directories are read. A directory with 500k entries lists progressively and scrolls smoothly (virtualized).
-- **PRJ-3** Respects `.gitignore`, `.ignore`, `.git/info/exclude` and the global gitignore. Ignored files can be hidden, dimmed (default) or shown. Hidden files are toggleable. `files.exclude` globs are always hidden.
+- **PRJ-3** Respects `.gitignore`, `.ignore`, `.git/info/exclude` and the global gitignore. Ignored files can be hidden, dimmed (default) or shown. Hidden files are visible by default and toggleable. `files.exclude` globs are always hidden.
 - **PRJ-4** Git status decorations (modified, added, deleted, renamed, untracked, conflicted) on files, rolled up to their ancestor directories.
 - **PRJ-5** Filesystem watching: one FSEvents stream per root on macOS. On Linux, inotify watches expanded directories, open files and `.git` only, with polling as a fallback (inotify limits don't scale to 1M directories). On Windows, ReadDirectoryChangesW. Events are coalesced and debounced, and the tree, open buffers and git status update automatically.
 - **PRJ-6** File operations: new file or folder, rename, move (drag), delete to Trash, duplicate, reveal in Finder, copy absolute or relative path.
@@ -313,9 +313,9 @@ prose_font = "system"
 max_width = "80ch"
 
 [files]
-show_hidden = false
+show_hidden = true
 show_ignored = "dim"          # "hide" | "dim" | "show"
-exclude = ["**/.DS_Store"]
+exclude = ["**/.git", "**/.DS_Store"]
 max_open_tabs = 50            # beyond this, tab contents are unloaded
 
 [limits]

@@ -7,6 +7,12 @@ Single-click a file in the navigation pane to preview it. Keyboard focus stays
 in the file pane. Double-click or press Enter to keep the tab open and focus the
 editor. Up and Down change the selected file.
 
+Dotfiles and dotfolders such as `.env` and `.config` are visible by default.
+Git-ignored entries are dimmed; `.git` and `.DS_Store` remain excluded. Set
+`show_hidden = false` under `[files]` in `config.toml` to hide dotfiles, or use
+`files.exclude` to hide specific paths. These settings also apply to Quick Open
+and project search, which continue to skip ignored files.
+
 Right-click empty space in the file pane for **New File**, **New Folder** and
 **Paste File**. These actions target the project root, regardless of the previous
 selection. Paste File is disabled when the clipboard contains no file.

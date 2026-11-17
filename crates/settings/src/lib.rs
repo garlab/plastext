@@ -118,7 +118,7 @@ pub struct Files {
 impl Default for Files {
     fn default() -> Self {
         Self {
-            show_hidden: false,
+            show_hidden: true,
             show_ignored: ShowIgnored::Dim,
             exclude: vec!["**/.git".into(), "**/.DS_Store".into()],
         }
@@ -256,10 +256,17 @@ mod tests {
         assert_eq!(settings.editor.font_size, 15.);
         assert_eq!(settings.editor.font, "Menlo");
         assert_eq!(settings.files.show_ignored, ShowIgnored::Hide);
+        assert!(settings.files.show_hidden);
         assert_eq!(settings.files.exclude, Files::default().exclude);
         assert_eq!(settings.limits.large_file_threshold, ByteSize(16_000_000));
         assert_eq!(settings.limits.block_cache, Limits::default().block_cache);
         assert_eq!(Settings::parse("").unwrap(), Settings::default());
+        assert!(
+            !Settings::parse("[files]\nshow_hidden = false")
+                .unwrap()
+                .files
+                .show_hidden
+        );
     }
 
     #[test]

@@ -124,10 +124,29 @@ mod tests {
         );
         let mut found = found.into_inner().unwrap();
         found.sort();
-        let expected: Vec<PathBuf> = ["README.md", "src/lib.rs", "src/nested/deep.rs"]
-            .iter()
-            .map(PathBuf::from)
-            .collect();
+        let expected: Vec<PathBuf> = [
+            ".env",
+            ".gitignore",
+            "README.md",
+            "src/lib.rs",
+            "src/nested/deep.rs",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
         assert_eq!(found, expected);
+        assert_eq!(
+            ordered_files(root, &TreeOptions::default()).collect::<Vec<_>>(),
+            expected
+        );
+
+        let hidden = TreeOptions {
+            show_hidden: false,
+            ..TreeOptions::default()
+        };
+        assert_eq!(
+            ordered_files(root, &hidden).collect::<Vec<_>>(),
+            expected[2..]
+        );
     }
 }

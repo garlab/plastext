@@ -67,21 +67,57 @@ fn toolbar_creation_uses_selected_folder_and_empty_or_escape_cancel(cx: &mut Tes
     cx.simulate_keystrokes(window.into(), "escape");
     assert!(!dir.path().join("cancelled.txt").exists());
     click(cx, window, "tree-new-folder");
-    paste(cx, window, "nested");
+    paste(cx, window, ".config");
     cx.simulate_keystrokes(window.into(), "enter");
-    assert!(dir.path().join("nested").is_dir());
+    assert!(dir.path().join(".config").is_dir());
     cx.simulate_keystrokes(window.into(), "cmd-n");
-    paste(cx, window, "file.txt");
+    paste(cx, window, ".env");
     // Repeating New File while naming keeps the current filename.
     cx.simulate_keystrokes(window.into(), "cmd-n enter");
-    assert!(dir.path().join("nested/file.txt").is_file());
-    assert!(!dir.path().join("file.txt").exists());
+    assert!(dir.path().join(".config/.env").is_file());
+    assert!(!dir.path().join(".env").exists());
     click(cx, window, "tree-collapse-all");
     window
         .update(cx, |workspace, window, cx| {
             let tree = workspace.tree.as_ref().unwrap();
             assert_eq!(tree.read(cx).watched_directories(), [dir.path().to_owned()]);
             assert!(tree.focus_handle(cx).is_focused(window));
+            window.remove_window();
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn newly_created_ignored_dotfile_can_be_reopened_from_the_tree(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".gitignore"), ".env\n").unwrap();
+    let path = dir.path().join(".env");
+    let window = open(cx, Some(dir.path().to_owned()));
+    click(cx, window, "tree-new-file");
+    paste(cx, window, ".env");
+    cx.simulate_keystrokes(window.into(), "enter");
+    assert!(path.is_file());
+    cx.simulate_keystrokes(window.into(), "cmd-w");
+
+    // Clear selection so Enter can only open an actual row in the refreshed tree.
+    window
+        .update(cx, |workspace, window, cx| {
+            let tree = workspace.tree.as_ref().unwrap();
+            tree.update(cx, |tree, cx| tree.select(None, cx));
+            tree.focus_handle(cx).focus(window);
+        })
+        .unwrap();
+    cx.simulate_keystrokes(window.into(), "down enter");
+    window
+        .update(cx, |workspace, window, _| {
+            assert_eq!(
+                workspace.panes[&workspace.active_pane]
+                    .active_tab()
+                    .expect("the dotfile must be visible and openable in the tree")
+                    .path,
+                path
+            );
             window.remove_window();
         })
         .unwrap();

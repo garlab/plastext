@@ -61,7 +61,7 @@ impl TreeOptions {
 
 impl Default for TreeOptions {
     fn default() -> Self {
-        Self::new(false, ShowIgnored::Dim, &["**/.git", "**/.DS_Store"])
+        Self::new(true, ShowIgnored::Dim, &["**/.git", "**/.DS_Store"])
             .expect("the default exclude globs are valid")
     }
 }
@@ -276,7 +276,8 @@ mod tests {
             fs::create_dir(root.join(path)).unwrap();
         }
         let files = [
-            (".gitignore", "target/\n*.log\n"),
+            (".gitignore", "target/\n*.log\n.env\n"),
+            (".env", ""),
             ("b.txt", ""),
             ("A.txt", ""),
             ("x.log", ""),
@@ -307,6 +308,9 @@ mod tests {
             [
                 ("target", true),
                 ("z", false),
+                (".env", true),
+                (".gitignore", false),
+                (".hidden", false),
                 ("A.txt", false),
                 ("b.txt", false),
                 ("x.log", true)
@@ -320,6 +324,20 @@ mod tests {
     fn honors_hidden_and_ignored_options() {
         let project = project();
         let root = project.path();
+        let hidden = TreeOptions {
+            show_hidden: false,
+            ..TreeOptions::default()
+        };
+        assert_eq!(
+            names(&read_dir(root, root, &hidden).unwrap()),
+            [
+                ("target", true),
+                ("z", false),
+                ("A.txt", false),
+                ("b.txt", false),
+                ("x.log", true)
+            ]
+        );
         let options = TreeOptions::new(true, ShowIgnored::Hide, &["**/.git"]).unwrap();
         let entries = read_dir(root, root, &options).unwrap();
         assert_eq!(
@@ -342,7 +360,7 @@ mod tests {
         let options = TreeOptions::default();
         let mut tree = FileTree::new(root.to_owned());
         tree.set_children(root, read_dir(root, root, &options).unwrap());
-        assert_eq!(tree.rows().len(), 5);
+        assert_eq!(tree.rows().len(), 8);
 
         let z = root.join("z");
         assert!(tree.toggle(&z), "z isn't listed yet");
@@ -359,6 +377,9 @@ mod tests {
                 ("z", 0),
                 ("inner", 1),
                 ("c.txt", 1),
+                (".env", 0),
+                (".gitignore", 0),
+                (".hidden", 0),
                 ("A.txt", 0),
                 ("b.txt", 0),
                 ("x.log", 0)
@@ -367,9 +388,9 @@ mod tests {
         assert!(tree.rows()[1].expanded);
 
         assert!(!tree.toggle(&z), "collapsing never needs a listing");
-        assert_eq!(tree.rows().len(), 5);
+        assert_eq!(tree.rows().len(), 8);
         assert!(!tree.toggle(&z), "z's listing is kept while collapsed");
-        assert_eq!(tree.rows().len(), 7);
+        assert_eq!(tree.rows().len(), 10);
     }
 
     #[test]
