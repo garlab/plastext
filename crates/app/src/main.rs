@@ -44,6 +44,16 @@ impl Global for StartupProfile {}
 
 fn main() -> ExitCode {
     // The renderer never initializes GPUI, AppKit, settings or single-instance IPC.
+    #[cfg(target_os = "macos")]
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--tikz-worker")) {
+        return match plastext_platform::tikz::worker_main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("TikZ worker: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--image-worker")) {
         return match plastext_platform::images::worker_main() {
             Ok(()) => ExitCode::SUCCESS,

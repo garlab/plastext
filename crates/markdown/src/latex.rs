@@ -225,6 +225,26 @@ fn build_impl(
 fn cancel_error() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "LaTeX rendering cancelled")
 }
+
+impl DocumentIndex {
+    /// Replay the bindings in scope at the figure, including definitions inside its float.
+    pub fn tikz_source(&self, picture: &Block) -> Result<String, &'static str> {
+        let mut source = String::new();
+        if let Some(latex) = &self.latex {
+            let context = latex.index.macro_context(picture.source.start);
+            if context.is_incomplete() {
+                return Err("Incomplete LaTeX macro context");
+            }
+            for definition in context.bindings().filter_map(|b| b.katex_definition()) {
+                source.push_str(&definition);
+                source.push('\n');
+            }
+        }
+        source.push_str(&picture.text);
+        Ok(source)
+    }
+}
+
 fn alignment(align: lr::Align) -> Alignment {
     match align {
         lr::Align::Left | lr::Align::Justify => Alignment::Left,
@@ -565,6 +585,21 @@ impl Adapter {
                 }
             }
             Event::Text(text) => self.append(&text, range, self.state.style.clone()),
+            Event::Raw(text)
+                if self
+                    .state
+                    .stack
+                    .last()
+                    .is_some_and(|s| s.0 == TagKind::Unsupported)
+                    && text.len() <= crate::BLOCK_TEXT_LIMIT
+                    && text.starts_with(r"\begin{tikzpicture}")
+                    && text.ends_with(r"\end{tikzpicture}")
+                    && text.lines().count() <= crate::DIAGRAM_LINE_LIMIT =>
+            {
+                self.begin(BlockKind::Tikz, range.clone());
+                self.append(&text, range, self.state.style.clone());
+                self.flush();
+            }
             Event::Raw(text) => self.append(
                 &text,
                 range,

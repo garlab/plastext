@@ -22,6 +22,8 @@ plastext-assets.workspace = true
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+tikra = "=1.9.2"
+resvg = { version = "0.45", default-features = false }
 core-graphics = "0.24"
 core-foundation = "0.10"
 foreign-types = "0.5"
@@ -44,6 +46,10 @@ harness = false
 
 [[test]]
 name = "mermaid_preview"
+harness = false
+
+[[test]]
+name = "tikz_preview"
 harness = false
 
 [[test]]

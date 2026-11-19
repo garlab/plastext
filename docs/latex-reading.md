@@ -83,9 +83,13 @@ and rendered-text find also cover included content.
   and 2,048 checkpoints. A parsed page is limited to 4,096 blocks / 8 MiB;
   ordinary text blocks split at 16 KiB. The existing parsed-page cache is shared
   with the Markdown reading implementation.
+- Rendered mode draws complete `tikzpicture` environments on a white background
+  using the bundled tikra renderer. It passes the scoped macro definitions with
+  each picture. Captions keep their place in the text. The figure's **Source**
+  control shows its LaTeX. Unsupported content and pictures above the diagram
+  limit of 16 KiB or 1,024 lines display as source.
 - Local figures with explicit supported paths use the existing image policy.
-  Automatic extension lookup, `\graphicspath`, PDF/EPS figures and TikZ are
-  not implemented in this adapter.
+  Automatic extension lookup, `\graphicspath` and PDF/EPS figures remain unsupported.
 - Layout is reflowed to the pane. Page breaks, exact spacing, justification,
   font-size declarations and complex table spans are approximated. Footnotes
   remain readable inline. Unsupported commands remain visible; parser

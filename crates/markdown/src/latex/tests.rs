@@ -8,6 +8,68 @@ fn build_text(text: &str) -> (FileSource, DocumentIndex) {
 }
 
 #[test]
+fn tikz_figures_keep_source_captions_and_local_definitions() {
+    let picture = r"\begin{tikzpicture}
+        \node {$8$} child {node {\vertex{16}}} child[missing];
+        \end{tikzpicture}";
+    let text = format!(
+        r"\begin{{document}}\begin{{figure}}
+        \newcommand{{\vertex}}[1]{{$#1$}}
+        {picture}
+        \caption{{A tree}}\end{{figure}}
+        \begin{{verbatim}}
+{picture}
+\end{{verbatim}}
+        \end{{document}}"
+    );
+    let (source, index) = build_text(&text);
+    let blocks = index.parse_page(&source, 0, || false).unwrap();
+    let pictures: Vec<_> = blocks
+        .iter()
+        .filter(|b| b.kind == BlockKind::Tikz)
+        .collect();
+    assert_eq!(pictures.len(), 1);
+    let figure = pictures[0];
+    assert_eq!(figure.text, picture);
+    assert_eq!(&text[figure.source.clone()], picture);
+    assert!(
+        index
+            .tikz_source(figure)
+            .unwrap()
+            .contains(r"\newcommand{\vertex}[1]{$#1$}")
+    );
+    assert!(
+        blocks
+            .iter()
+            .any(|b| b.text.contains("A tree") && b.kind == BlockKind::Paragraph)
+    );
+    assert!(
+        blocks
+            .iter()
+            .any(|b| b.text.contains(picture) && matches!(b.kind, BlockKind::Code { .. }))
+    );
+}
+
+#[test]
+fn oversized_and_unterminated_tikz_pictures_keep_their_source() {
+    for picture in [
+        format!(
+            r"\begin{{tikzpicture}}{}\end{{tikzpicture}}",
+            "a".repeat(crate::BLOCK_TEXT_LIMIT)
+        ),
+        String::from(r"\begin{tikzpicture}\node {unfinished};"),
+    ] {
+        let (source, index) = build_text(&format!(r"\begin{{document}}{picture}"));
+        let blocks = index.parse_page(&source, 0, || false).unwrap();
+        assert!(blocks.iter().all(|b| b.kind != BlockKind::Tikz));
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<String>(),
+            picture
+        );
+    }
+}
+
+#[test]
 fn title_and_abstract_keep_separate_borders_and_source_positions() {
     let text = r"\documentclass{article}
 \title{The spectrum}\author{A. Writer}\date{A date}

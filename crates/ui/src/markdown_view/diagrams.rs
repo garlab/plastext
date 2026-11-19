@@ -1,4 +1,4 @@
-//! Viewport-driven Mermaid and SGF diagrams with one budget across windows and tabs.
+//! Viewport-driven diagrams with one budget across windows and tabs.
 use super::*;
 use gpui::{AnyWindowHandle, BorrowAppContext, EntityId, Global, RenderImage, img};
 
@@ -198,6 +198,7 @@ impl Drop for Diagrams {
 enum Kind {
     Mermaid,
     Sgf,
+    Tikz,
 }
 impl Kind {
     fn for_language(language: &str, mermaid_enabled: bool) -> Option<Self> {
@@ -211,19 +212,27 @@ impl Kind {
     }
     fn render(
         self,
-        source: &str,
-        attributes: &str,
+        block: &Block,
+        document: &DocumentIndex,
         light: bool,
         cancel: &Arc<AtomicBool>,
     ) -> Result<(document_graphics::Raster, Option<String>), String> {
-        match self {
-            Self::Mermaid => plastext_platform::mermaid::render(source, light, cancel)
+        match (self, &block.kind) {
+            (Self::Mermaid, _) => plastext_platform::mermaid::render(&block.text, light, cancel)
                 .map_err(|e| e.to_string())?
                 .map(|pixels| (pixels, None))
                 .ok_or_else(|| "Unsupported diagram content or preview limits exceeded".into()),
-            Self::Sgf => sgf::render(source, attributes, light, cancel)
-                .map(|(pixels, caption)| (pixels, Some(caption)))
-                .map_err(|e| e.to_string()),
+            (Self::Sgf, BlockKind::Code { attributes, .. }) => {
+                sgf::render(&block.text, attributes, light, cancel)
+                    .map(|(pixels, caption)| (pixels, Some(caption)))
+                    .map_err(|e| e.to_string())
+            }
+            (Self::Tikz, _) => {
+                plastext_platform::tikz::render(&document.tikz_source(block)?, cancel)
+                    .map(|pixels| (pixels, None))
+                    .map_err(|e| e.to_string())
+            }
+            _ => unreachable!(),
         }
     }
 }
@@ -241,7 +250,7 @@ fn preview_rejection(
     source: &str,
     kind: Kind,
 ) -> Option<String> {
-    if !complete_fence(document, ix) {
+    if kind != Kind::Tikz && !complete_fence(document, ix) {
         Some(format!(
             "Diagram exceeds the preview limit ({} lines or 16 KiB) · showing source",
             plastext_markdown::DIAGRAM_LINE_LIMIT
@@ -274,18 +283,19 @@ impl MarkdownView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let BlockKind::Code {
-            language,
-            attributes,
-            first,
-        } = &block.kind
-        else {
-            unreachable!()
+        let (language, first, kind) = match &block.kind {
+            BlockKind::Tikz => ("TikZ", true, Some(Kind::Tikz)),
+            BlockKind::Code {
+                language, first, ..
+            } => (
+                language.as_str(),
+                *first,
+                first
+                    .then(|| Kind::for_language(language, self.settings.mermaid))
+                    .flatten(),
+            ),
+            _ => unreachable!(),
         };
-        let first = *first;
-        let kind = first
-            .then(|| Kind::for_language(language, self.settings.mermaid))
-            .flatten();
         if kind.is_some() {
             self.diagrams.rows.insert(ix);
         }
@@ -310,12 +320,12 @@ impl MarkdownView {
                     let cancel = Arc::new(AtomicBool::new(false));
                     self.diagrams.pending.insert(ix, cancel.clone());
                     let window = window.window_handle();
-                    let text = block.text.clone();
-                    let attributes = attributes.clone();
+                    let block = block.clone();
+                    let document = self.document.clone();
                     let task = cx.background_executor().spawn({
                         let cancel = cancel.clone();
                         async move {
-                            kind.render(&text, &attributes, light, &cancel)
+                            kind.render(&block, &document, light, &cancel)
                                 .map_err(|e| format!("{e} · showing source"))
                                 .map(|(preview, caption)| {
                                     let bytes = preview.rgba.len() * 2;

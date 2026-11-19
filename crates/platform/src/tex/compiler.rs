@@ -350,7 +350,7 @@ fn run(
             return Err(format!("TeX build failed ({status}):\n{}", tail(&log_path)));
         }
         #[cfg(target_os = "macos")]
-        if crate::pdf::worker_resident_bytes(child.0.id())
+        if crate::worker_limits::resident_bytes(child.0.id())
             .is_some_and(|rss| rss > 1024 * 1024 * 1024)
         {
             return Err("TeX compiler exceeded 1 GiB of resident memory".into());

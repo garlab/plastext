@@ -167,10 +167,9 @@ impl Interruptible<'_> {
             self.memory_check = now + Duration::from_millis(100);
             #[cfg(target_os = "macos")]
             {
-                let rss =
-                    super::macos::resident_bytes(self.worker.child.id()).ok_or_else(|| {
-                        io::Error::other("Cannot monitor PDF worker memory; retry Preview")
-                    })?;
+                let rss = crate::worker_limits::resident_bytes(self.worker.child.id()).ok_or_else(
+                    || io::Error::other("Cannot monitor PDF worker memory; retry Preview"),
+                )?;
                 if rss > self.memory_limit {
                     return Err(io::Error::other(
                         "PDF worker exceeded 512 MiB; use Binary or retry",
@@ -218,7 +217,9 @@ impl Read for Interruptible<'_> {
 pub fn worker_main() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        if let Err(error) = super::macos::restrict_worker() {
+        // Core Graphics needs read access for its font services.
+        let profile = c"(version 1)(allow default)(deny network*)(deny file-write*)(deny process-exec)(deny process-fork)";
+        if let Err(error) = crate::worker_limits::restrict_worker(profile) {
             write_message(
                 &mut io::stdout().lock(),
                 &Response::Error(format!("Cannot isolate PDF renderer: {error}")),

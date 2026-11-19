@@ -1408,7 +1408,9 @@ impl MarkdownView {
                     )
                     .into_any_element()
             }
-            BlockKind::Code { .. } => self.code_block(block.clone(), ix, theme, window, cx),
+            BlockKind::Code { .. } | BlockKind::Tikz => {
+                self.code_block(block.clone(), ix, theme, window, cx)
+            }
             BlockKind::FrontMatter { .. }
             | BlockKind::FrontMatterRow { .. }
             | BlockKind::FrontMatterSource { .. } => {

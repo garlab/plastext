@@ -109,6 +109,8 @@ pub enum BlockKind {
         first: bool,
     },
     Math,
+    /// A complete LaTeX picture. The original environment is kept for source and copy.
+    Tikz,
     Rule,
     FrontMatter {
         format: MetadataFormat,
