@@ -174,6 +174,34 @@ impl PdfView {
         Tiles::set_active(cx.entity_id(), self.visible, cx);
         cx.notify();
     }
+    pub(crate) fn is_binary(&self) -> bool {
+        self.binary
+    }
+    pub(crate) fn session_offset(&self, cx: &App) -> u64 {
+        if self.binary {
+            self.raw.as_ref().map_or(0, |v| v.read(cx).position())
+        } else {
+            self.position()
+        }
+    }
+    pub(crate) fn restore_session_mode(
+        &mut self,
+        state: &plastext_settings::session::ViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.binary != (state.mode == plastext_settings::session::ViewMode::Binary) {
+            self.toggle_binary(&ToggleBinary, window, cx);
+        }
+        if let Some(pdf) = state.pdf {
+            self.restore_reading_state(crate::tab_view::session::pdf_reading(pdf), cx);
+        }
+        if self.binary
+            && let Some(raw) = &self.raw
+        {
+            raw.update(cx, |v, cx| v.scroll_to_offset(state.offset, cx));
+        }
+    }
     pub(super) fn reading_state(&self) -> (u32, bool, Point<f64>) {
         (self.page, self.fit_page, self.pan)
     }

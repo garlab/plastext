@@ -490,6 +490,42 @@ impl ImageView {
         self.viewport = Some(viewport);
         layout
     }
+    pub(crate) fn is_raw(&self) -> bool {
+        self.show_raw
+    }
+    pub(crate) fn session_offset(&self, cx: &App) -> u64 {
+        if !self.show_raw {
+            return 0;
+        }
+        self.raw_text
+            .as_ref()
+            .map(|v| v.read(cx).position())
+            .or_else(|| self.raw_hex.as_ref().map(|v| v.read(cx).position()))
+            .unwrap_or(0)
+    }
+    pub(crate) fn restore_session_mode(
+        &mut self,
+        state: &plastext_settings::session::ViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let raw = matches!(
+            state.mode,
+            plastext_settings::session::ViewMode::Source
+                | plastext_settings::session::ViewMode::Binary
+        );
+        if self.show_raw != raw {
+            self.toggle_source(&ToggleSource, window, cx);
+        }
+        if raw {
+            if let Some(v) = &self.raw_text {
+                v.update(cx, |v, cx| v.scroll_to_offset(state.offset, cx));
+            }
+            if let Some(v) = &self.raw_hex {
+                v.update(cx, |v, cx| v.scroll_to_offset(state.offset, cx));
+            }
+        }
+    }
     fn toggle_source(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
         self.show_raw = !self.show_raw;
         if self.show_raw {

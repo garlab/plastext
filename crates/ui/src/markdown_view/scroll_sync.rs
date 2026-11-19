@@ -9,6 +9,22 @@ pub(super) struct Pending {
 }
 
 impl MarkdownView {
+    // A close can happen before the first measured frame. Preserve the requested
+    // reading position in that case instead of replacing it with zero.
+    pub(crate) fn session_scroll(&self, cx: &App) -> Option<Position> {
+        self.scroll_position(cx).or_else(|| {
+            self.rendered
+                .then(|| self.scroll_sync.as_ref().map(|p| p.position))
+                .flatten()
+        })
+    }
+    pub(crate) fn session_offset(&self, cx: &App) -> u64 {
+        self.session_scroll(cx)
+            .map(|p| p.source.start)
+            .or(self.pending_offset.map(|p| p as u64))
+            .unwrap_or_else(|| self.position(cx))
+    }
+
     pub(crate) fn scroll_revision(&self) -> Revision {
         if self.rendered {
             Revision::Rendered(Arc::as_ptr(&self.document) as usize)

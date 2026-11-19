@@ -48,6 +48,7 @@ mod menu_tests;
 mod new_file_tests;
 mod opening;
 mod scroll_sync;
+pub mod session;
 pub(crate) mod welcome;
 pub use editing::request_quit;
 use opening::{Destination, OpenKind, Openings, Placement};
@@ -205,6 +206,7 @@ struct Place {
 /// The initial position or source mode of an opened file.
 #[derive(Clone)]
 enum Target {
+    Session(settings::session::ViewState),
     Line(u64),
     Offset(u64),
     Anchor(String),
@@ -499,11 +501,32 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let pane = self.active_pane;
+        self.open_in(
+            self.active_pane,
+            path,
+            target,
+            kind,
+            focus_editor,
+            window,
+            cx,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_in(
+        &mut self,
+        pane: usize,
+        path: PathBuf,
+        target: Option<Target>,
+        kind: OpenKind,
+        focus_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(index) = self.panes[&pane]
             .tabs
             .iter()
-            .position(|tab| tab.path == path)
+            .position(|tab| tab.path == path && !matches!(tab.view, TabView::Deferred(_)))
         {
             let state = self.panes.get_mut(&pane).unwrap();
             state.opening.select();
@@ -515,6 +538,19 @@ impl Workspace {
             scroll_to(&view, target, window, cx);
             return;
         }
+        let target = target.or_else(|| {
+            self.panes[&pane]
+                .tabs
+                .iter()
+                .find(|t| t.path == path)
+                .and_then(|tab| {
+                    if let TabView::Deferred(view) = &tab.view {
+                        Some(Target::Session(view.read(cx).state.clone()))
+                    } else {
+                        None
+                    }
+                })
+        });
         let pending = &mut self.panes.get_mut(&pane).unwrap().opening;
         // A newer line/anchor destination must not reuse the older callback's target.
         if target.is_some() {
@@ -694,10 +730,15 @@ impl Workspace {
                                 TabView::Hex(cx.new(|cx| HexView::new(source, style, cx)))
                             }
                         };
-                        scroll_to(&view, target, window, cx);
+                        let restore = if let Some(Target::Session(state)) = target {
+                            Some(state)
+                        } else {
+                            scroll_to(&view, target, window, cx);
+                            None
+                        };
                         this.add_tab(
                             path,
-                            view,
+                            view.clone(),
                             Destination {
                                 pane,
                                 kind,
@@ -707,8 +748,27 @@ impl Workspace {
                             window,
                             cx,
                         );
+                        if let Some(state) = restore {
+                            view.restore_session(&state, window, cx);
+                        }
                     }
                     Err(err) => {
+                        if let Some(tab) = this
+                            .panes
+                            .get(&pane)
+                            .and_then(|p| p.tabs.iter().find(|t| t.path == path))
+                            && let TabView::Deferred(view) = &tab.view
+                        {
+                            view.update(cx, |v, cx| {
+                                v.error = Some(
+                                    format!(
+                                        "Couldn't open this file: {err}. Select its tab to retry."
+                                    )
+                                    .into(),
+                                );
+                                cx.notify();
+                            });
+                        }
                         this.notice =
                             Some(format!("Couldn't open {}: {err}", path.display()).into());
                         cx.notify();
@@ -732,12 +792,21 @@ impl Workspace {
         let Some(pane) = self.panes.get(&destination.pane) else {
             return;
         };
-        let placement = destination.kind.placement(
+        let mut placement = destination.kind.placement(
             &path,
             pane.tabs
                 .iter()
                 .map(|tab| (tab.path.as_path(), tab.preview && !tab.view.is_dirty(cx))),
         );
+        if matches!(view, TabView::Deferred(_)) && matches!(placement, Placement::Replace(_)) {
+            placement = Placement::Append;
+        }
+        if let Placement::Existing(index) = placement
+            && matches!(pane.tabs[index].view, TabView::Deferred(_))
+            && !matches!(view, TabView::Deferred(_))
+        {
+            placement = Placement::Replace(index);
+        }
         if let Placement::Existing(index) = placement {
             if destination.kind == OpenKind::Keep {
                 self.panes.get_mut(&destination.pane).unwrap().tabs[index].preview = false;
@@ -908,6 +977,7 @@ impl Workspace {
         if focus_editor {
             self.sync_tree_selection(cx);
         }
+        self.load_session_tab(pane, index, focus_editor, window, cx);
         cx.notify();
     }
 
@@ -950,6 +1020,7 @@ impl Workspace {
             return;
         }
         pane.opening.select();
+        pane.opening.cancel(&pane.tabs[index].path);
         pane.tabs.remove(index).view.set_visible(false, cx);
         if !pane.tabs.is_empty() {
             let active = pane.active.unwrap_or(0);
@@ -1990,6 +2061,7 @@ fn command_name(action: &str) -> String {
 
 fn scroll_to(view: &TabView, target: Option<Target>, window: &mut Window, cx: &mut App) {
     match target {
+        Some(Target::Session(state)) => view.restore_session(&state, window, cx),
         Some(Target::Line(line)) => view.scroll_to_line(line, cx),
         Some(Target::Offset(offset)) => view.scroll_to_offset(offset, cx),
         Some(Target::Anchor(anchor)) => view.scroll_to_anchor(anchor, cx),

@@ -207,6 +207,38 @@ impl TexView {
     pub fn symbols(&self, cx: &App) -> Option<Arc<Vec<Symbol>>> {
         Some(self.source.read(cx).symbols())
     }
+    pub(crate) fn session_mode(&self) -> plastext_settings::session::ViewMode {
+        use plastext_settings::session::ViewMode;
+        match self.mode {
+            Mode::Source => ViewMode::Source,
+            Mode::Rendered => ViewMode::Rendered,
+            Mode::Pdf => ViewMode::Pdf,
+        }
+    }
+    pub(crate) fn session_pdf(&self, cx: &App) -> Option<(u32, bool, Point<f64>)> {
+        self.pdf
+            .as_ref()
+            .map(|v| v.read(cx).reading_state())
+            .or(self.staged_reading)
+    }
+    pub(crate) fn restore_session_mode(
+        &mut self,
+        state: &plastext_settings::session::ViewState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use plastext_settings::session::ViewMode;
+        self.staged_reading = state.pdf.map(crate::tab_view::session::pdf_reading);
+        self.set_mode(
+            match state.mode {
+                ViewMode::Source | ViewMode::Binary => Mode::Source,
+                ViewMode::Pdf => Mode::Pdf,
+                ViewMode::Rendered => Mode::Rendered,
+            },
+            window,
+            cx,
+        );
+    }
     pub fn position(&self, cx: &App) -> u64 {
         self.source.read(cx).position(cx)
     }
@@ -341,7 +373,11 @@ impl TexView {
                 if let Some(old) = this.staging.take() {
                     old.update(cx, |pdf, cx| pdf.set_visible(false, cx));
                 }
-                this.staged_reading = this.pdf.as_ref().map(|pdf| pdf.read(cx).reading_state());
+                this.staged_reading = this
+                    .pdf
+                    .as_ref()
+                    .map(|pdf| pdf.read(cx).reading_state())
+                    .or(this.staged_reading);
                 if let Some(old) = &this.pdf {
                     old.update(cx, |pdf, cx| pdf.suspend_prefetch(true, cx));
                 }

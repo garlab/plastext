@@ -46,6 +46,7 @@ pub(super) fn init(cx: &mut App) {
                     files: Vec::new(),
                 },
                 None,
+                None,
                 cx,
             );
         }
@@ -486,6 +487,87 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn opening_a_folder_restores_once_and_explicit_files_extend_the_session(
+        cx: &mut TestAppContext,
+    ) {
+        use plastext_settings::session::{
+            Session, SessionLayout, SessionPane, SessionTab, Sessions, ViewState,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let storage = root.join("state/sessions.json");
+        let saved = root.join("saved.txt");
+        let explicit = root.join("explicit.txt");
+        std::fs::write(&saved, "Saved tab\n").unwrap();
+        std::fs::write(&explicit, "Explicit tab\n").unwrap();
+        Sessions::save(
+            &storage,
+            vec![(
+                root.clone(),
+                Session {
+                    layout: SessionLayout::Pane(0),
+                    panes: vec![SessionPane {
+                        active: Some(0),
+                        tabs: vec![SessionTab {
+                            path: saved.clone(),
+                            preview: false,
+                            view: ViewState::default(),
+                        }],
+                    }],
+                    active_pane: 0,
+                    sidebar_width: 240.,
+                    zoom: 100,
+                    sync_scroll: false,
+                },
+            )],
+        )
+        .unwrap();
+        cx.update(|cx| {
+            plastext_ui::init(cx);
+            init(cx);
+            cx.set_global(AppSettings(Arc::default()));
+            cx.set_global(plastext_ui::SessionStorage(Some(storage.clone())));
+        });
+        let welcome = cx.add_window(|w, cx| Workspace::new(None, Arc::default(), w, cx));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            // Simulate two requests racing while the session is being read.
+            open_folder(root.clone(), cx);
+            open_folder(root.clone(), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        welcome
+            .read_with(cx, |ws, cx| {
+                assert_eq!(ws.root(), Some(root.as_path()));
+                assert!(
+                    plastext_editor::EditingDocument::all(cx)
+                        .iter()
+                        .any(|doc| doc.read(cx).path() == saved)
+                );
+            })
+            .unwrap();
+        cx.update(|cx| open_files(vec![explicit.clone()], Some(welcome), cx));
+        cx.run_until_parked();
+        welcome
+            .update(cx, |ws, w, cx| {
+                ws.should_close_window(w, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        let session = Sessions::load(&storage, &root).unwrap().unwrap();
+        assert_eq!(
+            session.panes[0]
+                .tabs
+                .iter()
+                .map(|t| &t.path)
+                .collect::<Vec<_>>(),
+            [&saved, &explicit]
+        );
+        assert_eq!(session.panes[0].active, Some(1));
     }
 
     #[gpui::test]

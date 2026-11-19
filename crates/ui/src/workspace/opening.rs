@@ -63,6 +63,10 @@ pub(super) struct Openings {
 }
 
 impl Openings {
+    pub fn contains(&self, path: &Path) -> bool {
+        self.pending.contains_key(path)
+    }
+
     pub fn is_pending(&self) -> bool {
         !self.pending.is_empty()
     }

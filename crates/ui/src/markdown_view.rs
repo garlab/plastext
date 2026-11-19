@@ -441,6 +441,9 @@ impl MarkdownView {
     pub fn symbols(&self) -> Arc<Vec<Symbol>> {
         self.symbols.clone()
     }
+    pub(crate) fn is_rendered(&self) -> bool {
+        self.rendered
+    }
     pub fn position(&self, cx: &App) -> u64 {
         if !self.rendered
             && let Some(view) = &self.source_view

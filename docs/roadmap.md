@@ -51,7 +51,9 @@ and identity-checked paired renames. [Bounds and remaining limits](m3-saving.md#
 include line-based mapping and paged comparisons for large files.
 [File management](file-management.md) adds Duplicate, Copy/Cut/Paste, Rename,
 Move and system-Bin deletion, with separate navigation-pane focus and guards
-for unsaved edits.
+for unsaved edits. [Folder sessions](folder-sessions.md) now restore tabs, modes,
+split proportions and reading positions when reopening a folder, with lazy
+inactive tabs and close-time metadata writes (the folder-scoped part of PRJ-8).
 
 Next, in order:
 

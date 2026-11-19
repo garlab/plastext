@@ -6,7 +6,8 @@ See [Building and running](../CONTRIBUTING.md#building-and-running) for prerequi
 
 Run `cargo run -p plastext-app` without a path for the welcome screen, with
 **Open Folder**, **Open File** and up to ten recent folders. Opening a folder
-reuses an empty welcome window. Recent folders are stored locally in
+reuses an empty welcome window and restores its [saved tabs, modes and pane
+layout](folder-sessions.md). Recent folders are stored locally in
 `recent-folders.json` beside `config.toml`; **Clear Recent** clears this history.
 
 Pass the folder to the app:

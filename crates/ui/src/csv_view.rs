@@ -417,6 +417,14 @@ impl CsvView {
     pub fn notice(&self) -> Option<SharedString> {
         self.notice.clone()
     }
+    pub(crate) fn is_raw(&self) -> bool {
+        self.show_raw
+    }
+    pub(crate) fn set_raw(&mut self, raw: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_raw != raw {
+            self.toggle(window, cx);
+        }
+    }
     pub fn position(&self, cx: &App) -> u64 {
         if self.show_raw
             && let Some(raw) = &self.raw

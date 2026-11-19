@@ -9,6 +9,7 @@ mod icon_fonts;
 pub mod icons;
 mod markdown;
 mod recent_folders;
+pub mod session;
 mod theme;
 mod vscode;
 

@@ -11,6 +11,9 @@ impl Default for Zoom {
 }
 
 impl Zoom {
+    pub fn from_percent(percent: u16) -> Self {
+        Self(LEVELS.iter().position(|p| *p == percent).unwrap_or(4))
+    }
     pub fn step(self, delta: isize) -> Self {
         Self(self.0.saturating_add_signed(delta).min(LEVELS.len() - 1))
     }

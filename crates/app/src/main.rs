@@ -141,6 +141,14 @@ fn main() -> ExitCode {
         }
         menus::init(cx);
         recents::init(cx);
+        let session_path = if env::var_os("PLASTEXT_PROFILE_STARTUP").is_some()
+            || env::var_os("PLASTEXT_PROFILE_READING").is_some()
+        {
+            None
+        } else {
+            plastext_settings::session::Sessions::path()
+        };
+        cx.set_global(plastext_ui::SessionStorage(session_path));
         // Keep the existing last-window exit behavior, including profiling.
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {
@@ -267,6 +275,48 @@ fn open_window_in(
     let existing = cx
         .windows()
         .into_iter()
+        .filter_map(|w| w.downcast::<Workspace>())
+        .any(|w| {
+            w.read(cx)
+                .is_ok_and(|ws| ws.root() == request.root.as_deref())
+        });
+    let path = cx
+        .try_global::<plastext_ui::SessionStorage>()
+        .and_then(|s| s.0.clone());
+    if existing || request.root.is_none() || path.is_none() {
+        open_window_restored(request, notice, preferred, None, cx);
+        return;
+    }
+    let root = request.root.clone().unwrap();
+    let load = cx
+        .background_executor()
+        .spawn(async move { plastext_settings::session::Sessions::load(&path.unwrap(), &root) });
+    cx.spawn(async move |cx| {
+        let (session, notice) = match load.await {
+            Ok(session) => (session, notice),
+            Err(error) => (
+                None,
+                Some(SharedString::from(format!(
+                    "Couldn't restore the folder session: {error}"
+                ))),
+            ),
+        };
+        cx.update(|cx| open_window_restored(request, notice, preferred, session, cx))
+            .ok();
+    })
+    .detach();
+}
+
+fn open_window_restored(
+    request: WindowRequest,
+    notice: Option<SharedString>,
+    preferred: Option<WindowHandle<Workspace>>,
+    session: Option<plastext_settings::session::Session>,
+    cx: &mut App,
+) {
+    let existing = cx
+        .windows()
+        .into_iter()
         .filter_map(|window| window.downcast::<Workspace>())
         .find(|window| {
             window
@@ -319,6 +369,9 @@ fn open_window_in(
                 .update(cx, |workspace, window, cx| {
                     window.set_window_title(&Workspace::title(request.root.as_deref()));
                     *workspace = Workspace::new(request.root, settings, window, cx);
+                    if let Some(session) = session {
+                        workspace.restore_session(session, window, cx);
+                    }
                     for file in request.files {
                         workspace.open_file(file.path, file.line.map(u64::from), window, cx);
                     }
@@ -334,10 +387,15 @@ fn open_window_in(
         }
     }
 
-    create_window(request, notice, cx);
+    create_window(request, notice, session, cx);
 }
 
-fn create_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut App) {
+fn create_window(
+    request: WindowRequest,
+    notice: Option<SharedString>,
+    session: Option<plastext_settings::session::Session>,
+    cx: &mut App,
+) {
     let options = WindowOptions {
         focus: should_activate(),
         kind: if env::var_os("PLASTEXT_PROFILE_READING").is_some()
@@ -371,6 +429,9 @@ fn create_window(request: WindowRequest, notice: Option<SharedString>, cx: &mut 
         };
         let workspace = cx.new(|cx| {
             let mut workspace = Workspace::new(request.root, settings, window, cx);
+            if let Some(session) = session {
+                workspace.restore_session(session, window, cx);
+            }
             for file in files {
                 workspace.open_file(file.path, file.line.map(u64::from), window, cx);
             }

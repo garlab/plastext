@@ -29,7 +29,7 @@ pub fn request_quit(cx: &mut App) {
         quit(cx);
     }
 }
-fn quit(cx: &mut App) {
+pub(super) fn quit(cx: &mut App) {
     #[cfg(target_os = "macos")]
     plastext_platform::quit::allow();
     cx.quit();
@@ -60,7 +60,11 @@ impl Workspace {
             cx,
         );
     }
-    fn close_documents(&self, target: &CloseTarget, cx: &App) -> Vec<Entity<EditingDocument>> {
+    pub(super) fn close_documents(
+        &self,
+        target: &CloseTarget,
+        cx: &App,
+    ) -> Vec<Entity<EditingDocument>> {
         let mut documents = match target {
             CloseTarget::FileOperation(operation) => EditingDocument::all(cx)
                 .into_iter()
@@ -93,7 +97,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.close_prompt {
+        if self.close_prompt || super::session::closing(cx) {
             return;
         }
         let documents = self.close_documents(&target, cx);
@@ -213,8 +217,8 @@ impl Workspace {
             CloseTarget::FileOperation(operation) => {
                 self.start_file_operation(operation, window, cx)
             }
-            CloseTarget::Quit => quit(cx),
-            CloseTarget::Window => window.remove_window(),
+            CloseTarget::Quit => self.save_session_and_close(true, window, cx),
+            CloseTarget::Window => self.save_session_and_close(false, window, cx),
             CloseTarget::Tabs {
                 pane,
                 paths,

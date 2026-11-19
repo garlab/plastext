@@ -1,3 +1,5 @@
+pub(crate) mod session;
+use session::DeferredView;
 use std::sync::Arc;
 
 use crate::csv_view::CsvView;
@@ -6,13 +8,16 @@ use crate::markdown_view::MarkdownView;
 use crate::pdf_view::PdfView;
 use crate::record_view::RecordView;
 use crate::tex_view::TexView;
-use gpui::{AnyView, App, Context, Entity, FocusHandle, Focusable, SharedString, Subscription};
+use gpui::{
+    AnyView, App, AppContext, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
+};
 use plastext_editor::{HexView, HexViewStatus, TextView, TextViewStatus};
 use plastext_syntax::Symbol;
 
 /// What a tab shows: text, or a hex dump for binary files (spec TXT-9).
 #[derive(Clone)]
 pub(crate) enum TabView {
+    Deferred(Entity<DeferredView>),
     Text(Entity<TextView>),
     Hex(Entity<HexView>),
     Markdown(Entity<MarkdownView>),
@@ -102,6 +107,7 @@ impl TabView {
     pub fn set_zoom(&self, factor: f32, base_font_size: gpui::Pixels, cx: &mut App) {
         let font_size = base_font_size * factor;
         match self {
+            Self::Deferred(_) => {}
             Self::Text(view) => view.update(cx, |view, cx| view.set_font_size(font_size, cx)),
             Self::Hex(view) => view.update(cx, |view, cx| view.set_font_size(font_size, cx)),
             Self::Markdown(view) => {
@@ -117,6 +123,7 @@ impl TabView {
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self {
+            Self::Deferred(view) => view.focus_handle(cx),
             Self::Text(view) => view.focus_handle(cx),
             Self::Hex(view) => view.focus_handle(cx),
             Self::Markdown(view) => view.focus_handle(cx),
@@ -131,6 +138,10 @@ impl TabView {
     /// Another view of the same file at the same position.
     pub fn duplicate(&self, cx: &mut App) -> Self {
         match self {
+            Self::Deferred(view) => {
+                let state = view.read(cx).state.clone();
+                Self::Deferred(cx.new(|cx| DeferredView::new(state, cx)))
+            }
             Self::Text(view) => Self::Text(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Hex(view) => Self::Hex(view.update(cx, |view, cx| view.duplicate(cx))),
             Self::Markdown(view) => Self::Markdown(view.update(cx, |view, cx| view.duplicate(cx))),
@@ -175,7 +186,7 @@ impl TabView {
     pub fn symbols(&self, cx: &App) -> Option<Arc<Vec<Symbol>>> {
         match self {
             Self::Text(view) => view.read(cx).symbols(),
-            Self::Hex(_) => None,
+            Self::Deferred(_) | Self::Hex(_) => None,
             Self::Markdown(view) => Some(view.read(cx).symbols()),
             Self::Image(_) => None,
             Self::Csv(_) => None,
@@ -188,6 +199,7 @@ impl TabView {
     /// Navigation position: a byte offset, or a 1-based page number for PDF.
     pub fn position(&self, cx: &App) -> u64 {
         match self {
+            Self::Deferred(view) => view.read(cx).state.offset,
             Self::Text(view) => view.read(cx).position(),
             Self::Hex(view) => view.read(cx).position(),
             Self::Markdown(view) => view.read(cx).position(cx),
@@ -201,6 +213,10 @@ impl TabView {
 
     pub fn scroll_to_offset(&self, offset: u64, cx: &mut App) {
         match self {
+            Self::Deferred(view) => view.update(cx, |view, _| {
+                view.state.offset = offset;
+                view.state.scroll = None;
+            }),
             Self::Text(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Hex(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
             Self::Markdown(view) => view.update(cx, |view, cx| view.scroll_to_offset(offset, cx)),
@@ -214,6 +230,10 @@ impl TabView {
 
     pub fn status(&self, cx: &App) -> TabStatus {
         match self {
+            Self::Deferred(view) => TabStatus::Preview {
+                notice: view.read(cx).error.clone(),
+                summary: String::new(),
+            },
             Self::Text(view) => TabStatus::Text(view.read(cx).status()),
             Self::Hex(view) => TabStatus::Hex(view.read(cx).status()),
             Self::Record(view) => TabStatus::Preview {
@@ -258,6 +278,7 @@ impl TabView {
         mut changed: impl FnMut(&mut T, &mut Context<T>) + 'static,
     ) -> Subscription {
         match self {
+            Self::Deferred(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
             Self::Text(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
             Self::Hex(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
             Self::Markdown(view) => cx.observe(view, move |this, _, cx| changed(this, cx)),
@@ -271,6 +292,7 @@ impl TabView {
 
     pub fn to_any(&self) -> AnyView {
         match self {
+            Self::Deferred(view) => view.clone().into(),
             Self::Text(view) => view.clone().into(),
             Self::Hex(view) => view.clone().into(),
             Self::Markdown(view) => view.clone().into(),
